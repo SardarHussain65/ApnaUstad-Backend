@@ -15,6 +15,7 @@ export interface IUser extends Document {
     };
     fcmToken?: string;
     isActive: boolean;
+    isPasswordCorrect(password: string): Promise<boolean>;
 }
 
 const userSchema = new Schema<IUser>(

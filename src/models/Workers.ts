@@ -1,13 +1,16 @@
 // src/models/Workers.ts
 import mongoose, { Schema, Document, Model } from 'mongoose';
+import bcrypt from 'bcrypt';
 
 export interface IWorker extends Document {
     fullName: string;
     phone: string;
     email?: string | null;
+    password?: string;
     profileImage?: string;
     cnicNumber?: string;
-    cnicImage?: string;
+    cnicFrontImage?: string;
+    cnicBackImage?: string;
     category: string;
     skills: string[];
     hourlyRate: number;
@@ -27,6 +30,7 @@ export interface IWorker extends Document {
     totalJobs: number;
     totalEarnings: number;
     fcmToken?: string;
+    isPasswordCorrect(password: string): Promise<boolean>;
 }
 
 const workerSchema = new Schema<IWorker>(
@@ -34,9 +38,11 @@ const workerSchema = new Schema<IWorker>(
         fullName: { type: String, trim: true, default: '' },
         phone: { type: String, required: true, unique: true, trim: true },
         email: { type: String, trim: true, lowercase: true, sparse: true, default: null },
+        password: { type: String, required: [true, 'Password is required'], trim: true, select: false },
         profileImage: { type: String, default: '' },
-        cnicNumber: { type: String, default: '' },
-        cnicImage: { type: String, default: '' },
+        cnicNumber: { type: String, required: true, unique: true, trim: true },
+        cnicFrontImage: { type: String, default: '' },
+        cnicBackImage: { type: String, default: '' },
         category: { type: String, required: true, trim: true },
         skills: { type: [String], default: [] },
         hourlyRate: { type: Number, required: true, min: 100, default: 0 },
@@ -64,5 +70,26 @@ workerSchema.index({ location: '2dsphere' });
 workerSchema.index({ category: 1, isAvailable: 1, isVerified: 1 });
 workerSchema.index({ city: 1, isAvailable: 1 });
 workerSchema.index({ rating: -1 });
+
+/**
+ * Pre-save hook to hash password before saving to database
+ */
+workerSchema.pre('save', async function (this: IWorker) {
+    if (!this.isModified('password')) return;
+
+    try {
+        const salt = await bcrypt.genSalt(10);
+        this.password = await bcrypt.hash(this.password as string, salt);
+    } catch (error: any) {
+        throw error;
+    }
+});
+
+/**
+ * Method to check if password is correct
+ */
+workerSchema.methods.isPasswordCorrect = async function (password: string): Promise<boolean> {
+    return await bcrypt.compare(password, this.password);
+};
 
 export default mongoose.models.Worker || mongoose.model<IWorker>('Worker', workerSchema);
