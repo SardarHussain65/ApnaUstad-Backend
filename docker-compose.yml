@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  # The Backend Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: apna-ustad-backend
+    
+    # Map the container's port 5000 to your host's port 5000
+    ports:
+      - "5000:5000"
+    
+    # Pass environment variables from your .env file
+    env_file:
+      - .env
+    
+    # This helps with health checks and restart policies
+    restart: always
+
+# Optional: Add a MongoDB service here if you want to run it locally
+# networks:
+#   default:
+#     name: apna-ustad-network

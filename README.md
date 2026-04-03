@@ -135,6 +135,39 @@ You should see: ✅ ApnaUstad API is running
 
 ---
 
+## 🐳 Docker Support
+
+You can run the entire application using Docker. This ensures that the app runs in the exact same environment on every machine.
+
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop) installed and running.
+
+### Using Docker Compose (Recommended)
+
+**1. Build and start the containers**
+```bash
+docker compose up --build
+```
+This command will:
+- Build the Docker image using the multi-stage `Dockerfile`.
+- Install all necessary dependencies inside the container.
+- Compile TypeScript to JavaScript.
+- Start the server on port `5000`.
+
+**2. Stop the containers**
+```bash
+docker compose down
+```
+
+### Understanding the Docker Setup
+- **Dockerfile**: Uses a multi-stage build to ensure the final production image is small and secure. It compiles TypeScript and only includes production dependencies in the final stage.
+- **.dockerignore**: Ensures that local `node_modules` and other unnecessary files are not copied into the image.
+- **docker-compose.yml**: Manages the container's configuration, maps ports, and links your `.env` file automatically.
+
+---
+
+---
+
 ## 🔐 Environment Variables
 
 Create a `.env` file in the root directory with the following:
