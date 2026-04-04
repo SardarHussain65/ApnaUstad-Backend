@@ -7,17 +7,20 @@ import { AdminAuthRequest } from "../middlewares/admin.middleware";
 /**
  * Get all workers for admin management
  * @route GET /api/v1/admin/workers
+ * 
  */
+
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export const getAllWorkers = asyncHandler(async (req: AdminAuthRequest, res) => {
     const { status, verified, city } = req.query;
-    
+
     let query: any = {};
     if (verified !== undefined) query.isVerified = verified === 'true';
     if (status !== undefined) query.isActive = status === 'active';
-    if (city) query.city = new RegExp(city as string, 'i');
+    if (city) query.city = new RegExp(escapeRegex(city as string), 'i');
 
     const workers = await Worker.find(query).sort({ createdAt: -1 });
-    
+
     return successResponse(res, 200, "Workers fetched successfully", workers);
 });
 
@@ -34,8 +37,8 @@ export const verifyWorker = asyncHandler(async (req: AdminAuthRequest, res) => {
     }
 
     const worker = await Worker.findByIdAndUpdate(
-        id, 
-        { isVerified }, 
+        id,
+        { isVerified },
         { new: true, runValidators: true }
     );
 
@@ -60,8 +63,8 @@ export const toggleWorkerStatus = asyncHandler(async (req: AdminAuthRequest, res
     }
 
     const worker = await Worker.findByIdAndUpdate(
-        id, 
-        { isActive }, 
+        id,
+        { isActive },
         { new: true, runValidators: true }
     );
 

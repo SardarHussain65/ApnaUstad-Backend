@@ -5,7 +5,6 @@ import {
     uploadWorkerCnicFront,
     uploadWorkerCnicBack,
     loginWorker,
-    getAllWorkers,
     getWorkerById,
     updateWorkerProfile,
     deleteWorker,
@@ -51,12 +50,6 @@ router.route("/register").post(validate(registerWorkerSchema), registerWorker);
 
 
 router.route("/login").post(validate(loginWorkerSchema), loginWorker);
-
-/**
- * @description Get all workers
- * @access Private
- */
-router.route("/").get(jwtAuthMiddleware, getAllWorkers);
 
 /**
  * @description Get worker by ID

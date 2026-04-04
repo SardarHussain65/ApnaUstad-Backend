@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as adminController from '../controllers/adminController';
 import * as adminWorkerController from '../controllers/adminWorkerController';
+import * as adminUserController from '../controllers/adminUserController';
 import * as adminCategoryController from '../controllers/adminCategoryController';
 import { adminAuthMiddleware } from '../middlewares/admin.middleware';
 import validate from '../middlewares/validate.middleware';
@@ -20,6 +21,13 @@ router.use(adminAuthMiddleware);
 
 router.get('/me', adminController.getAdminProfile);
 router.get('/dashboard/stats', adminController.getDashboardStats);
+
+/**
+ * User Management
+ */
+router.get('/users', adminUserController.getAllUsers);
+router.get('/users/:id', adminUserController.getUserDetails);
+router.patch('/users/:id/status', adminUserController.toggleUserStatus);
 
 /**
  * Worker Management

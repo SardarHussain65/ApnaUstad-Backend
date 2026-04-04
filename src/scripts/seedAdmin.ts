@@ -10,12 +10,17 @@ const seedAdmin = async () => {
         if (!config.mongodbUrl) {
             throw new Error('MONGODB_URL is not defined in environment variables');
         }
-        
+
         await mongoose.connect(config.mongodbUrl as string);
         console.log('Connected to database successfully.');
 
-        const adminEmail = process.env.ADMIN_EMAIL || 'admin@apnaustad.com';
-        const adminPassword = process.env.ADMIN_PASSWORD || 'Admin@123';
+        const adminEmail = process.env.ADMIN_EMAIL;
+        const adminPassword = process.env.ADMIN_PASSWORD;
+
+        if (!adminEmail || !adminPassword) {
+            console.error('❌ Error: ADMIN_EMAIL and ADMIN_PASSWORD environment variables are required for seeding.');
+            process.exit(1);
+        }
 
         const existingAdmin = await Admin.findOne({ email: adminEmail });
 
@@ -34,8 +39,7 @@ const seedAdmin = async () => {
         await admin.save();
         console.log('✅ Super Admin created successfully!');
         console.log(`Email: ${adminEmail}`);
-        console.log(`Password: ${adminPassword}`);
-        
+
         process.exit(0);
     } catch (error) {
         console.error('❌ Error seeding admin:', error);

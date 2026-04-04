@@ -1,5 +1,5 @@
 import Workers from "../models/Workers";
-import { ConflictError, InternalServerError, BadRequestError, ForbiddenError } from "../utils/ApiError";
+import { ConflictError, InternalServerError, BadRequestError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
 import { UploadRequest } from "../middlewares/multer.middleware";
@@ -125,12 +125,12 @@ export const loginWorker = asyncHandler(async (req, res) => {
     }).select("+password");
 
     if (!worker) {
-        throw new BadRequestError("Worker not found");
+        throw new UnauthorizedError("Invalid credentials");
     }
 
     const isPasswordCorrect = await worker.isPasswordCorrect(password);
     if (!isPasswordCorrect) {
-        throw new BadRequestError("Invalid password");
+        throw new UnauthorizedError("Invalid credentials");
     }
 
     if (fcmToken) {
@@ -140,20 +140,17 @@ export const loginWorker = asyncHandler(async (req, res) => {
 
     const token = generateToken({ id: worker._id.toString(), username: worker.fullName });
 
+    // Remove sensitive fields
+    const workerResponse = worker.toObject();
+    delete workerResponse.password;
+    delete workerResponse.fcmToken;
+
     return successResponse(res, 200, "Worker logged in successfully", {
-        worker,
+        worker: workerResponse,
         token,
     });
 });
 
-export const getAllWorkers = asyncHandler(async (req: AuthRequest, res) => {
-    // Only allow Admins to see all workers
-    if (req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
-        throw new ForbiddenError("Only admins can access all workers list");
-    }
-    const workers = await Workers.find().select("-password -fcmToken");
-    return successResponse(res, 200, "Workers fetched successfully", workers);
-});
 
 export const getWorkerById = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;

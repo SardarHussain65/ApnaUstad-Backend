@@ -1,6 +1,6 @@
 import User from "../models/User";
 import { asyncHandler } from "../utils/asyncHandler";
-import { BadRequestError, ConflictError, InternalServerError, ForbiddenError } from "../utils/ApiError";
+import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { UploadRequest } from "../middlewares/multer.middleware";
 import { generateToken, AuthRequest } from "../middlewares/jwt.middleware";
@@ -103,29 +103,24 @@ export const loginUser = asyncHandler(async (req, res) => {
     }).select("+password +fcmToken");
 
     if (!user) {
-        throw new BadRequestError("User not found");
+        throw new UnauthorizedError("Invalid credentials");
     }
 
     const isPasswordCorrect = await user.isPasswordCorrect(password);
     if (!isPasswordCorrect) {
-        throw new BadRequestError("Invalid password");
+        throw new UnauthorizedError("Invalid credentials");
     }
 
     // 6. Generate JWT token
     const token = generateToken({ id: user._id.toString(), username: user.fullName });
 
-    // 7. Return response
-    return successResponse(res, 200, "User logged in successfully", { user, token });
-});
+    // 7. Remove sensitive fields
+    const userResponse = user.toObject();
+    delete userResponse.password;
+    delete userResponse.fcmToken;
 
-
-export const getAllUsers = asyncHandler(async (req: AuthRequest, res) => {
-    // Only allow Admins to see all users
-    if (req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
-        throw new ForbiddenError("Only admins can access all users list");
-    }
-    const users = await User.find().select("-password -fcmToken");
-    return successResponse(res, 200, "Users fetched successfully", users);
+    // 8. Return response
+    return successResponse(res, 200, "User logged in successfully", { user: userResponse, token });
 });
 
 

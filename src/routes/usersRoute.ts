@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { registerUser, loginUser, uploadImage, updateProfileImage, updateLocation, getAllUsers, getUserById, updateProfile, changePassword, deleteUser, updateEmail } from "../controllers/userController";
+import { registerUser, loginUser, uploadImage, updateProfileImage, updateLocation, getUserById, updateProfile, changePassword, deleteUser, updateEmail } from "../controllers/userController";
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
 import { registerUserSchema, loginUserSchema } from "../validations/user.validation";
@@ -25,12 +25,6 @@ router.route("/register").post(validate(registerUserSchema), registerUser);
  */
 router.route("/login").post(validate(loginUserSchema), loginUser);
 
-
-/**
- * @description Get all users
- * @access Private
- */
-router.route("/").get(jwtAuthMiddleware, getAllUsers);
 
 /**
  * @description Get user by ID

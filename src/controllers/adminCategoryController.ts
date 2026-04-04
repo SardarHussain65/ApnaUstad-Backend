@@ -1,6 +1,6 @@
 import Category from "../models/Category";
 import { asyncHandler } from "../utils/asyncHandler";
-import { BadRequestError, NotFoundError } from "../utils/ApiError";
+import { BadRequestError, NotFoundError, ConflictError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 
@@ -29,15 +29,22 @@ export const createCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
         throw new BadRequestError("Category with this name already exists");
     }
 
-    const category = await Category.create({
-        name,
-        icon,
-        color,
-        description: description || "",
-        sortOrder: sortOrder || 0
-    });
+    try {
+        const category = await Category.create({
+            name,
+            icon,
+            color,
+            description: description || "",
+            sortOrder: sortOrder || 0
+        });
 
-    return successResponse(res, 201, "Category created successfully", category);
+        return successResponse(res, 201, "Category created successfully", category);
+    } catch (error: any) {
+        if (error.code === 11000) {
+            throw new ConflictError("Category with this name already exists");
+        }
+        throw error;
+    }
 });
 
 /**
@@ -60,9 +67,15 @@ export const updateCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
     if (sortOrder !== undefined) category.sortOrder = sortOrder;
     if (isActive !== undefined) category.isActive = isActive;
 
-    await category.save();
-
-    return successResponse(res, 200, "Category updated successfully", category);
+    try {
+        await category.save();
+        return successResponse(res, 200, "Category updated successfully", category);
+    } catch (error: any) {
+        if (error.code === 11000) {
+            throw new ConflictError("Category with this name already exists");
+        }
+        throw error;
+    }
 });
 
 /**
