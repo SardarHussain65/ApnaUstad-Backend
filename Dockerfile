@@ -22,19 +22,29 @@ RUN npm run build
 # We start with a fresh Node.js image to keep the final image as small as possible
 FROM node:20-alpine AS production
 
-# Set the working directory
+# Create a non-root user and group
+RUN addgroup -S nodeapp && adduser -S nodeapp -G nodeapp
+
+# Set the working directory and ensure it's owned by the non-root user
 WORKDIR /app
+RUN chown nodeapp:nodeapp /app
 
 # Copy only the compiled code from the build stage
-COPY --from=build /app/dist ./dist
+COPY --from=build --chown=nodeapp:nodeapp /app/dist ./dist
 # Copy package files to install only production dependencies
-COPY --from=build /app/package*.json ./
+COPY --from=build --chown=nodeapp:nodeapp /app/package*.json ./
 
 # Install only production dependencies (skips devDependencies)
 RUN npm install --only=production
 
-# Expose the port your app runs on (matching the PORT in your .env)
-EXPOSE 5000
+# Set the application's default port within the container
+ENV PORT=3000
+
+# Switch to the non-root user
+USER nodeapp
+
+# Expose the port your app runs on (matching the application default)
+EXPOSE 3000
 
 # Start the application
 CMD ["node", "dist/server.js"]
