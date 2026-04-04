@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # The Backend Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: apna-ustad-backend
+    
+    # Map the container's port 3000 to your host's port 3000
+    ports:
+      - "3000:3000"
+    
+    # Pass environment variables from your .env file
+    env_file:
+      - .env
+    
+    # This helps with health checks and restart policies
+    restart: always
+    
+    # Ensure the database starts before the application
+    depends_on:
+      - mongo
+
+  # MongoDB Service
+  mongo:
+    image: mongo:latest
+    container_name: apna-ustad-mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=db_user
+      - MONGO_INITDB_ROOT_PASSWORD=db_password
+      - MONGO_INITDB_DATABASE=ApnaUstad
+    volumes:
+      - mongo-data:/data/db
+
+# Named volume for data persistence
+volumes:
+  mongo-data:

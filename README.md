@@ -135,6 +135,46 @@ You should see: ✅ ApnaUstad API is running
 
 ---
 
+## 🐳 Docker Support
+
+You can run the entire application using Docker. This ensures that the app runs in the exact same environment on every machine.
+
+### Prerequisites
+- [Docker Desktop](https://www.docker.com/products/docker-desktop) installed and running.
+- **MongoDB Dependency:** The server requires a MongoDB connection. `startServer()` calls `connectDB()`, which will trigger `process.exit(1)` on failure. Without a database, the container will crash immediately.
+
+### Using Docker Compose (Recommended)
+
+**1. Configure Database Connection**
+You must satisfy the database requirement using one of these two options:
+- **Option A (Local Database):** Enable/uncomment the `mongo` service and volume in your `docker-compose.yml` file. Update your `.env` to connect to it (e.g., `MONGODB_URL=mongodb://db_user:db_password@mongo:27017/ApnaUstad?authSource=admin`).
+- **Option B (External Database):** Provide a valid `MONGODB_URL` environment variable within your `.env` pointing to an external MongoDB Atlas cluster or another server.
+
+**2. Build and start the containers**
+```bash
+docker compose up --build
+```
+This command will:
+- Build the Docker image using the multi-stage `Dockerfile`.
+- Install all necessary dependencies inside the container.
+- Compile TypeScript to JavaScript.
+- Start the server on port `3000`.
+
+**3. Stop the containers**
+```bash
+docker compose down
+```
+
+### Understanding the Docker Setup
+- **Dockerfile**: Uses a multi-stage build to ensure the final production image is small and secure. It compiles TypeScript and only includes production dependencies in the final stage.
+- **.dockerignore**: Ensures that local `node_modules` and other unnecessary files are not copied into the image.
+- **docker-compose.yml**: Manages the container's configuration, maps ports, and links your `.env` file automatically.
+- **Critical Dependency**: If the database is unreachable, the Node.js application will stop at startup, exiting the container immediately.
+
+---
+
+---
+
 ## 🔐 Environment Variables
 
 Create a `.env` file in the root directory with the following:
