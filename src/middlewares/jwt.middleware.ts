@@ -6,14 +6,15 @@ import { getConfig } from "../config/env";
 const config = getConfig();
 
 
-interface AuthRequest extends Request {
-    tokenPayload?: string | jwt.JwtPayload;
+export interface AuthRequest extends Request {
+    tokenPayload?: jwt.JwtPayload | any;
 }
 
 
-interface TokenPayload {
+export interface TokenPayload {
     id: string;
-    username: string;
+    username?: string;
+    role?: string;
 }
 
 

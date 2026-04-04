@@ -1,9 +1,9 @@
 import Workers from "../models/Workers";
-import { ConflictError, InternalServerError, BadRequestError } from "../utils/ApiError";
+import { ConflictError, InternalServerError, BadRequestError, ForbiddenError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
 import { UploadRequest } from "../middlewares/multer.middleware";
-import { generateToken } from "../middlewares/jwt.middleware";
+import { generateToken, AuthRequest } from "../middlewares/jwt.middleware";
 
 /**
  * Upload worker profile image to ImageKit → /workers/profile-images/
@@ -146,13 +146,23 @@ export const loginWorker = asyncHandler(async (req, res) => {
     });
 });
 
-export const getAllWorkers = asyncHandler(async (req, res) => {
+export const getAllWorkers = asyncHandler(async (req: AuthRequest, res) => {
+    // Only allow Admins to see all workers
+    if (req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("Only admins can access all workers list");
+    }
     const workers = await Workers.find().select("-password -fcmToken");
     return successResponse(res, 200, "Workers fetched successfully", workers);
 });
 
-export const getWorkerById = asyncHandler(async (req, res) => {
+export const getWorkerById = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check: Worker can only see their own profile, or Admin can see any
+    if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("You are not authorized to view this profile");
+    }
+
     const worker = await Workers.findById(id).select("-password -fcmToken");
     if (!worker) {
         throw new BadRequestError("Worker not found");
@@ -160,8 +170,14 @@ export const getWorkerById = asyncHandler(async (req, res) => {
     return successResponse(res, 200, "Worker fetched successfully", worker);
 });
 
-export const updateWorkerProfile = asyncHandler(async (req, res) => {
+export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("You are not authorized to update this profile");
+    }
+
     const {
         fullName, phone, email, bio, experience,
         city, address, hourlyRate, skills, category,
@@ -171,8 +187,8 @@ export const updateWorkerProfile = asyncHandler(async (req, res) => {
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");
 
-    if (latitude) worker.location.coordinates[1] = latitude;
-    if (longitude) worker.location.coordinates[0] = longitude;
+    if (latitude !== undefined && latitude !== null) worker.location.coordinates[1] = latitude;
+    if (longitude !== undefined && longitude !== null) worker.location.coordinates[0] = longitude;
 
     if (fullName !== undefined) worker.fullName = fullName;
     if (phone !== undefined) worker.phone = phone;
@@ -191,16 +207,28 @@ export const updateWorkerProfile = asyncHandler(async (req, res) => {
     return successResponse(res, 200, "Worker updated successfully", worker);
 });
 
-export const deleteWorker = asyncHandler(async (req, res) => {
+export const deleteWorker = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("You are not authorized to delete this worker");
+    }
+
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");
     await worker.deleteOne();
     return successResponse(res, 200, "Worker deleted successfully", {});
 });
 
-export const changeWorkerPassword = asyncHandler(async (req, res) => {
+export const changeWorkerPassword = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only change your own password");
+    }
+
     const { oldPassword, newPassword } = req.body;
 
     if (!oldPassword || !newPassword) throw new BadRequestError("Password is required");
@@ -218,8 +246,14 @@ export const changeWorkerPassword = asyncHandler(async (req, res) => {
     return successResponse(res, 200, "Password changed successfully", {});
 });
 
-export const updateWorkerEmail = asyncHandler(async (req, res) => {
+export const updateWorkerEmail = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only update your own email");
+    }
+
     const { email } = req.body;
 
     if (!email) throw new BadRequestError("Email is required");
@@ -231,8 +265,14 @@ export const updateWorkerEmail = asyncHandler(async (req, res) => {
     return successResponse(res, 200, "Email updated successfully", worker);
 });
 
-export const updateWorkerProfileImage = asyncHandler(async (req, res) => {
+export const updateWorkerProfileImage = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only update your own profile image");
+    }
+
     const { profileImage } = req.body;
 
     if (!profileImage) throw new BadRequestError("Profile image is required");
@@ -244,11 +284,17 @@ export const updateWorkerProfileImage = asyncHandler(async (req, res) => {
     return successResponse(res, 200, "Profile image updated successfully", worker);
 });
 
-export const updateWorkerLocation = asyncHandler(async (req, res) => {
+export const updateWorkerLocation = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only update your own location");
+    }
+
     const { latitude, longitude } = req.body;
 
-    if (!latitude || !longitude) throw new BadRequestError("Latitude and longitude are required");
+    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) throw new BadRequestError("Latitude and longitude are required");
 
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");

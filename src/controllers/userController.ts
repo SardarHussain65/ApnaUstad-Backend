@@ -1,9 +1,9 @@
 import User from "../models/User";
 import { asyncHandler } from "../utils/asyncHandler";
-import { BadRequestError, ConflictError, InternalServerError, AppError } from "../utils/ApiError";
+import { BadRequestError, ConflictError, InternalServerError, ForbiddenError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { UploadRequest } from "../middlewares/multer.middleware";
-import { generateToken } from "../middlewares/jwt.middleware";
+import { generateToken, AuthRequest } from "../middlewares/jwt.middleware";
 
 /**
  * Handle direct image upload returning the ImageKit URL
@@ -65,7 +65,10 @@ export const registerUser = asyncHandler(async (req, res) => {
         city: city || "",
         location: {
             type: "Point",
-            coordinates: [longitude || 0, latitude || 0]
+            coordinates: [
+                longitude !== undefined && longitude !== null ? longitude : 0,
+                latitude !== undefined && latitude !== null ? latitude : 0
+            ]
         },
         fcmToken: fcmToken || ""
     });
@@ -97,7 +100,7 @@ export const loginUser = asyncHandler(async (req, res) => {
             { email: email },
             { phone: phone }
         ]
-    });
+    }).select("+password +fcmToken");
 
     if (!user) {
         throw new BadRequestError("User not found");
@@ -116,14 +119,24 @@ export const loginUser = asyncHandler(async (req, res) => {
 });
 
 
-export const getAllUsers = asyncHandler(async (req, res) => {
+export const getAllUsers = asyncHandler(async (req: AuthRequest, res) => {
+    // Only allow Admins to see all users
+    if (req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("Only admins can access all users list");
+    }
     const users = await User.find().select("-password -fcmToken");
     return successResponse(res, 200, "Users fetched successfully", users);
 });
 
 
-export const getUserById = asyncHandler(async (req, res) => {
+export const getUserById = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+    
+    // Authorization Check: User can only see their own profile, or Admin can see any
+    if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("You are not authorized to view this profile");
+    }
+
     const user = await User.findById(id).select("-password -fcmToken");
     if (!user) {
         throw new BadRequestError("User not found");
@@ -132,16 +145,22 @@ export const getUserById = asyncHandler(async (req, res) => {
 });
 
 
-export const updateProfile = asyncHandler(async (req, res) => {
+export const updateProfile = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("You are not authorized to update this profile");
+    }
+
     const { fullName, email, phone, address, city, latitude, longitude, profileImage, fcmToken } = req.body;
 
     const user = await User.findById(id);
     if (!user) throw new BadRequestError("User not found");
 
     // Update location separately if needed
-    if (latitude) user.location.coordinates[1] = latitude;
-    if (longitude) user.location.coordinates[0] = longitude;
+    if (latitude !== undefined && latitude !== null) user.location.coordinates[1] = latitude;
+    if (longitude !== undefined && longitude !== null) user.location.coordinates[0] = longitude;
 
     // Conditionally update simple fields
     if (fullName !== undefined) user.fullName = fullName;
@@ -157,8 +176,14 @@ export const updateProfile = asyncHandler(async (req, res) => {
 });
 
 
-export const deleteUser = asyncHandler(async (req, res) => {
+export const deleteUser = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("You are not authorized to delete this user");
+    }
+
     const user = await User.findById(id);
     if (!user) throw new BadRequestError("User not found");
     await user.deleteOne();
@@ -166,13 +191,19 @@ export const deleteUser = asyncHandler(async (req, res) => {
 });
 
 
-export const changePassword = asyncHandler(async (req, res) => {
+export const changePassword = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only change your own password");
+    }
+
     const { oldPassword, newPassword } = req.body;
 
     if (!oldPassword || !newPassword) throw new BadRequestError("Password is required");
 
-    const user = await User.findById(id);
+    const user = await User.findById(id).select("+password");
     if (!user) throw new BadRequestError("User not found");
 
     const isPasswordCorrect = await user.isPasswordCorrect(oldPassword);
@@ -186,8 +217,14 @@ export const changePassword = asyncHandler(async (req, res) => {
 });
 
 
-export const updateEmail = asyncHandler(async (req, res) => {
+export const updateEmail = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only update your own email");
+    }
+
     const { email } = req.body;
 
     if (!email) throw new BadRequestError("Email is required");
@@ -200,8 +237,14 @@ export const updateEmail = asyncHandler(async (req, res) => {
 });
 
 
-export const updateProfileImage = asyncHandler(async (req, res) => {
+export const updateProfileImage = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only update your own profile image");
+    }
+
     const { profileImage } = req.body;
 
     if (!profileImage) throw new BadRequestError("Profile image is required");
@@ -214,11 +257,17 @@ export const updateProfileImage = asyncHandler(async (req, res) => {
 });
 
 
-export const updateLocation = asyncHandler(async (req, res) => {
+export const updateLocation = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
+
+    // Authorization Check
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only update your own location");
+    }
+
     const { latitude, longitude } = req.body;
 
-    if (!latitude || !longitude) throw new BadRequestError("Latitude and longitude are required");
+    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) throw new BadRequestError("Latitude and longitude are required");
 
     const user = await User.findById(id);
     if (!user) throw new BadRequestError("User not found");

@@ -11,6 +11,7 @@ import logger, { stream } from "./config/logger";
 
 import usersRoute from "./routes/usersRoute";
 import workerRoute from "./routes/workerRoute";
+import adminRoute from "./routes/adminRoute";
 
 
 const app = express();
@@ -33,7 +34,7 @@ app.use(helmet());
 const limiter = rateLimit({
     max: 100, // Limit each IP to 100 requests per windowMs
     windowMs: 15 * 60 * 1000, // 15 Minutes
-    message: "Too many requests from this IP, please try again in an hour!"
+    message: "Too many requests from this IP, please try again in 15 minutes!"
 });
 app.use('/api', limiter);
 
@@ -53,6 +54,7 @@ app.use((req, res, next) => {
 // --- 📍 Route Handlers ---
 app.use('/api/v1/users', usersRoute);
 app.use('/api/v1/workers', workerRoute);
+app.use('/api/v1/admin', adminRoute);
 
 
 

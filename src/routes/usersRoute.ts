@@ -3,6 +3,7 @@ import { registerUser, loginUser, uploadImage, updateProfileImage, updateLocatio
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
 import { registerUserSchema, loginUserSchema } from "../validations/user.validation";
+import { jwtAuthMiddleware } from "../middlewares/jwt.middleware";
 
 const router = Router();
 
@@ -29,26 +30,26 @@ router.route("/login").post(validate(loginUserSchema), loginUser);
  * @description Get all users
  * @access Private
  */
-router.route("/").get(getAllUsers);
+router.route("/").get(jwtAuthMiddleware, getAllUsers);
 
 /**
  * @description Get user by ID
  * @access Private
  */
-router.route("/:id").get(getUserById);
+router.route("/:id").get(jwtAuthMiddleware, getUserById);
 
 /**
  * @description Update user profile
  * @access Private
  */
-router.route("/:id").patch(updateProfile);
+router.route("/:id").patch(jwtAuthMiddleware, updateProfile);
 
 
 /**
  * @description Update user profile image
  * @access Private
  */
-router.route("/:id/profile-image").put(updateProfileImage);
+router.route("/:id/profile-image").put(jwtAuthMiddleware, updateProfileImage);
 
 
 
@@ -56,28 +57,28 @@ router.route("/:id/profile-image").put(updateProfileImage);
  * @description Update user profile image
  * @access Private
  */
-router.route("/:id/change-password").put(changePassword);
+router.route("/:id/change-password").put(jwtAuthMiddleware, changePassword);
 
 
 /**
  * @description Update user email
  * @access Private
  */
-router.route("/:id/email").put(updateEmail);
+router.route("/:id/email").put(jwtAuthMiddleware, updateEmail);
 
 
 /**
  * @description Delete user
  * @access Private
  */
-router.route("/:id").delete(deleteUser);
+router.route("/:id").delete(jwtAuthMiddleware, deleteUser);
 
 
 /**
  * @description Update user location
  * @access Private
  */
-router.route("/:id/location").put(updateLocation);
+router.route("/:id/location").put(jwtAuthMiddleware, updateLocation);
 
 
 export default router;

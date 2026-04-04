@@ -18,6 +18,21 @@
       "key": "worker_id",
       "value": "replace_with_worker_id",
       "type": "string"
+    },
+    {
+      "key": "admin_id",
+      "value": "replace_with_admin_id",
+      "type": "string"
+    },
+    {
+      "key": "category_id",
+      "value": "replace_with_category_id",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "replace_with_token",
+      "type": "string"
     }
   ],
   "item": [
@@ -103,78 +118,6 @@
           }
         },
         {
-          "name": "6. Change User Password",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"oldPassword\": \"password123\",\n  \"newPassword\": \"newpassword123\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/v1/users/{{user_id}}/change-password",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "users", "{{user_id}}", "change-password"]
-            }
-          }
-        },
-        {
-          "name": "7. Update User Email",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"newemail@example.com\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/v1/users/{{user_id}}/email",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "users", "{{user_id}}", "email"]
-            }
-          }
-        },
-        {
-          "name": "8. Update User Location",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"latitude\": 31.5,\\n  \"longitude\": 74.3\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/v1/users/{{user_id}}/location",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "users", "{{user_id}}", "location"]
-            }
-          }
-        },
-        {
-          "name": "9. Update User Profile Image",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"profileImage\": \"https://ik.imagekit.io/dummy/new-profile.jpg\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/api/v1/users/{{user_id}}/profile-image",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "users", "{{user_id}}", "profile-image"]
-            }
-          }
-        },
-        {
           "name": "10. Delete User",
           "request": {
             "method": "DELETE",
@@ -210,50 +153,6 @@
               "raw": "{{base_url}}/api/v1/workers/upload-profile-image",
               "host": ["{{base_url}}"],
               "path": ["api", "v1", "workers", "upload-profile-image"]
-            }
-          }
-        },
-        {
-          "name": "2. Upload Worker CNIC Front",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "image",
-                  "type": "file",
-                  "src": []
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/upload-cnic-front",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "upload-cnic-front"]
-            }
-          }
-        },
-        {
-          "name": "3. Upload Worker CNIC Back",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "image",
-                  "type": "file",
-                  "src": []
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/upload-cnic-back",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "upload-cnic-back"]
             }
           }
         },
@@ -304,120 +203,209 @@
               "path": ["api", "v1", "workers"]
             }
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
         {
-          "name": "7. Get Worker by ID",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/{{worker_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "{{worker_id}}"]
-            }
-          }
-        },
-        {
-          "name": "8. Update Worker Profile",
-          "request": {
-            "method": "PATCH",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"bio\": \"Updated bio\",\n  \"hourlyRate\": 800\n}"
+          "name": "Auth",
+          "item": [
+            {
+              "name": "1. Admin Login",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"admin@apnaustad.com\",\n  \"password\": \"Admin@123\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/login",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "login"]
+                }
+              }
             },
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/{{worker_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "{{worker_id}}"]
+            {
+              "name": "2. Get Admin Profile",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/me",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "me"]
+                }
+              }
             }
-          }
+          ]
         },
         {
-          "name": "9. Change Worker Password",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"oldPassword\": \"password123\",\n  \"newPassword\": \"newpass123\"\n}"
+          "name": "Dashboard",
+          "item": [
+            {
+              "name": "Get Dashboard Stats",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/dashboard/stats",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "dashboard", "stats"]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Worker Management",
+          "item": [
+            {
+              "name": "1. Get All Workers (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/workers",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "workers"]
+                }
+              }
             },
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/{{worker_id}}/change-password",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "{{worker_id}}", "change-password"]
-            }
-          }
-        },
-        {
-          "name": "10. Update Worker Email",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"new_worker_email@example.com\"\n}"
+            {
+              "name": "2. Get Worker Details (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/workers/{{worker_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "workers", "{{worker_id}}"]
+                }
+              }
             },
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/{{worker_id}}/email",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "{{worker_id}}", "email"]
-            }
-          }
-        },
-        {
-          "name": "11. Update Worker Location",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"latitude\": 32.5,\\n  \"longitude\": 73.3\n}"
+            {
+              "name": "3. Verify Worker",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"isVerified\": true\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/workers/{{worker_id}}/verify",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "workers", "{{worker_id}}", "verify"]
+                }
+              }
             },
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/{{worker_id}}/location",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "{{worker_id}}", "location"]
+            {
+              "name": "4. Toggle Worker Active Status",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"isActive\": false\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/workers/{{worker_id}}/status",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "workers", "{{worker_id}}", "status"]
+                }
+              }
             }
-          }
+          ]
         },
         {
-          "name": "12. Update Worker Profile Image",
-          "request": {
-            "method": "PUT",
-            "header": [
-              { "key": "Content-Type", "value": "application/json" }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"profileImage\": \"https://ik.imagekit.io/dummy/new-worker-profile.jpg\"\n}"
+          "name": "Category Management",
+          "item": [
+            {
+              "name": "1. Get All Categories",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/categories",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "categories"]
+                }
+              }
             },
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/{{worker_id}}/profile-image",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "{{worker_id}}", "profile-image"]
+            {
+              "name": "2. Create Category",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Electrician\",\n  \"icon\": \"bolt\",\n  \"color\": \"#FFD700\",\n  \"description\": \"Professional electrical services\",\n  \"sortOrder\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/categories",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "categories"]
+                }
+              }
+            },
+            {
+              "name": "3. Update Category",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"description\": \"Updated description\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/categories/{{category_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "categories", "{{category_id}}"]
+                }
+              }
+            },
+            {
+              "name": "4. Delete Category",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/categories/{{category_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "categories", "{{category_id}}"]
+                }
+              }
             }
-          }
-        },
-        {
-          "name": "13. Delete Worker",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/api/v1/workers/{{worker_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "workers", "{{worker_id}}"]
-            }
-          }
+          ]
         }
       ]
     }

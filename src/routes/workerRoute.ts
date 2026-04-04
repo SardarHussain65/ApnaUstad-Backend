@@ -21,6 +21,7 @@ import {
     handleWorkerCnicFrontUpload,
     handleWorkerCnicBackUpload,
 } from "../middlewares/multer.middleware";
+import { jwtAuthMiddleware } from "../middlewares/jwt.middleware";
 
 const router = Router();
 
@@ -55,48 +56,48 @@ router.route("/login").post(validate(loginWorkerSchema), loginWorker);
  * @description Get all workers
  * @access Private
  */
-router.route("/").get(getAllWorkers);
+router.route("/").get(jwtAuthMiddleware, getAllWorkers);
 
 /**
  * @description Get worker by ID
  * @access Private
  */
-router.route("/:id").get(getWorkerById);
+router.route("/:id").get(jwtAuthMiddleware, getWorkerById);
 
 /**
  * @description Update worker profile
  * @access Private
  */
-router.route("/:id").patch(updateWorkerProfile);
+router.route("/:id").patch(jwtAuthMiddleware, updateWorkerProfile);
 
 /**
  * @description Update worker profile image
  * @access Private
  */
-router.route("/:id/profile-image").put(updateWorkerProfileImage);
+router.route("/:id/profile-image").put(jwtAuthMiddleware, updateWorkerProfileImage);
 
 /**
  * @description Change worker password
  * @access Private
  */
-router.route("/:id/change-password").put(changeWorkerPassword);
+router.route("/:id/change-password").put(jwtAuthMiddleware, changeWorkerPassword);
 
 /**
  * @description Update worker email
  * @access Private
  */
-router.route("/:id/email").put(updateWorkerEmail);
+router.route("/:id/email").put(jwtAuthMiddleware, updateWorkerEmail);
 
 /**
  * @description Delete worker
  * @access Private
  */
-router.route("/:id").delete(deleteWorker);
+router.route("/:id").delete(jwtAuthMiddleware, deleteWorker);
 
 /**
  * @description Update worker location
  * @access Private
  */
-router.route("/:id/location").put(updateWorkerLocation);
+router.route("/:id/location").put(jwtAuthMiddleware, updateWorkerLocation);
 
 export default router;

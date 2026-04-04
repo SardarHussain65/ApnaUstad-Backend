@@ -23,7 +23,7 @@ const userSchema = new Schema<IUser>(
         fullName: { type: String, trim: true, default: '' },
         phone: { type: String, required: [true, 'Phone is required'], unique: true, trim: true },
         email: { type: String, trim: true, lowercase: true, sparse: true, default: null },
-        password: { type: String, required: [true, 'Password is required'], trim: true },
+        password: { type: String, required: [true, 'Password is required'], trim: true, select: false },
         profileImage: { type: String, default: '' },
         address: { type: String, trim: true, default: '' },
         city: { type: String, trim: true, default: '' },
