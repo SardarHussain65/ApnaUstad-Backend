@@ -20,7 +20,8 @@ import {
     handleWorkerCnicFrontUpload,
     handleWorkerCnicBackUpload,
 } from "../middlewares/multer.middleware";
-import { jwtAuthMiddleware } from "../middlewares/jwt.middleware";
+import { workerAuthMiddleware } from "../middlewares/jwt.middleware";
+import { uploadRateLimiter } from "../middlewares/rateLimiter.middleware";
 
 const router = Router();
 
@@ -28,19 +29,19 @@ const router = Router();
  * @description Upload worker profile image → /workers/profile-images/ on ImageKit
  * @access Public
  */
-router.route("/upload-profile-image").post(handleWorkerProfileImageUpload, uploadWorkerProfileImage);
+router.route("/upload-profile-image").post(uploadRateLimiter, handleWorkerProfileImageUpload, uploadWorkerProfileImage);
 
 /**
  * @description Upload worker CNIC front image → /workers/cnic/ on ImageKit
  * @access Public
  */
-router.route("/upload-cnic-front").post(handleWorkerCnicFrontUpload, uploadWorkerCnicFront);
+router.route("/upload-cnic-front").post(uploadRateLimiter, handleWorkerCnicFrontUpload, uploadWorkerCnicFront);
 
 /**
  * @description Upload worker CNIC back image → /workers/cnic/ on ImageKit
  * @access Public
  */
-router.route("/upload-cnic-back").post(handleWorkerCnicBackUpload, uploadWorkerCnicBack);
+router.route("/upload-cnic-back").post(uploadRateLimiter, handleWorkerCnicBackUpload, uploadWorkerCnicBack);
 
 /**
  * @description Register a new worker (pass image URLs from upload endpoints in body)
@@ -51,46 +52,50 @@ router.route("/register").post(validate(registerWorkerSchema), registerWorker);
 
 router.route("/login").post(validate(loginWorkerSchema), loginWorker);
 
+
+
+router.use(workerAuthMiddleware)
+
 /**
  * @description Get worker by ID
  * @access Private
  */
-router.route("/:id").get(jwtAuthMiddleware, getWorkerById);
+router.route("/:id").get(getWorkerById);
 
 /**
  * @description Update worker profile
  * @access Private
  */
-router.route("/:id").patch(jwtAuthMiddleware, updateWorkerProfile);
+router.route("/:id").patch(updateWorkerProfile);
 
 /**
  * @description Update worker profile image
  * @access Private
  */
-router.route("/:id/profile-image").put(jwtAuthMiddleware, updateWorkerProfileImage);
+router.route("/:id/profile-image").put(updateWorkerProfileImage);
 
 /**
  * @description Change worker password
  * @access Private
  */
-router.route("/:id/change-password").put(jwtAuthMiddleware, changeWorkerPassword);
+router.route("/:id/change-password").put(changeWorkerPassword);
 
 /**
  * @description Update worker email
  * @access Private
  */
-router.route("/:id/email").put(jwtAuthMiddleware, updateWorkerEmail);
+router.route("/:id/email").put(updateWorkerEmail);
 
 /**
  * @description Delete worker
  * @access Private
  */
-router.route("/:id").delete(jwtAuthMiddleware, deleteWorker);
+router.route("/:id").delete(deleteWorker);
 
 /**
  * @description Update worker location
  * @access Private
  */
-router.route("/:id/location").put(jwtAuthMiddleware, updateWorkerLocation);
+router.route("/:id/location").put(updateWorkerLocation);
 
 export default router;

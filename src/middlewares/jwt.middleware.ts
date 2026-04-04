@@ -15,6 +15,7 @@ export interface TokenPayload {
     id: string;
     username?: string;
     role?: string;
+    type: 'user' | 'worker' | 'admin';
 }
 
 
@@ -61,6 +62,31 @@ const generateToken = (payload: TokenPayload) => {
     }
     return jwt.sign(payload, config.jwtSecret, { expiresIn: "1h" });
 }
+
+
+/**
+ * Middleware to restrict access to Standard Users only
+ */
+export const userAuthMiddleware = (req: AuthRequest, res: Response, next: NextFunction) => {
+    jwtAuthMiddleware(req, res, () => {
+        if (req.tokenPayload?.type !== 'user') {
+            return res.status(403).json({ message: "Forbidden: User access required" });
+        }
+        next();
+    });
+};
+
+/**
+ * Middleware to restrict access to Workers only
+ */
+export const workerAuthMiddleware = (req: AuthRequest, res: Response, next: NextFunction) => {
+    jwtAuthMiddleware(req, res, () => {
+        if (req.tokenPayload?.type !== 'worker') {
+            return res.status(403).json({ message: "Forbidden: Worker access required" });
+        }
+        next();
+    });
+};
 
 
 export { jwtAuthMiddleware, generateToken };

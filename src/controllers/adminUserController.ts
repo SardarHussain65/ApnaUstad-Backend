@@ -1,7 +1,7 @@
 import User from "../models/User";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, NotFoundError } from "../utils/ApiError";
-import { successResponse } from "../utils/ApiResponse";
+import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -11,7 +11,11 @@ const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * @route GET /api/v1/admin/users
  */
 export const getAllUsers = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { status, search, city } = req.query;
+    const { status, search, city, page = '1', limit = '10' } = req.query;
+
+    const pageNum = parseInt(page as string, 10) || 1;
+    const limitNum = parseInt(limit as string, 10) || 10;
+    const skip = (pageNum - 1) * limitNum;
 
     let query: any = {};
     if (status !== undefined) {
@@ -32,9 +36,13 @@ export const getAllUsers = asyncHandler(async (req: AdminAuthRequest, res) => {
     }
 
     // Admins get to see everything for analysis
-    const users = await User.find(query).sort({ createdAt: -1 });
+    const total = await User.countDocuments(query);
+    const users = await User.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum);
 
-    return successResponse(res, 200, "Users fetched successfully", users);
+    return paginatedResponse(res, 200, "Users fetched successfully", users, pageNum, limitNum, total);
 });
 
 /**

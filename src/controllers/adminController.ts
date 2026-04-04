@@ -39,8 +39,9 @@ export const loginAdmin = asyncHandler(async (req, res) => {
     // Note: We cast to any because the existing TokenPayload interface is strict
     const token = generateToken({
         id: admin._id.toString(),
-        role: admin.role
-    } as any);
+        role: admin.role,
+        type: 'admin'
+    });
 
     // Remove password from response
     const adminData = admin.toObject();

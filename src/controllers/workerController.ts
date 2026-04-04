@@ -138,7 +138,11 @@ export const loginWorker = asyncHandler(async (req, res) => {
         await worker.save();
     }
 
-    const token = generateToken({ id: worker._id.toString(), username: worker.fullName });
+    const token = generateToken({ 
+        id: worker._id.toString(), 
+        username: worker.fullName,
+        type: 'worker'
+    });
 
     // Remove sensitive fields
     const workerResponse = worker.toObject();
@@ -187,9 +191,16 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     if (latitude !== undefined && latitude !== null) worker.location.coordinates[1] = latitude;
     if (longitude !== undefined && longitude !== null) worker.location.coordinates[0] = longitude;
 
-    if (fullName !== undefined) worker.fullName = fullName;
-    if (phone !== undefined) worker.phone = phone;
-    if (email !== undefined) worker.email = email;
+    if (email !== undefined) {
+        const existingWorkerEmail = await Workers.findOne({ email, _id: { $ne: id as any } });
+        if (existingWorkerEmail) throw new ConflictError("Email already in use by another worker");
+        worker.email = email;
+    }
+    if (phone !== undefined) {
+        const existingWorkerPhone = await Workers.findOne({ phone, _id: { $ne: id as any } });
+        if (existingWorkerPhone) throw new ConflictError("Phone number already in use by another worker");
+        worker.phone = phone;
+    }
     if (bio !== undefined) worker.bio = bio;
     if (experience !== undefined) worker.experience = experience;
     if (city !== undefined) worker.city = city;
@@ -200,8 +211,16 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     if (profileImage !== undefined) worker.profileImage = profileImage;
     if (fcmToken !== undefined) worker.fcmToken = fcmToken;
 
-    await worker.save();
-    return successResponse(res, 200, "Worker updated successfully", worker);
+    try {
+        await worker.save();
+    } catch (error: any) {
+        if (error.code === 11000) {
+            throw new ConflictError("Email or phone number already in use");
+        }
+        throw error;
+    }
+    const updatedWorker = await Workers.findById(id).select("-password -fcmToken");
+    return successResponse(res, 200, "Worker updated successfully", updatedWorker);
 });
 
 export const deleteWorker = asyncHandler(async (req: AuthRequest, res) => {
@@ -257,8 +276,20 @@ export const updateWorkerEmail = asyncHandler(async (req: AuthRequest, res) => {
 
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");
+    
+    // Check for email uniqueness
+    const existingWorker = await Workers.findOne({ email, _id: { $ne: id as any } });
+    if (existingWorker) throw new ConflictError("Email already in use by another worker");
+
     worker.email = email;
-    await worker.save();
+    try {
+        await worker.save();
+    } catch (error: any) {
+        if (error.code === 11000) {
+            throw new ConflictError("Email already in use");
+        }
+        throw error;
+    }
     return successResponse(res, 200, "Email updated successfully", worker);
 });
 

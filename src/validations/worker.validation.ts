@@ -28,7 +28,7 @@ export const loginWorkerSchema = z.object({
     phone: z.string({ error: "Phone number is required" }).min(11, "Phone number must be at least 11 digits long").optional(),
     email: z.string({ error: "Email must be a string" }).email("Invalid email address").optional(),
     fcmToken: z.string({ error: "FCM token must be a string" }).optional()
-}).refine((data) => data.email || data.phone, {
-    message: "Either email or phone is required",
+}).refine((data) => (data.email && !data.phone) || (data.phone && !data.email), {
+    message: "Provide either email or phone, not both",
     path: ["email"]
 });

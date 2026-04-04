@@ -1,7 +1,7 @@
 import Worker from "../models/Workers";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, NotFoundError } from "../utils/ApiError";
-import { successResponse } from "../utils/ApiResponse";
+import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 
 /**
@@ -12,16 +12,24 @@ import { AdminAuthRequest } from "../middlewares/admin.middleware";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export const getAllWorkers = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { status, verified, city } = req.query;
+    const { status, verified, city, page = '1', limit = '10' } = req.query;
+
+    const pageNum = parseInt(page as string, 10) || 1;
+    const limitNum = parseInt(limit as string, 10) || 10;
+    const skip = (pageNum - 1) * limitNum;
 
     let query: any = {};
     if (verified !== undefined) query.isVerified = verified === 'true';
     if (status !== undefined) query.isActive = status === 'active';
     if (city) query.city = new RegExp(escapeRegex(city as string), 'i');
 
-    const workers = await Worker.find(query).sort({ createdAt: -1 });
+    const total = await Worker.countDocuments(query);
+    const workers = await Worker.find(query)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum);
 
-    return successResponse(res, 200, "Workers fetched successfully", workers);
+    return paginatedResponse(res, 200, "Workers fetched successfully", workers, pageNum, limitNum, total);
 });
 
 /**

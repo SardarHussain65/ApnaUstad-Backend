@@ -14,6 +14,7 @@ import { validateEnv, getConfig } from './config/env';
 import { connectDB } from './config/db';
 import app from './app';
 import logger from './config/logger';
+import { cleanupOrphanedUploads } from "./scripts/cleanupUploads";
 
 // Validate environment variables before starting
 validateEnv();
@@ -30,6 +31,16 @@ const startServer = async () => {
         const server = app.listen(config.port, () => {
             logger.info(`🚀 Server running on port ${config.port}`);
             logger.info(`📍 Environment: ${config.nodeEnv}`);
+
+            // Start periodic cleanup task for orphaned uploads (every 24 hours)
+            // We run it once shortly after boot (2 hours delay) then every 24h
+            setTimeout(() => {
+                cleanupOrphanedUploads().catch(err => logger.error("Scheduled cleanup failed", err));
+            }, 1000 * 60 * 60 * 2);
+
+            setInterval(() => {
+                cleanupOrphanedUploads().catch(err => logger.error("Scheduled cleanup failed", err));
+            }, 1000 * 60 * 60 * 24);
         });
 
         // Handle unhandled promise rejections

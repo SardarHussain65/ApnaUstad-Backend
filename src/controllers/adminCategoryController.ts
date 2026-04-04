@@ -1,7 +1,9 @@
 import Category from "../models/Category";
+import Worker from "../models/Workers";
+import Booking from "../models/Booking";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, NotFoundError, ConflictError } from "../utils/ApiError";
-import { successResponse } from "../utils/ApiResponse";
+import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 
 /**
@@ -9,8 +11,19 @@ import { AdminAuthRequest } from "../middlewares/admin.middleware";
  * @route GET /api/v1/admin/categories
  */
 export const getAllCategories = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const categories = await Category.find().sort({ sortOrder: 1 });
-    return successResponse(res, 200, "Categories fetched successfully", categories);
+    const { page = '1', limit = '10' } = req.query;
+
+    const pageNum = parseInt(page as string, 10) || 1;
+    const limitNum = parseInt(limit as string, 10) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    const total = await Category.countDocuments();
+    const categories = await Category.find()
+        .sort({ sortOrder: 1 })
+        .skip(skip)
+        .limit(limitNum);
+
+    return paginatedResponse(res, 200, "Categories fetched successfully", categories, pageNum, limitNum, total);
 });
 
 /**
@@ -26,7 +39,7 @@ export const createCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
 
     const existingCategory = await Category.findOne({ name });
     if (existingCategory) {
-        throw new BadRequestError("Category with this name already exists");
+        throw new ConflictError("Category with this name already exists");
     }
 
     try {
@@ -88,6 +101,15 @@ export const deleteCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
     const category = await Category.findById(id);
     if (!category) {
         throw new NotFoundError("Category not found");
+    }
+
+    // Check for dependent Worker and Booking records referencing this category
+    const categoryName = category.name;
+    const workerExists = await Worker.exists({ category: categoryName });
+    const bookingExists = await Booking.exists({ category: categoryName });
+
+    if (workerExists || bookingExists) {
+        throw new BadRequestError("Cannot delete category as it is currently assigned to workers or bookings");
     }
 
     await category.deleteOne();

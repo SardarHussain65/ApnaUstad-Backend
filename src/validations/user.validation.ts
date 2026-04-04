@@ -20,8 +20,8 @@ const loginUserSchema = z.object({
     phone: z.string({ error: "Phone number must be a string" }).min(10, "Phone number must be at least 10 digits long").optional(),
     password: z.string({ error: "Password is required" }).min(6, "Password must be at least 6 characters long"),
     fcmToken: z.string({ error: "FCM token must be a string" }).optional()
-}).refine((data) => data.email || data.phone, {
-    message: "Either email or phone is required",
+}).refine((data) => (data.email && !data.phone) || (data.phone && !data.email), {
+    message: "Provide either email or phone, not both",
     path: ["email"]
 });
 

@@ -112,7 +112,11 @@ export const loginUser = asyncHandler(async (req, res) => {
     }
 
     // 6. Generate JWT token
-    const token = generateToken({ id: user._id.toString(), username: user.fullName });
+    const token = generateToken({ 
+        id: user._id.toString(), 
+        username: user.fullName,
+        type: 'user'
+    });
 
     // 7. Remove sensitive fields
     const userResponse = user.toObject();
@@ -158,15 +162,29 @@ export const updateProfile = asyncHandler(async (req: AuthRequest, res) => {
     if (longitude !== undefined && longitude !== null) user.location.coordinates[0] = longitude;
 
     // Conditionally update simple fields
-    if (fullName !== undefined) user.fullName = fullName;
-    if (email !== undefined) user.email = email;
-    if (phone !== undefined) user.phone = phone;
+    if (email !== undefined) {
+        const existingEmail = await User.findOne({ email, _id: { $ne: id as any } });
+        if (existingEmail) throw new ConflictError("Email already in use by another user");
+        user.email = email;
+    }
+    if (phone !== undefined) {
+        const existingPhone = await User.findOne({ phone, _id: { $ne: id as any } });
+        if (existingPhone) throw new ConflictError("Phone number already in use by another user");
+        user.phone = phone;
+    }
     if (address !== undefined) user.address = address;
     if (city !== undefined) user.city = city;
     if (profileImage !== undefined) user.profileImage = profileImage;
     if (fcmToken !== undefined) user.fcmToken = fcmToken;
 
-    await user.save();
+    try {
+        await user.save();
+    } catch (error: any) {
+        if (error.code === 11000) {
+            throw new ConflictError("Email or phone number already in use");
+        }
+        throw error;
+    }
     return successResponse(res, 200, "User updated successfully", user);
 });
 
@@ -226,8 +244,20 @@ export const updateEmail = asyncHandler(async (req: AuthRequest, res) => {
 
     const user = await User.findById(id);
     if (!user) throw new BadRequestError("User not found");
+
+    // Check for email uniqueness
+    const existingUser = await User.findOne({ email, _id: { $ne: id as any } });
+    if (existingUser) throw new ConflictError("Email already in use by another user");
+
     user.email = email;
-    await user.save();
+    try {
+        await user.save();
+    } catch (error: any) {
+        if (error.code === 11000) {
+            throw new ConflictError("Email already in use");
+        }
+        throw error;
+    }
     return successResponse(res, 200, "Email updated successfully", user);
 });
 
