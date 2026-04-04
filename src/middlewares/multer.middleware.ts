@@ -2,21 +2,22 @@ import multer, { FileFilterCallback } from "multer";
 import { Request, Response, NextFunction } from "express";
 import { toFile } from "@imagekit/nodejs";
 
-
 import imagekit from "../config/imagekit.config";
 
-
-
+// -----------------------------------------------
+// 🔷 STEP 1: MEMORY STORAGE
+// -----------------------------------------------
 const storage = multer.memoryStorage();
 
+// -----------------------------------------------
+// 🔷 STEP 2: FILE FILTER (images only)
+// -----------------------------------------------
 const fileFilter = (
     req: Request,
     file: Express.Multer.File,
     callback: FileFilterCallback
 ): void => {
     const allowedTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-
-
     if (allowedTypes.includes(file.mimetype)) {
         callback(null, true);
     } else {
@@ -27,51 +28,29 @@ const fileFilter = (
 // -----------------------------------------------
 // 🔷 STEP 3: MULTER INSTANCE
 // -----------------------------------------------
-
 const upload = multer({
-    storage,       // use memoryStorage
-    fileFilter,    // use our image-only filter
+    storage,
+    fileFilter,
     limits: {
-        fileSize: 5 * 1024 * 1024,  // 5MB max
+        fileSize: 5 * 1024 * 1024, // 5MB max
     },
 });
 
 // -----------------------------------------------
-// 🔷 STEP 4: UPLOAD TO IMAGEKIT (New SDK Way)
+// 🔷 STEP 4: UPLOAD TO IMAGEKIT
 // -----------------------------------------------
-// Official docs show this pattern:
-// await client.files.upload({
-//     file: await toFile(Buffer.from('my bytes'), 'file'),
-//     fileName: 'fileName'
-// });
-//
-// So the flow is:
 // req.file.buffer (raw binary) → toFile() → imagekit.files.upload()
 
 const uploadToImageKit = async (
     file: Express.Multer.File,
     folder: string = "profiles"
 ): Promise<string> => {
-
-    // "toFile()" → official SDK helper that wraps a Buffer into
-    // a File-like object that ImageKit's upload() understands
-    // Arg 1: the Buffer (binary image data from multer)
-    // Arg 2: the filename string
     const imageFile = await toFile(file.buffer, file.originalname);
 
-    // "imagekit.files.upload()" → the new SDK method (note: .files.upload not .upload)
-    // Old SDK: imagekit.upload({ file, fileName, folder })
-    // New SDK: imagekit.files.upload({ file, fileName, folder })  ← note the ".files."
     const response = await imagekit.files.upload({
         file: imageFile,
-        // The wrapped file object from toFile()
-
         fileName: `${Date.now()}-${file.originalname}`,
-        // Unique filename → timestamp prefix prevents overwriting
-
         folder: `/${folder}`,
-        // Folder in your ImageKit media library
-        // e.g. "/profiles"
     });
 
     if (!response.url) {
@@ -79,66 +58,76 @@ const uploadToImageKit = async (
     }
 
     return response.url;
-    // "response.url" → the CDN URL of the uploaded image
-    // e.g. "https://ik.imagekit.io/your_id/profiles/1711234567890-photo.jpg"
 };
 
 // -----------------------------------------------
-// 🔷 STEP 5: COMBINED MIDDLEWARE
+// 🔷 STEP 5: EXTENDED REQUEST TYPE
 // -----------------------------------------------
-// Extends Request to carry our custom uploadedImageUrl field
-
 interface UploadRequest extends Request {
     uploadedImageUrl?: string;
 }
 
-const handleProfileImageUpload = (
+// -----------------------------------------------
+// 🔷 STEP 6: MIDDLEWARE FACTORY
+// -----------------------------------------------
+// Creates a single-file upload middleware for any field name and ImageKit folder.
+// This is the same pattern used for user profile images, reused for all worker images.
+//
+// Usage:
+//   createUploadMiddleware("profileImage", "workers/profile-images")
+//   createUploadMiddleware("cnicFrontImage", "workers/cnic")
+//   createUploadMiddleware("cnicBackImage",  "workers/cnic")
+
+const createUploadMiddleware = (fieldName: string, folder: string) => (
     req: UploadRequest,
     res: Response,
     next: NextFunction
 ): void => {
-
-    // Run multer first → processes multipart/form-data
-    // .single("profileImage") → expects ONE file under field name "profileImage"
-    upload.single("profileImage")(req, res, async (err) => {
-
-        // Handle multer-specific errors (file too big, wrong field name, etc.)
+    upload.single(fieldName)(req, res, async (err) => {
         if (err instanceof multer.MulterError) {
             res.status(400).json({ error: err.message });
             return;
         }
-
-        // Handle our custom errors (wrong file type from fileFilter)
         if (err) {
             res.status(400).json({ error: err.message });
             return;
         }
 
-        // No file was attached to the request at all
+        // No file provided → optional, just continue
         if (!req.file) {
-            // Optional image: move to the route handler without error
             next();
             return;
         }
 
         try {
-            // Upload buffer → ImageKit CDN → get back URL
-            const imageUrl = await uploadToImageKit(req.file, "profiles");
-
-            // Attach URL to request so the next route handler can use it
+            const imageUrl = await uploadToImageKit(req.file, folder);
             req.uploadedImageUrl = imageUrl;
-
-            next(); // ✅ move to the route handler
+            next();
         } catch (uploadError) {
-            console.error("ImageKit upload failed:", uploadError);
-
-            // New SDK throws typed errors — from the docs:
-            // if (err instanceof ImageKit.APIError) { err.status, err.name }
+            console.error(`ImageKit upload failed [${folder}]:`, uploadError);
             res.status(500).json({ error: "Image upload failed" });
         }
     });
 };
 
-export { handleProfileImageUpload, uploadToImageKit };
+// -----------------------------------------------
+// 🔷 STEP 7: NAMED MIDDLEWARE INSTANCES
+// -----------------------------------------------
+
+// User
+const handleProfileImageUpload = createUploadMiddleware("profileImage", "profiles");
+
+// Worker — 3 separate upload endpoints, all CNIC images go to the same /workers/cnic folder
+const handleWorkerProfileImageUpload = createUploadMiddleware("profileImage",   "workers/profile-images");
+const handleWorkerCnicFrontUpload    = createUploadMiddleware("cnicFrontImage", "workers/cnic");
+const handleWorkerCnicBackUpload     = createUploadMiddleware("cnicBackImage",  "workers/cnic");
+
+export {
+    handleProfileImageUpload,
+    handleWorkerProfileImageUpload,
+    handleWorkerCnicFrontUpload,
+    handleWorkerCnicBackUpload,
+    uploadToImageKit,
+};
 export type { UploadRequest };
 export default upload;

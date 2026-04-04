@@ -1,6 +1,6 @@
 import { z, ZodError } from 'zod';
 import { Request, Response, NextFunction } from 'express';
-import { AppError, ValidationError } from '../utils/ApiError';
+import { ValidationError } from '../utils/ApiError';
 
 type ZodSchema = z.ZodTypeAny;
 

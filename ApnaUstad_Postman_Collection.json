@@ -1,0 +1,413 @@
+{
+  "info": {
+    "name": "ApnaUstad Backend API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:5000",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "replace_with_user_id",
+      "type": "string"
+    },
+    {
+      "key": "worker_id",
+      "value": "replace_with_worker_id",
+      "type": "string"
+    },
+    {
+      "key": "admin_id",
+      "value": "replace_with_admin_id",
+      "type": "string"
+    },
+    {
+      "key": "category_id",
+      "value": "replace_with_category_id",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "replace_with_token",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "1. Register User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"User Name\",\n  \"phone\": \"03001234567\",\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\",\n  \"address\": \"House 123, Street 4\",\n  \"city\": \"Lahore\",\n  \"latitude\": 31.5204,\n  \"longitude\": 74.3587\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "register"]
+            }
+          }
+        },
+        {
+          "name": "2. Login User",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "login"]
+            }
+          }
+        },
+        {
+          "name": "3. Get All Users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users"]
+            }
+          }
+        },
+        {
+          "name": "4. Get User by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "{{user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "5. Update User Profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Updated User Name\",\n  \"address\": \"Updated Address\",\n  \"city\": \"Updated City\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "{{user_id}}"]
+            }
+          }
+        },
+        {
+          "name": "10. Delete User",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "users", "{{user_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workers",
+      "item": [
+        {
+          "name": "1. Upload Worker Profile Image",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/workers/upload-profile-image",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "workers", "upload-profile-image"]
+            }
+          }
+        },
+        {
+          "name": "4. Register Worker",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Worker Name\",\n  \"phone\": \"03111234567\",\n  \"email\": \"worker@example.com\",\n  \"password\": \"password123\",\n  \"cnicNumber\": \"4210112345671\",\n  \"category\": \"Electrician\",\n  \"skills\": [\"Wiring\", \"Repairs\"],\n  \"hourlyRate\": 500,\n  \"bio\": \"Professional electrician\",\n  \"experience\": 5,\n  \"city\": \"Karachi\",\n  \"address\": \"Worker Address\",\n  \"latitude\": 24.86,\n  \"longitude\": 67.0\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/workers/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "workers", "register"]
+            }
+          }
+        },
+        {
+          "name": "5. Login Worker",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"03111234567\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/workers/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "workers", "login"]
+            }
+          }
+        },
+        {
+          "name": "6. Get All Workers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/workers",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "workers"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Auth",
+          "item": [
+            {
+              "name": "1. Admin Login",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"admin@apnaustad.com\",\n  \"password\": \"Admin@123\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/login",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "login"]
+                }
+              }
+            },
+            {
+              "name": "2. Get Admin Profile",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/me",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "me"]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Dashboard",
+          "item": [
+            {
+              "name": "Get Dashboard Stats",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/dashboard/stats",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "dashboard", "stats"]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Worker Management",
+          "item": [
+            {
+              "name": "1. Get All Workers (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/workers",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "workers"]
+                }
+              }
+            },
+            {
+              "name": "2. Get Worker Details (Admin)",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/workers/{{worker_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "workers", "{{worker_id}}"]
+                }
+              }
+            },
+            {
+              "name": "3. Verify Worker",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"isVerified\": true\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/workers/{{worker_id}}/verify",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "workers", "{{worker_id}}", "verify"]
+                }
+              }
+            },
+            {
+              "name": "4. Toggle Worker Active Status",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"isActive\": false\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/workers/{{worker_id}}/status",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "workers", "{{worker_id}}", "status"]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Category Management",
+          "item": [
+            {
+              "name": "1. Get All Categories",
+              "request": {
+                "method": "GET",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/categories",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "categories"]
+                }
+              }
+            },
+            {
+              "name": "2. Create Category",
+              "request": {
+                "method": "POST",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Electrician\",\n  \"icon\": \"bolt\",\n  \"color\": \"#FFD700\",\n  \"description\": \"Professional electrical services\",\n  \"sortOrder\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/categories",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "categories"]
+                }
+              }
+            },
+            {
+              "name": "3. Update Category",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"description\": \"Updated description\"\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/categories/{{category_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "categories", "{{category_id}}"]
+                }
+              }
+            },
+            {
+              "name": "4. Delete Category",
+              "request": {
+                "method": "DELETE",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/categories/{{category_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["api", "v1", "admin", "categories", "{{category_id}}"]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
