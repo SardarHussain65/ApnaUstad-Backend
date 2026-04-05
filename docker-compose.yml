@@ -8,9 +8,9 @@ services:
       dockerfile: Dockerfile
     container_name: apna-ustad-backend
     
-    # Map the container's port 3000 to your host's port 3000
+    # Map the container's port 5000 to your host's port 5000
     ports:
-      - "3000:3000"
+      - "5000:5000"
     
     # Pass environment variables from your .env file
     env_file:
