@@ -12,6 +12,7 @@ import mongoose from "mongoose";
 
 import { validateEnv, getConfig } from './config/env';
 import { connectDB } from './config/db';
+import { initializeFirebase } from './config/firebase';
 import app from './app';
 import logger from './config/logger';
 import { cleanupOrphanedUploads } from "./scripts/cleanupUploads";
@@ -24,6 +25,9 @@ const config = getConfig();
 // Connect to database and start server
 const startServer = async () => {
     try {
+        // Initialize Firebase Admin
+        initializeFirebase();
+
         // Connect to MongoDB
         await connectDB();
 

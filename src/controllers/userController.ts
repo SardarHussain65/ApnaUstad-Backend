@@ -4,6 +4,7 @@ import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, Un
 import { successResponse } from "../utils/ApiResponse";
 import { UploadRequest } from "../middlewares/multer.middleware";
 import { generateToken, AuthRequest } from "../middlewares/jwt.middleware";
+import admin from "../config/firebase";
 
 /**
  * Handle direct image upload returning the ImageKit URL
@@ -16,6 +17,25 @@ export const uploadImage = asyncHandler(async (req: UploadRequest, res) => {
 
     return successResponse(res, 200, "Image uploaded successfully", { imageUrl: req.uploadedImageUrl });
 });
+
+/**
+ * Check if a user exists by phone
+ * @route GET /api/v1/users/check-user
+ */
+export const checkUserExists = asyncHandler(async (req, res) => {
+    const { phone } = req.query;
+
+    if (!phone) {
+        throw new BadRequestError("Phone number is required");
+    }
+
+    const user = await User.findOne({ phone: phone as string });
+
+    return successResponse(res, 200, "User check completed", {
+        exists: !!user
+    });
+});
+
 
 /**
  * Register a new user
@@ -302,4 +322,65 @@ export const updateLocation = asyncHandler(async (req: AuthRequest, res) => {
     return successResponse(res, 200, "Location updated successfully", user);
 });
 
+/**
+ * Handle Google Authentication
+ * @route POST /api/v1/users/google-auth
+ */
+export const googleAuthUser = asyncHandler(async (req, res) => {
+    const { idToken } = req.body;
 
+    if (!idToken) {
+        throw new BadRequestError("Google ID Token is required");
+    }
+
+    if (!admin.apps.length) {
+        throw new InternalServerError("Firebase is not configured on the server.");
+    }
+
+    // 1. Verify Token
+    let decodedToken;
+    try {
+        decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (error: any) {
+        console.error("Firebase Google Auth Error:", error);
+        throw new UnauthorizedError("Invalid or expired Google ID token");
+    }
+
+    const { email, name, picture } = decodedToken;
+
+    if (!email) {
+        throw new BadRequestError("No email attached to this Google account");
+    }
+
+    // 2. Find User by Email
+    const user = await User.findOne({ email }).select("+password +fcmToken");
+
+    if (user) {
+        // User exists -> Log them in
+        const token = generateToken({ 
+            id: user._id.toString(), 
+            username: user.fullName,
+            type: 'user'
+        });
+
+        const userResponse = user.toObject();
+        delete userResponse.password;
+        delete userResponse.fcmToken;
+
+        return successResponse(res, 200, "User logged in successfully via Google", { 
+            exists: true,
+            user: userResponse, 
+            token 
+        });
+    } else {
+        // User does NOT exist -> Return data for registration completion
+        return successResponse(res, 200, "Google verification successful, please complete profile", {
+            exists: false,
+            googleData: {
+                email,
+                fullName: name || "",
+                profileImage: picture || ""
+            }
+        });
+    }
+});

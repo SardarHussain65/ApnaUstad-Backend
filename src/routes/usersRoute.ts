@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { registerUser, loginUser, uploadImage, updateProfileImage, updateLocation, getUserById, updateProfile, changePassword, deleteUser, updateEmail } from "../controllers/userController";
+import { registerUser, loginUser, uploadImage, checkUserExists, updateProfileImage, updateLocation, getUserById, updateProfile, changePassword, deleteUser, updateEmail, googleAuthUser } from "../controllers/userController";
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
 import { registerUserSchema, loginUserSchema } from "../validations/user.validation";
@@ -26,6 +26,17 @@ router.route("/register").post(validate(registerUserSchema), registerUser);
  */
 router.route("/login").post(validate(loginUserSchema), loginUser);
 
+/**
+ * @description Check if user exists by phone
+ * @access Public
+ */
+router.route("/check-user").get(checkUserExists);
+
+/**
+ * @description Login / Verify user with Google ID Token
+ * @access Public
+ */
+router.route("/google-auth").post(googleAuthUser);
 
 
 
