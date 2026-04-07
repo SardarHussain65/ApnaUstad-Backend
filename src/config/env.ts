@@ -42,6 +42,9 @@ const getConfig = () => ({
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '1h',
     clientUrl: process.env.CLIENT_URL || '*',
     imagekitPrivateKey: process.env.IMAGEKIT_PRIVATE_KEY as string,
+    allowFirebaseInitFailure: process.env.ALLOW_FIREBASE_INIT_FAILURE === 'true',
+    skipFirebaseInit: process.env.SKIP_FIREBASE_INIT === 'true',
+    platformFeePercentage: parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || '10'),
 
 });
 

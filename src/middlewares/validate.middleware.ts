@@ -15,6 +15,10 @@ const validate = (schema: ZodSchema) => {
                     field: e.path.join('.'),
                     message: e.message
                 }));
+
+                // 🪵 Log validation errors to console for easier debugging
+                console.warn("Validation Error [Zod]:", JSON.stringify(errors, null, 2));
+
                 return next(new ValidationError('Validation failed', errors));
             }
 

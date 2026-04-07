@@ -45,6 +45,24 @@ export const uploadWorkerCnicBack = asyncHandler(async (req: UploadRequest, res)
 });
 
 /**
+ * Check if a worker exists by phone
+ * @route GET /api/v1/workers/check-worker
+ */
+export const checkWorkerExists = asyncHandler(async (req, res) => {
+    const { phone } = req.query;
+
+    if (!phone) {
+        throw new BadRequestError("Phone number is required");
+    }
+
+    const worker = await Workers.findOne({ phone: phone as string });
+
+    return successResponse(res, 200, "Worker check completed", {
+        exists: !!worker
+    });
+});
+
+/**
  * Register a new worker
  * @route POST /api/v1/workers/register
  *

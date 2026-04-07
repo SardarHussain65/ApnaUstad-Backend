@@ -1,5 +1,10 @@
 import { Router } from "express";
-import { registerUser, loginUser, uploadImage, checkUserExists, updateProfileImage, updateLocation, getUserById, updateProfile, changePassword, deleteUser, updateEmail, googleAuthUser } from "../controllers/userController";
+import { 
+    registerUser, loginUser, uploadImage, checkUserExists, 
+    updateProfileImage, updateLocation, getUserById, 
+    updateProfile, changePassword, deleteUser, 
+    updateEmail, googleAuthUser, getCategories 
+} from "../controllers/userController";
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
 import { registerUserSchema, loginUserSchema } from "../validations/user.validation";
@@ -31,6 +36,12 @@ router.route("/login").post(validate(loginUserSchema), loginUser);
  * @access Public
  */
 router.route("/check-user").get(checkUserExists);
+
+/**
+ * @description Get all active categories (Public)
+ * @access Public
+ */
+router.route("/categories").get(getCategories);
 
 /**
  * @description Login / Verify user with Google ID Token

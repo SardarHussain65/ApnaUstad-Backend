@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const registerWorkerSchema = z.object({
     fullName: z.string({ error: "Full name is required" }).min(3, "Full name must be at least 3 characters long"),
-    phone: z.string({ error: "Phone number is required" }).min(11, "Phone number must be at least 11 digits long"),
+    phone: z.string({ error: "Phone number is required" }).min(9, "Phone number must be at least 9 digits long"),
     email: z.string({ error: "Email must be a string" }).email("Invalid email address").optional(),
     password: z.string({ error: "Password is required" }).min(6, "Password must be at least 6 characters long"),
     cnicNumber: z.string({ error: "CNIC number is required" }).min(13, "CNIC number must be at least 13 digits long"),

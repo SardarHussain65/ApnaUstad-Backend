@@ -1,6 +1,9 @@
 import { Response } from "express";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import Booking from "../models/Booking";
+import Worker from "../models/Workers";
+import { getConfig } from "../config/env";
+import logger from "../config/logger";
 
 /**
  * @description Create a new booking
@@ -16,10 +19,24 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
         }
 
         const {
-            worker, category, description, scheduledDate, scheduledTime,
-            estimatedHours, hourlyRate, subtotal, platformFee, totalAmount,
-            workerEarning, address, longitude, latitude
+            worker: workerId, category, description, scheduledDate, scheduledTime,
+            estimatedHours, address, longitude, latitude
         } = req.body;
+
+        // Fetch authoritative worker data
+        const workerProfile = await Worker.findById(workerId);
+        if (!workerProfile) {
+            res.status(404).json({ success: false, message: "Worker not found" });
+            return;
+        }
+
+        const config = getConfig();
+        const hourlyRate = workerProfile.hourlyRate;
+        const subtotal = estimatedHours * hourlyRate;
+        const platformFeePercentage = config.platformFeePercentage || 10;
+        const platformFee = Math.round((subtotal * (platformFeePercentage / 100)) * 100) / 100;
+        const totalAmount = subtotal + platformFee;
+        const workerEarning = subtotal - platformFee;
 
         const location = (longitude !== undefined && latitude !== undefined) ? {
             type: "Point",
@@ -28,7 +45,7 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
 
         const booking = await Booking.create({
             customer: customerId,
-            worker,
+            worker: workerId,
             category,
             description,
             scheduledDate,
@@ -49,7 +66,8 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
             data: booking
         });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        logger.error("Error in createBooking:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 
@@ -61,21 +79,36 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
 export const getBookingById = async (req: AuthRequest, res: Response) => {
     try {
         const { id } = req.params;
-        const booking = await Booking.findById(id)
-            .populate('customer', 'fullName email phone profileImage')
-            .populate('worker', 'fullName email phone profileImage category averageRating');
+        const userId = req.tokenPayload?.id;
+        const userType = req.tokenPayload?.type;
+
+        // Load booking without population first to check ownership
+        const booking = await Booking.findById(id);
 
         if (!booking) {
             res.status(404).json({ success: false, message: "Booking not found" });
             return;
         }
 
+        // Authorization Check: Only customer, worker, or admin can access
+        if (!isAuthorizedForBooking(booking, req.tokenPayload)) {
+            res.status(403).json({ success: false, message: "Forbidden: You are not authorized to view this booking" });
+            return;
+        }
+
+        // If authorized, populate sensitive fields
+        await booking.populate([
+            { path: 'customer', select: 'fullName email phone profileImage' },
+            { path: 'worker', select: 'fullName email phone profileImage category averageRating' }
+        ]);
+
         res.status(200).json({
             success: true,
             data: booking
         });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        logger.error("Error in getBookingById:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 
@@ -109,7 +142,8 @@ export const getUserBookings = async (req: AuthRequest, res: Response) => {
             }
         });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        logger.error("Error in getUserBookings:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 
@@ -143,7 +177,8 @@ export const getWorkerBookings = async (req: AuthRequest, res: Response) => {
             }
         });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        logger.error("Error in getWorkerBookings:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 
@@ -155,9 +190,9 @@ export const getWorkerBookings = async (req: AuthRequest, res: Response) => {
 export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
     try {
         const { id } = req.params;
-        const { status, cancelReason } = req.body;
+        const { status: nextStatus, cancelReason } = req.body;
         const userId = req.tokenPayload?.id;
-        const userType = req.tokenPayload?.type; // 'user' or 'worker'
+        const userType = req.tokenPayload?.type; // 'user', 'worker', or 'admin'
 
         const booking = await Booking.findById(id);
 
@@ -166,17 +201,64 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
              return;
         }
 
-        // Verify ownership (Only the involved customer or worker can update it)
-        if (booking.customer.toString() !== userId && booking.worker.toString() !== userId) {
+        // Verify ownership (Only the involved customer, worker, or an admin can update it)
+        const isWorker = booking.worker.toString() === userId;
+        const isAdmin = userType === 'admin' || req.tokenPayload?.role === 'admin' || req.tokenPayload?.role === 'superadmin';
+
+        if (!isAuthorizedForBooking(booking, req.tokenPayload)) {
             res.status(403).json({ success: false, message: "Forbidden: You are not authorized to update this booking" });
             return;
         }
 
+        const currentStatus = booking.status;
+
+        // 1. Prevent updates to terminal states
+        if (currentStatus === 'completed' || currentStatus === 'cancelled') {
+            res.status(400).json({ success: false, message: `Cannot update booking from terminal state: ${currentStatus}` });
+            return;
+        }
+
+        // 2. Define allowed transitions and role permissions
+        let isTransitionAllowed = false;
+
+        if (isAdmin) {
+            isTransitionAllowed = true; // Admin can perform any transition for now
+        } else {
+            switch (nextStatus) {
+                case 'accepted':
+                    // Only worker can accept from pending
+                    if (currentStatus === 'pending' && isWorker) isTransitionAllowed = true;
+                    break;
+                case 'ongoing':
+                    // Only worker can start from accepted
+                    if (currentStatus === 'accepted' && isWorker) isTransitionAllowed = true;
+                    break;
+                case 'completed':
+                    // Only worker can complete from ongoing
+                    if (currentStatus === 'ongoing' && isWorker) isTransitionAllowed = true;
+                    break;
+                case 'cancelled':
+                    // Both can cancel if not already completed/cancelled
+                    isTransitionAllowed = true;
+                    break;
+                default:
+                    isTransitionAllowed = false;
+            }
+        }
+
+        if (!isTransitionAllowed) {
+            res.status(400).json({ 
+                success: false, 
+                message: `Invalid transition from ${currentStatus} to ${nextStatus} for role ${userType}` 
+            });
+            return;
+        }
+
         // Apply new values
-        booking.status = status;
+        booking.status = nextStatus;
         
-        if (status === 'cancelled') {
-            booking.cancelledBy = userType as 'customer' | 'worker';
+        if (nextStatus === 'cancelled') {
+            booking.cancelledBy = userType === 'user' ? 'customer' : (userType as 'worker' | 'admin');
             booking.cancelReason = cancelReason || '';
         }
 
@@ -184,10 +266,29 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
 
         res.status(200).json({
             success: true,
-            message: `Booking status updated to ${status}`,
+            message: `Booking status updated to ${nextStatus}`,
             data: booking
         });
     } catch (error: any) {
-        res.status(500).json({ success: false, message: error.message });
+        logger.error("Error in updateBookingStatus:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
+};
+
+/**
+ * Helper to check if a user is authorized to view/update a booking
+ * @param booking Booking document
+ * @param tokenPayload Decoded JWT payload
+ * @returns boolean
+ */
+const isAuthorizedForBooking = (booking: any, tokenPayload: any): boolean => {
+    const userId = tokenPayload?.id;
+    const userType = tokenPayload?.type;
+    const userRole = tokenPayload?.role;
+
+    const isCustomer = booking.customer.toString() === userId;
+    const isWorker = booking.worker.toString() === userId;
+    const isAdmin = userType === 'admin' || userRole === 'admin' || userRole === 'superadmin';
+
+    return isCustomer || isWorker || isAdmin;
 };

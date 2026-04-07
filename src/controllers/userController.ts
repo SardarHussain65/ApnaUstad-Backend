@@ -1,4 +1,5 @@
 import User from "../models/User";
+import Category from "../models/Category";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
@@ -34,6 +35,15 @@ export const checkUserExists = asyncHandler(async (req, res) => {
     return successResponse(res, 200, "User check completed", {
         exists: !!user
     });
+});
+
+/**
+ * Get all active categories (Public for registration)
+ * @route GET /api/v1/users/categories
+ */
+export const getCategories = asyncHandler(async (req, res) => {
+    const categories = await Category.find({ isActive: true }).sort({ sortOrder: 1 });
+    return successResponse(res, 200, "Categories fetched successfully", categories);
 });
 
 
@@ -132,8 +142,8 @@ export const loginUser = asyncHandler(async (req, res) => {
     }
 
     // 6. Generate JWT token
-    const token = generateToken({ 
-        id: user._id.toString(), 
+    const token = generateToken({
+        id: user._id.toString(),
         username: user.fullName,
         type: 'user'
     });
@@ -150,7 +160,7 @@ export const loginUser = asyncHandler(async (req, res) => {
 
 export const getUserById = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
-    
+
     // Authorization Check: User can only see their own profile, or Admin can see any
     if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
         throw new ForbiddenError("You are not authorized to view this profile");
@@ -342,7 +352,7 @@ export const googleAuthUser = asyncHandler(async (req, res) => {
     try {
         decodedToken = await admin.auth().verifyIdToken(idToken);
     } catch (error: any) {
-        console.error("Firebase Google Auth Error:", error);
+        console.error("Firebase Google Auth Error:", error?.code || error?.message || "Token verification failed");
         throw new UnauthorizedError("Invalid or expired Google ID token");
     }
 
@@ -357,8 +367,8 @@ export const googleAuthUser = asyncHandler(async (req, res) => {
 
     if (user) {
         // User exists -> Log them in
-        const token = generateToken({ 
-            id: user._id.toString(), 
+        const token = generateToken({
+            id: user._id.toString(),
             username: user.fullName,
             type: 'user'
         });
@@ -367,10 +377,10 @@ export const googleAuthUser = asyncHandler(async (req, res) => {
         delete userResponse.password;
         delete userResponse.fcmToken;
 
-        return successResponse(res, 200, "User logged in successfully via Google", { 
+        return successResponse(res, 200, "User logged in successfully via Google", {
             exists: true,
-            user: userResponse, 
-            token 
+            user: userResponse,
+            token
         });
     } else {
         // User does NOT exist -> Return data for registration completion
