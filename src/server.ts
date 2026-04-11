@@ -16,6 +16,8 @@ import { initializeFirebase } from './config/firebase';
 import app from './app';
 import logger from './config/logger';
 import { cleanupOrphanedUploads } from "./scripts/cleanupUploads";
+import http from 'http';
+import { initSocket } from './sockets/socketManager';
 
 // Validate environment variables before starting
 validateEnv();
@@ -31,8 +33,14 @@ const startServer = async () => {
         // Connect to MongoDB
         await connectDB();
 
-        // Start Express server
-        const server = app.listen(config.port, () => {
+        // Create HTTP server
+        const httpServer = http.createServer(app);
+
+        // Initialize Socket.IO
+        initSocket(httpServer);
+
+        // Start HTTP server
+        const server = httpServer.listen(config.port, () => {
             logger.info(`🚀 Server running on port ${config.port}`);
             logger.info(`📍 Environment: ${config.nodeEnv}`);
 

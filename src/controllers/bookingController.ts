@@ -60,6 +60,11 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
             ...(location && { location })
         });
 
+        // Emit socket event to the worker
+        const io = require('../sockets/socketManager').getIO();
+        const { emitBookingEvent } = require('../sockets/handlers/booking.handler');
+        emitBookingEvent(io, booking, 'booking:new');
+
         res.status(201).json({
             success: true,
             message: "Booking created successfully",
@@ -197,8 +202,8 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         const booking = await Booking.findById(id);
 
         if (!booking) {
-             res.status(404).json({ success: false, message: "Booking not found" });
-             return;
+            res.status(404).json({ success: false, message: "Booking not found" });
+            return;
         }
 
         // Verify ownership (Only the involved customer, worker, or an admin can update it)
@@ -247,22 +252,27 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         }
 
         if (!isTransitionAllowed) {
-            res.status(400).json({ 
-                success: false, 
-                message: `Invalid transition from ${currentStatus} to ${nextStatus} for role ${userType}` 
+            res.status(400).json({
+                success: false,
+                message: `Invalid transition from ${currentStatus} to ${nextStatus} for role ${userType}`
             });
             return;
         }
 
         // Apply new values
         booking.status = nextStatus;
-        
+
         if (nextStatus === 'cancelled') {
             booking.cancelledBy = userType === 'user' ? 'customer' : (userType as 'worker' | 'admin');
             booking.cancelReason = cancelReason || '';
         }
 
         await booking.save();
+
+        // Emit socket event
+        const io = require('../sockets/socketManager').getIO();
+        const { emitBookingEvent } = require('../sockets/handlers/booking.handler');
+        emitBookingEvent(io, booking, nextStatus === 'cancelled' ? 'booking:cancelled' : `booking:${nextStatus}`);
 
         res.status(200).json({
             success: true,
