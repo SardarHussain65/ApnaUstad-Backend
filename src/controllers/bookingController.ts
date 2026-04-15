@@ -19,15 +19,40 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
         }
 
         const {
-            worker: workerId, category, description, scheduledDate, scheduledTime,
-            estimatedHours, address, longitude, latitude
+            worker: workerId, category, description,
+            estimatedHours, address, longitude, latitude,
+            bookingType = 'scheduled'
         } = req.body;
+
+        let { scheduledDate, scheduledTime } = req.body;
+
+        if (bookingType === 'instant') {
+            const now = new Date();
+            scheduledDate = now;
+            scheduledTime = now.toTimeString().split(' ')[0]?.substring(0, 5) || "00:00";
+        } else {
+            if (!scheduledDate || !scheduledTime) {
+                res.status(400).json({ success: false, message: "Scheduled date and time are required for scheduled bookings" });
+                return;
+            }
+        }
 
         // Fetch authoritative worker data
         const workerProfile = await Worker.findById(workerId);
         if (!workerProfile) {
             res.status(404).json({ success: false, message: "Worker not found" });
             return;
+        }
+
+        if (bookingType === 'instant') {
+            const busy = await Booking.findOne({
+                worker: workerId,
+                status: { $in: ['accepted', 'ongoing'] }
+            });
+            if (busy) {
+                res.status(409).json({ success: false, message: "Worker is currently busy" });
+                return;
+            }
         }
 
         const config = getConfig();
@@ -43,6 +68,10 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
             coordinates: [longitude, latitude]
         } : undefined;
 
+        const expiresAt = bookingType === 'instant'
+            ? new Date(Date.now() + 2 * 60 * 1000)
+            : new Date(Date.now() + 24 * 60 * 60 * 1000);
+
         const booking = await Booking.create({
             customer: customerId,
             worker: workerId,
@@ -57,13 +86,18 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
             totalAmount,
             workerEarning,
             address,
+            bookingType,
+            expiresAt,
             ...(location && { location })
         });
 
         // Emit socket event to the worker
         const io = require('../sockets/socketManager').getIO();
         const { emitBookingEvent } = require('../sockets/handlers/booking.handler');
-        emitBookingEvent(io, booking, 'booking:new');
+        const eventPayload = bookingType === 'instant' 
+            ? { ...booking.toObject(), urgent: true } 
+            : booking;
+        emitBookingEvent(io, eventPayload, 'booking:new');
 
         res.status(201).json({
             success: true,
@@ -261,6 +295,10 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
 
         // Apply new values
         booking.status = nextStatus;
+
+        if (nextStatus === 'accepted' || nextStatus === 'cancelled') {
+            booking.workerRespondedAt = new Date();
+        }
 
         if (nextStatus === 'cancelled') {
             booking.cancelledBy = userType === 'user' ? 'customer' : (userType as 'worker' | 'admin');

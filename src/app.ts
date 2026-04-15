@@ -15,6 +15,8 @@ import adminRoute from "./routes/adminRoute";
 import bookingRoute from "./routes/bookingRoute";
 import reviewRoute from "./routes/reviewRoute";
 import otpRoute from "./routes/otpRoute";
+import jobRoute from "./routes/jobRoute";
+import messageRoute from "./routes/messageRoute";
 
 const app = express();
 const config = getConfig();
@@ -58,9 +60,10 @@ app.use('/api/v1/users', usersRoute);
 app.use('/api/v1/workers', workerRoute);
 app.use('/api/v1/admin', adminRoute);
 app.use('/api/v1/bookings', bookingRoute);
+app.use('/api/v1/jobs', jobRoute);
 app.use('/api/v1/reviews', reviewRoute);
 app.use('/api/v1/otp', otpRoute);
-
+app.use('/api/v1/messages', messageRoute);
 
 
 // --- ⚠️ Error Handling ---

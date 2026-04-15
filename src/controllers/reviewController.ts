@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import Review from "../models/Reviews";
 import Booking from "../models/Booking";
+import Worker from "../models/Workers";
+import mongoose from "mongoose";
 
 /**
  * @description Create a new review
@@ -52,6 +54,19 @@ export const createReview = async (req: AuthRequest, res: Response) => {
         // Update booking
         booking.isReviewed = true;
         await booking.save();
+
+        // Calculate and update Worker average rating
+        const stats = await Review.aggregate([
+            { $match: { worker: new mongoose.Types.ObjectId(worker) } },
+            { $group: { _id: '$worker', averageRating: { $avg: '$rating' }, totalReviews: { $sum: 1 } } }
+        ]);
+
+        if (stats.length > 0) {
+            await Worker.findByIdAndUpdate(worker, {
+                rating: Math.round(stats[0].averageRating * 10) / 10,
+                totalReviews: stats[0].totalReviews
+            });
+        }
 
         res.status(201).json({
             success: true,

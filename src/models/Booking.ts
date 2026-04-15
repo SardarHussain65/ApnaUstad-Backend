@@ -20,6 +20,9 @@ export interface IBooking extends Document {
         coordinates: number[];
     };
     status: 'pending' | 'accepted' | 'ongoing' | 'completed' | 'cancelled';
+    bookingType: 'instant' | 'scheduled';
+    expiresAt: Date;
+    workerRespondedAt?: Date | null;
     paymentStatus: 'unpaid' | 'paid';
     paymentMethod: 'card' | 'cash';
     stripePaymentId?: string | null;
@@ -47,6 +50,16 @@ const bookingSchema = new Schema<IBooking>(
             type: { type: String, enum: ['Point'], default: 'Point' },
             coordinates: { type: [Number], default: [0, 0] }
         },
+        bookingType: {
+            type: String,
+            enum: ['instant', 'scheduled'],
+            default: 'scheduled'
+        },
+        expiresAt: {
+            type: Date,
+            required: true
+        },
+        workerRespondedAt: { type: Date, default: null },
         status: {
             type: String,
             enum: ['pending', 'accepted', 'ongoing', 'completed', 'cancelled'],

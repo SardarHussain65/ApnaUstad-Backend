@@ -408,6 +408,386 @@
           ]
         }
       ]
+    },
+    {
+      "name": "Job Board",
+      "item": [
+        {
+          "name": "1. Create Job Post",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"Plumber\",\n  \"description\": \"Kitchen sink leaking\",\n  \"urgency\": \"instant\",\n  \"longitude\": 74.3587,\n  \"latitude\": 31.5204,\n  \"address\": \"Main St, Lahore\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "jobs"]
+            }
+          }
+        },
+        {
+          "name": "2. Get Nearby Jobs",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{worker_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/nearby?longitude=74.3587&latitude=31.5204",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "jobs", "nearby"],
+              "query": [
+                { "key": "longitude", "value": "74.3587" },
+                { "key": "latitude", "value": "31.5204" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "3. Submit Bid",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{worker_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"I can fix it in 30 mins\",\n  \"proposedPrice\": 1000\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/{{job_id}}/bids",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "jobs", "{{job_id}}", "bids"]
+            }
+          }
+        },
+        {
+          "name": "4. Get Job Bids",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/{{job_id}}/bids",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "jobs", "{{job_id}}", "bids"]
+            }
+          }
+        },
+        {
+          "name": "5. Accept Bid",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/bids/{{bid_id}}/accept",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "jobs", "bids", "{{bid_id}}", "accept"]
+            }
+          }
+        },
+        {
+          "name": "6. Accept Instant Job",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{worker_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/jobs/{{job_id}}/accept-instant",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "jobs", "{{job_id}}", "accept-instant"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bookings",
+      "item": [
+        {
+          "name": "1. Create Direct Booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"worker\": \"{{worker_id}}\",\n  \"category\": \"Plumber\",\n  \"description\": \"Fix leak\",\n  \"bookingType\": \"scheduled\",\n  \"estimatedHours\": 1,\n  \"scheduledDate\": \"2026-04-15\",\n  \"scheduledTime\": \"14:00\",\n  \"address\": \"Main St, Lahore\",\n  \"longitude\": 74.3587,\n  \"latitude\": 31.5204\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/bookings",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "bookings"]
+            }
+          }
+        },
+        {
+          "name": "2. Get My Bookings (User)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/bookings/my-bookings",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "bookings", "my-bookings"]
+            }
+          }
+        },
+        {
+          "name": "3. Get Worker Bookings",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{worker_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/bookings/worker-bookings",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "bookings", "worker-bookings"]
+            }
+          }
+        },
+        {
+          "name": "4. Get Booking Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "bookings", "{{booking_id}}"]
+            }
+          }
+        },
+        {
+          "name": "5. Update Booking Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{worker_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ongoing\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/bookings/{{booking_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "bookings", "{{booking_id}}", "status"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Messages",
+      "item": [
+        {
+          "name": "1. Get Chat History",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/messages/{{booking_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "messages", "{{booking_id}}"]
+            }
+          }
+        },
+        {
+          "name": "2. Mark as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/messages/{{booking_id}}/read",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "messages", "{{booking_id}}", "read"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reviews",
+      "item": [
+        {
+          "name": "1. Submit Review",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{user_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"booking\": \"{{booking_id}}\",\n  \"worker\": \"{{worker_id}}\",\n  \"rating\": 5,\n  \"comment\": \"Excellent service!\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/reviews",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "reviews"]
+            }
+          }
+        },
+        {
+          "name": "2. Get Worker Reviews",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/reviews/worker/{{worker_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "reviews", "worker", "{{worker_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "OTP",
+      "item": [
+        {
+          "name": "1. Send OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"03001234567\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/otp/send",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "otp", "send"]
+            }
+          }
+        },
+        {
+          "name": "2. Verify OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"03001234567\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/otp/verify",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "otp", "verify"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Real-time (Sockets)",
+      "item": [
+        {
+          "name": "Connection Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            },
+            "url": {
+              "raw": "{{base_url}}",
+              "host": [
+                "{{base_url}}"
+              ]
+            },
+            "description": "### Connection Instructions\n1. Use a **Socket.IO** request in Postman.\n2. **URL:** `{{base_url}}` (default: http://localhost:5000)\n3. **Auth:** In the 'Settings' or 'Auth' tab, add a `token` to the Handshake Auth.\n   ```json\n   {\n     \"token\": \"YOUR_JWT_HERE\"\n   }\n   ```"
+          },
+          "response": []
+        },
+        {
+          "name": "Chat",
+          "item": [
+            {
+              "name": "Emit: chat:send",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"bookingId\": \"{{booking_id}}\",\n  \"content\": \"Hello, I am arriving!\"\n}"
+                },
+                "url": {
+                  "raw": "",
+                  "description": "Event: 'chat:send'"
+                }
+              },
+              "response": []
+            },
+            {
+              "name": "Emit: chat:typing",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"bookingId\": \"{{booking_id}}\",\n  \"recipientId\": \"{{worker_id}}\",\n  \"recipientType\": \"worker\"\n}"
+                },
+                "url": {
+                  "raw": "",
+                  "description": "Event: 'chat:typing'"
+                }
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Location",
+          "item": [
+            {
+              "name": "Emit: worker:location",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"bookingId\": \"{{booking_id}}\",\n  \"latitude\": 31.5204,\n  \"longitude\": 74.3587,\n  \"customerId\": \"{{user_id}}\"\n}"
+                },
+                "url": {
+                  "raw": "",
+                  "description": "Event: 'worker:location' (Must be Worker token)"
+                }
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
     }
   ]
 }

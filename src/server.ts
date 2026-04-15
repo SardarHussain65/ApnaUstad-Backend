@@ -18,6 +18,8 @@ import logger from './config/logger';
 import { cleanupOrphanedUploads } from "./scripts/cleanupUploads";
 import http from 'http';
 import { initSocket } from './sockets/socketManager';
+import { startInstantBookingCleanup } from './scripts/instantBookingCleanup';
+import { startInstantJobExpansion } from './scripts/instantJobExpansion';
 
 // Validate environment variables before starting
 validateEnv();
@@ -38,6 +40,10 @@ const startServer = async () => {
 
         // Initialize Socket.IO
         initSocket(httpServer);
+
+        // Start periodic cleanups
+        startInstantBookingCleanup();
+        startInstantJobExpansion();
 
         // Start HTTP server
         const server = httpServer.listen(config.port, () => {
