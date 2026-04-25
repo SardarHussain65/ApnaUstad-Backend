@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { userAuthMiddleware, workerAuthMiddleware, jwtAuthMiddleware } from "../middlewares/jwt.middleware";
-import { createJobPost, submitBid, acceptBid, getNearbyJobs, getJobBids, acceptInstantJob } from "../controllers/jobPostController";
+import { createJobPost, submitBid, acceptBid, getNearbyJobs, getJobBids, acceptInstantJob, getMyJobPosts } from "../controllers/jobPostController";
 
 const router = Router();
 
@@ -9,6 +9,9 @@ router.get("/nearby", workerAuthMiddleware, getNearbyJobs);
 
 // Create a new job post (for users)
 router.post("/", userAuthMiddleware, createJobPost);
+
+// Get all job posts created by the authenticated user
+router.get("/my-posts", userAuthMiddleware, getMyJobPosts);
 
 // Submit a bid on a job post (for workers)
 router.post("/:jobId/bids", workerAuthMiddleware, submitBid);

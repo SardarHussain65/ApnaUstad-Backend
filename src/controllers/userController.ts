@@ -1,4 +1,5 @@
 import User from "../models/User";
+import Workers from "../models/Workers";
 import Category from "../models/Category";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
@@ -44,6 +45,95 @@ export const checkUserExists = asyncHandler(async (req, res) => {
 export const getCategories = asyncHandler(async (req, res) => {
     const categories = await Category.find({ isActive: true }).sort({ sortOrder: 1 });
     return successResponse(res, 200, "Categories fetched successfully", categories);
+});
+
+
+/**
+ * Get all workers with filtering and pagination
+ * @route GET /api/v1/users/workers
+ * @query {boolean} isActive - Filter by active status
+ * @query {boolean} isAvailable - Filter by availability
+ * @query {string} category - Filter by category
+ * @query {string} city - Filter by city
+ * @query {number} minRating - Filter by minimum rating
+ * @query {number} page - Page number (default: 1)
+ * @query {number} limit - Items per page (default: 10)
+ */
+export const getWorkers = asyncHandler(async (req, res) => {
+    // Pagination parameters
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(100, parseInt(req.query.limit as string) || 10);
+    const skip = (page - 1) * limit;
+
+    // Build filter object
+    const filter: any = {};
+
+    // Filter by isActive
+    if (req.query.isActive !== undefined) {
+        filter.isActive = req.query.isActive === 'true';
+    }
+
+    // Filter by isAvailable
+    if (req.query.isAvailable !== undefined) {
+        filter.isAvailable = req.query.isAvailable === 'true';
+    }
+
+    // Filter by category
+    if (req.query.category) {
+        filter.category = req.query.category as string;
+    }
+
+    // Filter by city
+    if (req.query.city) {
+        filter.city = req.query.city as string;
+    }
+
+    // Filter by minimum rating
+    if (req.query.minRating) {
+        const minRating = parseFloat(req.query.minRating as string);
+        if (!isNaN(minRating)) {
+            filter.rating = { $gte: minRating };
+        }
+    }
+
+    // Fetch workers with filters
+    const workers = await Workers.find(filter)
+        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -hourlyRate -location -address -city -experience -rating -reviews")
+        .skip(skip)
+        .limit(limit)
+        .lean();
+
+    // Get total count for pagination metadata
+    const totalWorkers = await Workers.countDocuments(filter);
+    const totalPages = Math.ceil(totalWorkers / limit);
+
+    return successResponse(res, 200, "Workers fetched successfully", {
+        data: workers,
+        pagination: {
+            page,
+            limit,
+            totalWorkers,
+            totalPages,
+            hasNextPage: page < totalPages,
+            hasPrevPage: page > 1
+        }
+    });
+});   
+
+
+
+/**
+ * Get worker by ID with sensitive data excluded
+ * @route GET /api/v1/users/workers/:id
+ */
+export const getWorkerById = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+
+    const worker = await Workers.findById(id).select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage");
+    if (!worker) {
+        throw new BadRequestError("Worker not found");
+    }
+    return successResponse(res, 200, "Worker fetched successfully", worker);
 });
 
 

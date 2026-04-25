@@ -156,8 +156,8 @@ export const loginWorker = asyncHandler(async (req, res) => {
         await worker.save();
     }
 
-    const token = generateToken({ 
-        id: worker._id.toString(), 
+    const token = generateToken({
+        id: worker._id.toString(),
         username: worker.fullName,
         type: 'worker'
     });
@@ -200,7 +200,7 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     const {
         fullName, phone, email, bio, experience,
         city, address, hourlyRate, skills, category,
-        latitude, longitude, profileImage, fcmToken
+        latitude, longitude, profileImage, fcmToken, isAvailable
     } = req.body;
 
     const worker = await Workers.findById(id);
@@ -228,6 +228,7 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     if (category !== undefined) worker.category = category;
     if (profileImage !== undefined) worker.profileImage = profileImage;
     if (fcmToken !== undefined) worker.fcmToken = fcmToken;
+    if (isAvailable !== undefined) worker.isAvailable = isAvailable;
 
     try {
         await worker.save();
@@ -294,7 +295,7 @@ export const updateWorkerEmail = asyncHandler(async (req: AuthRequest, res) => {
 
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");
-    
+
     // Check for email uniqueness
     const existingWorker = await Workers.findOne({ email, _id: { $ne: id as any } });
     if (existingWorker) throw new ConflictError("Email already in use by another worker");

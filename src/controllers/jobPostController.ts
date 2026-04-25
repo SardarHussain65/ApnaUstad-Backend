@@ -64,7 +64,9 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         // 1. Emit socket event
         const io = require('../sockets/socketManager').getIO();
         
-        // Find nearby available workers, limit to closest 10
+        // Broadcast to relevant workers
+        logger.info(`📡 Job Broadcast: Finding workers for category: ${category} at [${longitude}, ${latitude}]`);
+        
         const nearbyWorkers = await Worker.find({
             category: category,
             isAvailable: true,
@@ -75,6 +77,8 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
                 }
             }
         }).limit(10).select('_id');
+
+        logger.info(`📡 Found ${nearbyWorkers.length} workers to notify: ${nearbyWorkers.map(w => w._id).join(', ')}`);
 
         // Broadcast to relevant workers
         nearbyWorkers.forEach(worker => {
@@ -381,5 +385,39 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
     } catch (error: any) {
          logger.error("Error in acceptInstantJob:", error);
          res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+/**
+ * @description Get all job posts created by the authenticated user
+ * @route GET /api/v1/jobs/my-posts
+ * @access Private (User)
+ */
+export const getMyJobPosts = async (req: AuthRequest, res: Response) => {
+    try {
+        const customerId = req.tokenPayload?.id;
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 10;
+        const skip = (page - 1) * limit;
+
+        const jobs = await JobPost.find({ customer: customerId })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit);
+
+        const total = await JobPost.countDocuments({ customer: customerId });
+
+        res.status(200).json({
+            success: true,
+            data: jobs,
+            pagination: {
+                total,
+                page,
+                pages: Math.ceil(total / limit)
+            }
+        });
+    } catch (error: any) {
+        logger.error("Error in getMyJobPosts:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };

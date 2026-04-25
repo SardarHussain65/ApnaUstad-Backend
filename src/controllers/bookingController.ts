@@ -198,13 +198,21 @@ export const getWorkerBookings = async (req: AuthRequest, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 10;
         const skip = (page - 1) * limit;
 
-        const bookings = await Booking.find({ worker: workerId })
+        // Optional status filter: e.g. ?status=cancelled or ?status=accepted,completed
+        const statusParam = req.query.status as string | undefined;
+        const query: any = { worker: workerId };
+        if (statusParam) {
+            const statuses = statusParam.split(',').map(s => s.trim());
+            query.status = { $in: statuses };
+        }
+
+        const bookings = await Booking.find(query)
             .populate('customer', 'fullName profileImage address')
-            .sort({ scheduledDate: 1 }) // Sorted by nearest scheduled date
+            .sort({ createdAt: -1 }) // Newest first — ensures cancelled/recent bookings are always visible
             .skip(skip)
             .limit(limit);
 
-        const total = await Booking.countDocuments({ worker: workerId });
+        const total = await Booking.countDocuments(query);
 
         res.status(200).json({
             success: true,
