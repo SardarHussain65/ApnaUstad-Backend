@@ -1,5 +1,6 @@
 import { Response } from "express";
 import { AuthRequest } from "../middlewares/jwt.middleware";
+import { UploadRequest } from "../middlewares/multer.middleware";
 import JobPost from "../models/JobPost";
 import JobBid from "../models/JobBid";
 import Worker from "../models/Workers";
@@ -22,7 +23,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         const {
             category, description, urgency,
             longitude, latitude, address,
-            imageUrl
+            imageUrl, imageUrls, amount
         } = req.body;
 
         let { scheduledDate, scheduledTime } = req.body;
@@ -42,7 +43,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         }
 
         const expiresAt = urgency === 'instant'
-            ? new Date(Date.now() + 2 * 60 * 1000) // 2 minutes for instant
+            ? new Date(Date.now() + 10 * 60 * 1000) // 10 minutes for instant
             : new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours for scheduled
 
         const jobPost = await JobPost.create({
@@ -58,6 +59,8 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
                 coordinates: [longitude, latitude]
             },
             imageUrl,
+            imageUrls,
+            amount,
             expiresAt
         });
 
@@ -173,16 +176,26 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
         const customerId = req.tokenPayload?.id;
         const { bidId } = req.params;
 
-        const bid = await JobBid.findById(bidId).populate('jobPost');
+        const bid = await JobBid.findById(bidId);
         if (!bid) return res.status(404).json({ success: false, message: "Bid not found" });
 
-        const jobPost = bid.jobPost as any; // Cast populated doc
+        const jobPost = await JobPost.findById(bid.jobPost);
+        if (!jobPost) return res.status(404).json({ success: false, message: "Associated job post not found" });
+        
+        logger.info(`🔍 acceptBid Check: customerId=${customerId}, jobCustomer=${jobPost.customer.toString()}, status=${jobPost.status}`);
+
         if (jobPost.customer.toString() !== customerId) {
+             logger.warn(`🚫 acceptBid: Unauthorized. Customer mismatch. User: ${customerId}, Job Owner: ${jobPost.customer}`);
              return res.status(403).json({ success: false, message: "Forbidden" });
         }
 
         if (jobPost.status !== 'open') {
-             return res.status(400).json({ success: false, message: "Job is already assigned or closed." });
+             logger.warn(`🚫 acceptBid: Job status is ${jobPost.status}, not 'open'`);
+             return res.status(400).json({ 
+                success: false, 
+                message: `Job cannot be assigned. Current status: ${jobPost.status}`,
+                currentStatus: jobPost.status 
+             });
         }
 
         // Update JobPost & Bid statuses
@@ -331,55 +344,36 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
              return res.status(400).json({ success: false, message: "This job post has expired" });
         }
 
-        // Atomically update JobPost to avoid race conditions
-        const updatedJob = await JobPost.findOneAndUpdate(
-            { _id: jobId, status: 'open' },
-            { $set: { status: 'assigned' } },
-            { new: true }
-        );
-
-        if (!updatedJob) {
-             return res.status(400).json({ success: false, message: "Job was already taken." });
+        // Check if worker already bid
+        const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId });
+        if (existingBid) {
+            return res.status(400).json({ success: false, message: "You have already accepted this mission." });
         }
 
-        // Fetch worker profile to get hourly rate
+        // Create a Bid instead of assigning immediately
         const workerProfile = await Worker.findById(workerId);
-        
-        const config = getConfig();
-        const baseAmount = workerProfile ? workerProfile.hourlyRate : 0;
-        const platformFeePercentage = config.platformFeePercentage || 10;
-        const platformFee = Math.round((baseAmount * (platformFeePercentage / 100)) * 100) / 100;
-        
-        // Auto-create a booking
-        const booking = await Booking.create({
-            customer: updatedJob.customer,
+        const newBid = await JobBid.create({
+            jobPost: jobId,
             worker: workerId,
-            category: updatedJob.category,
-            description: updatedJob.description,
-            scheduledDate: updatedJob.scheduledDate,
-            scheduledTime: updatedJob.scheduledTime,
-            estimatedHours: 1, 
-            hourlyRate: baseAmount,
-            subtotal: baseAmount,
-            platformFee: platformFee,
-            totalAmount: baseAmount + platformFee,
-            workerEarning: baseAmount - platformFee,
-            address: updatedJob.address,
-            location: updatedJob.location,
-            bookingType: 'instant',
-            status: 'accepted',
-            expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000) // Instant booking expires in 2 hours if not completed/started
+            message: "Instant Mission Acceptance",
+            proposedPrice: workerProfile ? workerProfile.hourlyRate : 0,
+            status: 'pending'
         });
+
+        // Populate worker details for the client
+        await newBid.populate('worker', 'fullName profileImage averageRating hourlyRate');
 
         const io = require('../sockets/socketManager').getIO();
         
-        // Notify client
-        io.to(`user:${updatedJob.customer.toString()}`).emit('job:assigned', { jobPost: updatedJob, booking });
+        // Notify client that a worker is interested
+        const roomName = `user:${jobPost.customer.toString()}`;
+        logger.info(`📡 Emitting bid:new to room ${roomName} for worker ${workerProfile?.fullName}`);
+        io.to(roomName).emit('bid:new', newBid);
         
         res.status(200).json({
             success: true,
-            data: booking,
-            message: "Instant job accepted and booking created."
+            data: newBid,
+            message: "Mission interest registered. Waiting for client confirmation."
         });
 
     } catch (error: any) {
@@ -418,6 +412,29 @@ export const getMyJobPosts = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         logger.error("Error in getMyJobPosts:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+/**
+ * @description Upload images for a job post
+ * @route POST /api/v1/jobs/upload-images
+ * @access Private (User)
+ */
+export const uploadJobImages = async (req: UploadRequest, res: Response) => {
+    try {
+        if (!req.uploadedImageUrls || req.uploadedImageUrls.length === 0) {
+            return res.status(400).json({ success: false, message: "No images uploaded" });
+        }
+        res.status(200).json({
+            success: true,
+            data: {
+                imageUrls: req.uploadedImageUrls
+            },
+            message: "Images uploaded successfully"
+        });
+    } catch (error: any) {
+        logger.error("Error in uploadJobImages:", error);
         res.status(500).json({ success: false, message: "Internal server error" });
     }
 };

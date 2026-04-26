@@ -65,6 +65,7 @@ const uploadToImageKit = async (
 // -----------------------------------------------
 interface UploadRequest extends Request {
     uploadedImageUrl?: string;
+    uploadedImageUrls?: string[];
 }
 
 // -----------------------------------------------
@@ -110,12 +111,47 @@ const createUploadMiddleware = (fieldName: string, folder: string) => (
     });
 };
 
+const createMultipleUploadMiddleware = (fieldName: string, folder: string, maxCount: number = 5) => (
+    req: UploadRequest,
+    res: Response,
+    next: NextFunction
+): void => {
+    upload.array(fieldName, maxCount)(req, res, async (err) => {
+        if (err instanceof multer.MulterError) {
+            res.status(400).json({ error: err.message });
+            return;
+        }
+        if (err) {
+            res.status(400).json({ error: err.message });
+            return;
+        }
+
+        if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
+            next();
+            return;
+        }
+
+        try {
+            const uploadPromises = (req.files as Express.Multer.File[]).map(file => uploadToImageKit(file, folder));
+            const imageUrls = await Promise.all(uploadPromises);
+            req.uploadedImageUrls = imageUrls;
+            next();
+        } catch (uploadError) {
+            console.error(`ImageKit multiple upload failed [${folder}]:`, uploadError);
+            res.status(500).json({ error: "Multiple images upload failed" });
+        }
+    });
+};
+
 // -----------------------------------------------
 // 🔷 STEP 7: NAMED MIDDLEWARE INSTANCES
 // -----------------------------------------------
 
 // User
 const handleProfileImageUpload = createUploadMiddleware("profileImage", "profiles");
+
+// Jobs
+const handleJobImagesUpload = createMultipleUploadMiddleware("images", "jobs", 5);
 
 // Worker — 3 separate upload endpoints, all CNIC images go to the same /workers/cnic folder
 const handleWorkerProfileImageUpload = createUploadMiddleware("profileImage",   "workers/profile-images");
@@ -124,6 +160,7 @@ const handleWorkerCnicBackUpload     = createUploadMiddleware("cnicBackImage",  
 
 export {
     handleProfileImageUpload,
+    handleJobImagesUpload,
     handleWorkerProfileImageUpload,
     handleWorkerCnicFrontUpload,
     handleWorkerCnicBackUpload,

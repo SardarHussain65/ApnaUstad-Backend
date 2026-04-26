@@ -5,7 +5,8 @@ import {
     updateProfile, changePassword, deleteUser, 
     updateEmail, googleAuthUser, getCategories, 
     getWorkers,
-    getWorkerById
+    getWorkerById,
+    refreshAccessToken
 } from "../controllers/userController";
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
@@ -66,6 +67,7 @@ router.route("/workers/:id").get(getWorkerById);
  * @access Public
  */
 router.route("/google-auth").post(googleAuthUser);
+router.route("/refresh-token").post(refreshAccessToken);
 
 
 

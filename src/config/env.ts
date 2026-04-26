@@ -8,7 +8,8 @@ dotenv.config();
 const requiredEnvVars = [
     'PORT',
     'MONGODB_URL',
-    'JWT_SECRET'
+    'JWT_SECRET',
+    'REFRESH_TOKEN_SECRET'
 ];
 
 /**
@@ -40,6 +41,8 @@ const getConfig = () => ({
     mongodbUrl: process.env.MONGODB_URL as string,
     jwtSecret: process.env.JWT_SECRET as string,
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '1h',
+    refreshTokenSecret: process.env.REFRESH_TOKEN_SECRET as string,
+    refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '30d',
     clientUrl: process.env.CLIENT_URL || '*',
     imagekitPrivateKey: process.env.IMAGEKIT_PRIVATE_KEY as string,
     allowFirebaseInitFailure: process.env.ALLOW_FIREBASE_INIT_FAILURE === 'true',

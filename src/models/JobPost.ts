@@ -14,6 +14,8 @@ export interface IJobPost extends Document {
     };
     status: 'open' | 'assigned' | 'closed' | 'cancelled' | 'reviewing';
     imageUrl?: string;
+    imageUrls?: string[];
+    amount?: number;
     radiusExpanded?: boolean;
     expiresAt: Date;
 }
@@ -37,6 +39,8 @@ const jobPostSchema = new Schema<IJobPost>(
             default: 'open'
         },
         imageUrl: { type: String, default: null },
+        imageUrls: { type: [String], default: [] },
+        amount: { type: Number, default: 0 },
         radiusExpanded: { type: Boolean, default: false },
         expiresAt: { type: Date, required: true }
     },

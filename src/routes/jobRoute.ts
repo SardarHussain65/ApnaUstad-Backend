@@ -1,8 +1,12 @@
 import { Router } from "express";
 import { userAuthMiddleware, workerAuthMiddleware, jwtAuthMiddleware } from "../middlewares/jwt.middleware";
-import { createJobPost, submitBid, acceptBid, getNearbyJobs, getJobBids, acceptInstantJob, getMyJobPosts } from "../controllers/jobPostController";
+import { createJobPost, submitBid, acceptBid, getNearbyJobs, getJobBids, acceptInstantJob, getMyJobPosts, uploadJobImages } from "../controllers/jobPostController";
+import { handleJobImagesUpload } from "../middlewares/multer.middleware";
 
 const router = Router();
+
+// Upload job images (for users)
+router.post("/upload-images", userAuthMiddleware, handleJobImagesUpload, uploadJobImages);
 
 // Retrieve nearby jobs (for workers to see)
 router.get("/nearby", workerAuthMiddleware, getNearbyJobs);
@@ -20,7 +24,7 @@ router.post("/:jobId/bids", workerAuthMiddleware, submitBid);
 router.get("/:jobId/bids", userAuthMiddleware, getJobBids);
 
 // Accept a bid (for users)
-router.post("/bids/:bidId/accept", userAuthMiddleware, acceptBid);
+router.post("/:jobId/bids/:bidId/accept", userAuthMiddleware, acceptBid);
 
 // Accept an instant job (for workers)
 router.post("/:jobId/accept-instant", workerAuthMiddleware, acceptInstantJob);

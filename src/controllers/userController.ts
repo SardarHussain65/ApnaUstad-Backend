@@ -5,7 +5,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { UploadRequest } from "../middlewares/multer.middleware";
-import { generateToken, AuthRequest } from "../middlewares/jwt.middleware";
+import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest, TokenPayload } from "../middlewares/jwt.middleware";
 import admin from "../config/firebase";
 
 /**
@@ -231,20 +231,35 @@ export const loginUser = asyncHandler(async (req, res) => {
         throw new UnauthorizedError("Invalid credentials");
     }
 
-    // 6. Generate JWT token
-    const token = generateToken({
+    // 6. Generate JWT tokens
+    const accessToken = generateToken({
         id: user._id.toString(),
         username: user.fullName,
         type: 'user'
     });
 
+    const refreshToken = generateRefreshToken({
+        id: user._id.toString(),
+        username: user.fullName,
+        type: 'user'
+    });
+
+    // Save refresh token to user record
+    user.refreshToken = refreshToken;
+    await user.save();
+
     // 7. Remove sensitive fields
     const userResponse = user.toObject();
     delete userResponse.password;
     delete userResponse.fcmToken;
+    delete userResponse.refreshToken;
 
     // 8. Return response
-    return successResponse(res, 200, "User logged in successfully", { user: userResponse, token });
+    return successResponse(res, 200, "User logged in successfully", { 
+        user: userResponse, 
+        token: accessToken,
+        refreshToken: refreshToken 
+    });
 });
 
 
@@ -457,20 +472,32 @@ export const googleAuthUser = asyncHandler(async (req, res) => {
 
     if (user) {
         // User exists -> Log them in
-        const token = generateToken({
+        const accessToken = generateToken({
             id: user._id.toString(),
             username: user.fullName,
             type: 'user'
         });
 
+        const refreshToken = generateRefreshToken({
+            id: user._id.toString(),
+            username: user.fullName,
+            type: 'user'
+        });
+
+        // Save refresh token
+        user.refreshToken = refreshToken;
+        await user.save();
+
         const userResponse = user.toObject();
         delete userResponse.password;
         delete userResponse.fcmToken;
+        delete userResponse.refreshToken;
 
         return successResponse(res, 200, "User logged in successfully via Google", {
             exists: true,
             user: userResponse,
-            token
+            token: accessToken,
+            refreshToken: refreshToken
         });
     } else {
         // User does NOT exist -> Return data for registration completion
@@ -483,4 +510,50 @@ export const googleAuthUser = asyncHandler(async (req, res) => {
             }
         });
     }
+});
+
+/**
+ * Refresh Access Token
+ * @route POST /api/v1/users/refresh-token
+ */
+export const refreshAccessToken = asyncHandler(async (req, res) => {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+        throw new BadRequestError("Refresh token is required");
+    }
+
+    // Verify token
+    const payload = verifyRefreshToken(refreshToken);
+    if (!payload) {
+        throw new UnauthorizedError("Invalid or expired refresh token");
+    }
+
+    // Check if user exists and token matches
+    const user = await User.findById(payload.id);
+    if (!user || user.refreshToken !== refreshToken) {
+        throw new UnauthorizedError("Invalid refresh token");
+    }
+
+    // Generate new tokens
+    const newAccessToken = generateToken({
+        id: user._id.toString(),
+        username: user.fullName,
+        type: 'user'
+    });
+
+    const newRefreshToken = generateRefreshToken({
+        id: user._id.toString(),
+        username: user.fullName,
+        type: 'user'
+    });
+
+    // Update refresh token in DB
+    user.refreshToken = newRefreshToken;
+    await user.save();
+
+    return successResponse(res, 200, "Token refreshed successfully", {
+        token: newAccessToken,
+        refreshToken: newRefreshToken
+    });
 });

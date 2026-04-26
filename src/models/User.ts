@@ -14,6 +14,7 @@ export interface IUser extends Document {
         coordinates: number[];
     };
     fcmToken?: string;
+    refreshToken?: string;
     isActive: boolean;
     isPasswordCorrect(password: string): Promise<boolean>;
 }
@@ -32,6 +33,7 @@ const userSchema = new Schema<IUser>(
             coordinates: { type: [Number], default: [0, 0] }
         },
         fcmToken: { type: String, default: '' },
+        refreshToken: { type: String, default: '' },
         isActive: { type: Boolean, default: true },
     },
     { timestamps: true }

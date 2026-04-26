@@ -30,6 +30,7 @@ export interface IWorker extends Document {
     totalJobs: number;
     totalEarnings: number;
     fcmToken?: string;
+    refreshToken?: string;
     isPasswordCorrect(password: string): Promise<boolean>;
 }
 
@@ -61,7 +62,8 @@ const workerSchema = new Schema<IWorker>(
         totalReviews: { type: Number, default: 0 },
         totalJobs: { type: Number, default: 0 },
         totalEarnings: { type: Number, default: 0 },
-        fcmToken: { type: String, default: '' }
+        fcmToken: { type: String, default: '' },
+        refreshToken: { type: String, default: '' }
     },
     { timestamps: true }
 );

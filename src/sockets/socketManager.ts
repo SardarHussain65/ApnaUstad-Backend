@@ -48,10 +48,13 @@ export const initSocket = (httpServer: HttpServer) => {
 
         // Join specific room based on user type
         if (user.type === 'user') {
-            socket.join(`user:${user.id}`);
-            logger.info(`Joined room: user:${user.id}`);
+            const room = `user:${user.id}`;
+            socket.join(room);
+            logger.info(`✅ User ${user.id} joined room: ${room}`);
         } else if (user.type === 'worker') {
-            socket.join(`worker:${user.id}`);
+            const room = `worker:${user.id}`;
+            socket.join(room);
+            logger.info(`✅ Worker ${user.id} joined room: ${room}`);
             // If worker has a city in token payload, join city room (for Phase 3)
             if (user.city) {
                 socket.join(`city:${user.city}`);
