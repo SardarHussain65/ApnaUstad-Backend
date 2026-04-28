@@ -12,7 +12,9 @@ import logger, { stream } from "./config/logger";
 import usersRoute from "./routes/usersRoute";
 import workerRoute from "./routes/workerRoute";
 import adminRoute from "./routes/adminRoute";
-
+import bookingRoute from "./routes/bookingRoute";
+import reviewRoute from "./routes/reviewRoute";
+import otpRoute from "./routes/otpRoute";
 
 const app = express();
 const config = getConfig();
@@ -55,6 +57,9 @@ app.use((req, res, next) => {
 app.use('/api/v1/users', usersRoute);
 app.use('/api/v1/workers', workerRoute);
 app.use('/api/v1/admin', adminRoute);
+app.use('/api/v1/bookings', bookingRoute);
+app.use('/api/v1/reviews', reviewRoute);
+app.use('/api/v1/otp', otpRoute);
 
 
 

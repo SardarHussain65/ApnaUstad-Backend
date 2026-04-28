@@ -6,12 +6,12 @@ const registerUserSchema = z.object({
     email: z.string({ error: "Email is required" }).email("Invalid email address"),
     password: z.string({ error: "Password is required" }).min(6, "Password must be at least 6 characters long"),
     phone: z.string({ error: "Phone number is required" }).min(10, "Phone number must be at least 10 digits long"),
-    address: z.string({ error: "Address is required" }).min(3, "Address must be at least 3 characters long"),
-    city: z.string({ error: "City is required" }).min(3, "City must be at least 3 characters long"),
-    latitude: z.number({ error: "Latitude is required and must be a number" }).min(-90).max(90),
-    longitude: z.number({ error: "Longitude is required and must be a number" }).min(-180).max(180),
-    profileImage: z.string({ error: "Profile image must be a string" }).optional(),
-    fcmToken: z.string({ error: "FCM token must be a string" }).optional()
+    address: z.string().min(3, "Address must be at least 3 characters long").optional(),
+    city: z.string().min(3, "City must be at least 3 characters long").optional(),
+    latitude: z.number().min(-90).max(90).optional(),
+    longitude: z.number().min(-180).max(180).optional(),
+    profileImage: z.string().optional(),
+    fcmToken: z.string().optional()
 });
 
 

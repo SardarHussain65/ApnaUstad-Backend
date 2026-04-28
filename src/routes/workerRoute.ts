@@ -11,7 +11,8 @@ import {
     changeWorkerPassword,
     updateWorkerEmail,
     updateWorkerProfileImage,
-    updateWorkerLocation
+    updateWorkerLocation,
+    checkWorkerExists
 } from "../controllers/workerController";
 import validate from "../middlewares/validate.middleware";
 import { loginWorkerSchema, registerWorkerSchema } from "../validations/worker.validation";
@@ -42,6 +43,12 @@ router.route("/upload-cnic-front").post(uploadRateLimiter, handleWorkerCnicFront
  * @access Public
  */
 router.route("/upload-cnic-back").post(uploadRateLimiter, handleWorkerCnicBackUpload, uploadWorkerCnicBack);
+
+/**
+ * @description Check if worker exists by phone
+ * @access Public
+ */
+router.route("/check-worker").get(checkWorkerExists);
 
 /**
  * @description Register a new worker (pass image URLs from upload endpoints in body)

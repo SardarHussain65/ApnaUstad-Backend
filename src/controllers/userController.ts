@@ -1,9 +1,11 @@
 import User from "../models/User";
+import Category from "../models/Category";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { UploadRequest } from "../middlewares/multer.middleware";
 import { generateToken, AuthRequest } from "../middlewares/jwt.middleware";
+import admin from "../config/firebase";
 
 /**
  * Handle direct image upload returning the ImageKit URL
@@ -16,6 +18,34 @@ export const uploadImage = asyncHandler(async (req: UploadRequest, res) => {
 
     return successResponse(res, 200, "Image uploaded successfully", { imageUrl: req.uploadedImageUrl });
 });
+
+/**
+ * Check if a user exists by phone
+ * @route GET /api/v1/users/check-user
+ */
+export const checkUserExists = asyncHandler(async (req, res) => {
+    const { phone } = req.query;
+
+    if (!phone) {
+        throw new BadRequestError("Phone number is required");
+    }
+
+    const user = await User.findOne({ phone: phone as string });
+
+    return successResponse(res, 200, "User check completed", {
+        exists: !!user
+    });
+});
+
+/**
+ * Get all active categories (Public for registration)
+ * @route GET /api/v1/users/categories
+ */
+export const getCategories = asyncHandler(async (req, res) => {
+    const categories = await Category.find({ isActive: true }).sort({ sortOrder: 1 });
+    return successResponse(res, 200, "Categories fetched successfully", categories);
+});
+
 
 /**
  * Register a new user
@@ -112,8 +142,8 @@ export const loginUser = asyncHandler(async (req, res) => {
     }
 
     // 6. Generate JWT token
-    const token = generateToken({ 
-        id: user._id.toString(), 
+    const token = generateToken({
+        id: user._id.toString(),
         username: user.fullName,
         type: 'user'
     });
@@ -130,7 +160,7 @@ export const loginUser = asyncHandler(async (req, res) => {
 
 export const getUserById = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
-    
+
     // Authorization Check: User can only see their own profile, or Admin can see any
     if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
         throw new ForbiddenError("You are not authorized to view this profile");
@@ -302,4 +332,65 @@ export const updateLocation = asyncHandler(async (req: AuthRequest, res) => {
     return successResponse(res, 200, "Location updated successfully", user);
 });
 
+/**
+ * Handle Google Authentication
+ * @route POST /api/v1/users/google-auth
+ */
+export const googleAuthUser = asyncHandler(async (req, res) => {
+    const { idToken } = req.body;
 
+    if (!idToken) {
+        throw new BadRequestError("Google ID Token is required");
+    }
+
+    if (!admin.apps.length) {
+        throw new InternalServerError("Firebase is not configured on the server.");
+    }
+
+    // 1. Verify Token
+    let decodedToken;
+    try {
+        decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (error: any) {
+        console.error("Firebase Google Auth Error:", error?.code || error?.message || "Token verification failed");
+        throw new UnauthorizedError("Invalid or expired Google ID token");
+    }
+
+    const { email, name, picture } = decodedToken;
+
+    if (!email) {
+        throw new BadRequestError("No email attached to this Google account");
+    }
+
+    // 2. Find User by Email
+    const user = await User.findOne({ email }).select("+password +fcmToken");
+
+    if (user) {
+        // User exists -> Log them in
+        const token = generateToken({
+            id: user._id.toString(),
+            username: user.fullName,
+            type: 'user'
+        });
+
+        const userResponse = user.toObject();
+        delete userResponse.password;
+        delete userResponse.fcmToken;
+
+        return successResponse(res, 200, "User logged in successfully via Google", {
+            exists: true,
+            user: userResponse,
+            token
+        });
+    } else {
+        // User does NOT exist -> Return data for registration completion
+        return successResponse(res, 200, "Google verification successful, please complete profile", {
+            exists: false,
+            googleData: {
+                email,
+                fullName: name || "",
+                profileImage: picture || ""
+            }
+        });
+    }
+});
