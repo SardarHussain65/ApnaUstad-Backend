@@ -12,7 +12,8 @@ import {
     updateWorkerEmail,
     updateWorkerProfileImage,
     updateWorkerLocation,
-    checkWorkerExists
+    checkWorkerExists,
+    refreshWorkerAccessToken
 } from "../controllers/workerController";
 import validate from "../middlewares/validate.middleware";
 import { loginWorkerSchema, registerWorkerSchema } from "../validations/worker.validation";
@@ -58,6 +59,7 @@ router.route("/register").post(validate(registerWorkerSchema), registerWorker);
 
 
 router.route("/login").post(validate(loginWorkerSchema), loginWorker);
+router.route("/refresh-token").post(refreshWorkerAccessToken);
 
 
 

@@ -60,7 +60,26 @@ const generateToken = (payload: TokenPayload) => {
     if (!config.jwtSecret) {
         throw new Error("JWT_SECRET is not configured");
     }
-    return jwt.sign(payload, config.jwtSecret, { expiresIn: "1h" });
+    return jwt.sign({ ...payload }, config.jwtSecret, { expiresIn: config.jwtExpiresIn as any });
+}
+
+
+const generateRefreshToken = (payload: TokenPayload) => {
+    if (!config.refreshTokenSecret) {
+        throw new Error("REFRESH_TOKEN_SECRET is not configured");
+    }
+    return jwt.sign({ ...payload }, config.refreshTokenSecret, { expiresIn: config.refreshTokenExpiresIn as any });
+}
+
+const verifyRefreshToken = (token: string) => {
+    if (!config.refreshTokenSecret) {
+        throw new Error("REFRESH_TOKEN_SECRET is not configured");
+    }
+    try {
+        return jwt.verify(token, config.refreshTokenSecret) as TokenPayload;
+    } catch (error) {
+        return null;
+    }
 }
 
 
@@ -89,4 +108,4 @@ export const workerAuthMiddleware = (req: AuthRequest, res: Response, next: Next
 };
 
 
-export { jwtAuthMiddleware, generateToken };
+export { jwtAuthMiddleware, generateToken, generateRefreshToken, verifyRefreshToken };

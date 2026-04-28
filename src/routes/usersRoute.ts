@@ -3,7 +3,10 @@ import {
     registerUser, loginUser, uploadImage, checkUserExists, 
     updateProfileImage, updateLocation, getUserById, 
     updateProfile, changePassword, deleteUser, 
-    updateEmail, googleAuthUser, getCategories 
+    updateEmail, googleAuthUser, getCategories, 
+    getWorkers,
+    getWorkerById,
+    refreshAccessToken
 } from "../controllers/userController";
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
@@ -43,11 +46,28 @@ router.route("/check-user").get(checkUserExists);
  */
 router.route("/categories").get(getCategories);
 
+
+/**
+ * @description Get all active worker (Public)
+ * @access Public
+ */
+router.route("/workers").get(getWorkers);
+
+
+
+/**
+ * @description Get worker by ID
+ * @access Public
+ */
+router.route("/workers/:id").get(getWorkerById);
+
+
 /**
  * @description Login / Verify user with Google ID Token
  * @access Public
  */
 router.route("/google-auth").post(googleAuthUser);
+router.route("/refresh-token").post(refreshAccessToken);
 
 
 

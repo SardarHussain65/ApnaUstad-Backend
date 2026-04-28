@@ -3,7 +3,7 @@ import { ConflictError, InternalServerError, BadRequestError, ForbiddenError, Un
 import { successResponse } from "../utils/ApiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
 import { UploadRequest } from "../middlewares/multer.middleware";
-import { generateToken, AuthRequest } from "../middlewares/jwt.middleware";
+import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest } from "../middlewares/jwt.middleware";
 
 /**
  * Upload worker profile image to ImageKit → /workers/profile-images/
@@ -156,20 +156,78 @@ export const loginWorker = asyncHandler(async (req, res) => {
         await worker.save();
     }
 
-    const token = generateToken({ 
-        id: worker._id.toString(), 
+    const accessToken = generateToken({
+        id: worker._id.toString(),
         username: worker.fullName,
         type: 'worker'
     });
+
+    const refreshToken = generateRefreshToken({
+        id: worker._id.toString(),
+        username: worker.fullName,
+        type: 'worker'
+    });
+
+    // Save refresh token
+    worker.refreshToken = refreshToken;
+    await worker.save();
 
     // Remove sensitive fields
     const workerResponse = worker.toObject();
     delete workerResponse.password;
     delete workerResponse.fcmToken;
+    delete workerResponse.refreshToken;
 
     return successResponse(res, 200, "Worker logged in successfully", {
         worker: workerResponse,
-        token,
+        token: accessToken,
+        refreshToken: refreshToken
+    });
+});
+
+/**
+ * Refresh Worker Access Token
+ * @route POST /api/v1/workers/refresh-token
+ */
+export const refreshWorkerAccessToken = asyncHandler(async (req, res) => {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+        throw new BadRequestError("Refresh token is required");
+    }
+
+    // Verify token
+    const payload = verifyRefreshToken(refreshToken);
+    if (!payload) {
+        throw new UnauthorizedError("Invalid or expired refresh token");
+    }
+
+    // Check if worker exists and token matches
+    const worker = await Workers.findById(payload.id);
+    if (!worker || worker.refreshToken !== refreshToken) {
+        throw new UnauthorizedError("Invalid refresh token");
+    }
+
+    // Generate new tokens
+    const newAccessToken = generateToken({
+        id: worker._id.toString(),
+        username: worker.fullName,
+        type: 'worker'
+    });
+
+    const newRefreshToken = generateRefreshToken({
+        id: worker._id.toString(),
+        username: worker.fullName,
+        type: 'worker'
+    });
+
+    // Update refresh token in DB
+    worker.refreshToken = newRefreshToken;
+    await worker.save();
+
+    return successResponse(res, 200, "Token refreshed successfully", {
+        token: newAccessToken,
+        refreshToken: newRefreshToken
     });
 });
 
@@ -200,7 +258,7 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     const {
         fullName, phone, email, bio, experience,
         city, address, hourlyRate, skills, category,
-        latitude, longitude, profileImage, fcmToken
+        latitude, longitude, profileImage, fcmToken, isAvailable
     } = req.body;
 
     const worker = await Workers.findById(id);
@@ -228,6 +286,7 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     if (category !== undefined) worker.category = category;
     if (profileImage !== undefined) worker.profileImage = profileImage;
     if (fcmToken !== undefined) worker.fcmToken = fcmToken;
+    if (isAvailable !== undefined) worker.isAvailable = isAvailable;
 
     try {
         await worker.save();
@@ -294,7 +353,7 @@ export const updateWorkerEmail = asyncHandler(async (req: AuthRequest, res) => {
 
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");
-    
+
     // Check for email uniqueness
     const existingWorker = await Workers.findOne({ email, _id: { $ne: id as any } });
     if (existingWorker) throw new ConflictError("Email already in use by another worker");
