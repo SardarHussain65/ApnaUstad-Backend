@@ -9,6 +9,7 @@ import { getConfig } from "./config/env";
 import { errorHandler } from "./middlewares/error.middleware";
 import logger, { stream } from "./config/logger";
 
+import healthRoute from "./routes/healthRoute";
 import usersRoute from "./routes/usersRoute";
 import workerRoute from "./routes/workerRoute";
 import adminRoute from "./routes/adminRoute";
@@ -56,6 +57,8 @@ app.use((req, res, next) => {
 });
 
 // --- 📍 Route Handlers ---
+app.use('/health', healthRoute);
+
 app.use('/api/v1/users', usersRoute);
 app.use('/api/v1/workers', workerRoute);
 app.use('/api/v1/admin', adminRoute);
