@@ -235,6 +235,7 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             workerEarning: baseAmount - platformFee,
             address: jobPost.address,
             location: jobPost.location,
+            imageUrls: jobPost.imageUrls || [],
             bookingType: jobPost.urgency,
             status: 'accepted', // Auto accepted since they bid on it
             expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)

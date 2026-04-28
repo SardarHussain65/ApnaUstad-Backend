@@ -24,11 +24,12 @@ export interface IBooking extends Document {
     expiresAt: Date;
     workerRespondedAt?: Date | null;
     paymentStatus: 'unpaid' | 'paid';
-    paymentMethod: 'card' | 'cash';
+    paymentMethod: 'card' | 'cash' | 'easypaisa';
     stripePaymentId?: string | null;
     cancelledBy?: 'customer' | 'worker' | 'admin' | null;
     cancelReason?: string;
     isReviewed: boolean;
+    imageUrls: string[];
 }
 
 const bookingSchema = new Schema<IBooking>(
@@ -66,11 +67,12 @@ const bookingSchema = new Schema<IBooking>(
             default: 'pending'
         },
         paymentStatus: { type: String, enum: ['unpaid', 'paid'], default: 'unpaid' },
-        paymentMethod: { type: String, enum: ['card', 'cash'], default: 'cash' },
+        paymentMethod: { type: String, enum: ['card', 'cash', 'easypaisa'], default: 'cash' },
         stripePaymentId: { type: String, default: null },
         cancelledBy: { type: String, enum: ['customer', 'worker', 'admin', null], default: null },
         cancelReason: { type: String, default: '' },
-        isReviewed: { type: Boolean, default: false }
+        isReviewed: { type: Boolean, default: false },
+        imageUrls: { type: [String], default: [] }
     },
     { timestamps: true }
 );

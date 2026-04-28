@@ -4,7 +4,8 @@ import {
     getBookingById,
     getUserBookings,
     getWorkerBookings,
-    updateBookingStatus
+    updateBookingStatus,
+    payBooking
 } from "../controllers/bookingController";
 import validate from "../middlewares/validate.middleware";
 import { createBookingSchema, updateBookingStatusSchema } from "../validations/booking.validation";
@@ -41,5 +42,11 @@ router.route("/:id").get(jwtAuthMiddleware, getBookingById);
  * @access Private (User or Worker)
  */
 router.route("/:id/status").patch(jwtAuthMiddleware, validate(updateBookingStatusSchema), updateBookingStatus);
+
+/**
+ * @description Mark booking as paid
+ * @access Private (User)
+ */
+router.route("/:id/pay").post(userAuthMiddleware, payBooking);
 
 export default router;

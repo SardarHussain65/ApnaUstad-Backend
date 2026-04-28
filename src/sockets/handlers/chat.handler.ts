@@ -27,23 +27,19 @@ export const registerChatHandlers = (io: Server, socket: Socket) => {
                 return socket.emit('chat:error', { message: "Unauthorized to chat in this booking" });
             }
 
-            // Save to DB
-            const newMessage = await Message.create({
+            // Emit to both parties in the thread
+            const socketMessage = {
                 booking: bookingId,
                 sender: senderId,
                 senderModel: senderType === 'user' ? 'User' : 'Worker',
-                content: content
-            });
+                content: content,
+                createdAt: new Date().toISOString()
+            };
 
-            // Target recipient
-            const recipientId = isCustomer ? booking.worker.toString() : booking.customer.toString();
-            const recipientType = isCustomer ? 'worker' : 'user';
+            io.to(`user:${booking.customer.toString()}`).emit('chat:receive', socketMessage);
+            io.to(`worker:${booking.worker.toString()}`).emit('chat:receive', socketMessage);
 
-            // Emit to both parties in the thread
-            io.to(`user:${booking.customer.toString()}`).emit('chat:receive', newMessage);
-            io.to(`worker:${booking.worker.toString()}`).emit('chat:receive', newMessage);
-
-            logger.info(`💬 Chat message saved and emitted for booking ${bookingId}`);
+            logger.info(`💬 Chat message emitted via socket for booking ${bookingId}`);
 
         } catch (error) {
             logger.error("Error in chat:send handler:", error);

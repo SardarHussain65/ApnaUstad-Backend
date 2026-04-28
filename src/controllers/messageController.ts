@@ -74,3 +74,52 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
         res.status(500).json({ success: false });
     }
 };
+/**
+ * @description Send a message in a booking
+ * @route POST /api/v1/messages/:bookingId
+ */
+export const sendMessage = async (req: AuthRequest, res: Response) => {
+    try {
+        const { bookingId } = req.params;
+        const { message: content } = req.body;
+        const userId = req.tokenPayload?.id;
+        const userType = req.tokenPayload?.type;
+
+        if (!content) {
+            return res.status(400).json({ success: false, message: "Message content is required" });
+        }
+
+        const booking = await Booking.findById(bookingId);
+        if (!booking) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+
+        // Verify participation
+        const isCustomer = booking.customer.toString() === userId;
+        const isWorker = booking.worker.toString() === userId;
+
+        if (!isCustomer && !isWorker) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not part of this booking" });
+        }
+
+        const newMessage = await Message.create({
+            booking: bookingId,
+            sender: userId,
+            senderModel: userType === 'user' ? 'User' : 'Worker',
+            content: content
+        });
+
+        // Emit socket event for real-time update
+        const io = require('../sockets/socketManager').getIO();
+        io.to(`user:${booking.customer.toString()}`).emit('chat:receive', newMessage);
+        io.to(`worker:${booking.worker.toString()}`).emit('chat:receive', newMessage);
+
+        res.status(201).json({
+            success: true,
+            data: newMessage
+        });
+    } catch (error) {
+        logger.error("Error in sendMessage:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};

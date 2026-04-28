@@ -348,3 +348,52 @@ const isAuthorizedForBooking = (booking: any, tokenPayload: any): boolean => {
 
     return isCustomer || isWorker || isAdmin;
 };
+/**
+ * @description Mark booking as paid
+ * @route POST /api/v1/bookings/:id/pay
+ * @access Private (User)
+ */
+export const payBooking = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { paymentMethod } = req.body;
+        const userId = req.tokenPayload?.id;
+
+        const booking = await Booking.findById(id);
+
+        if (!booking) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+
+        // Verify ownership (Only the involved customer can pay)
+        if (booking.customer.toString() !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not authorized to pay for this booking" });
+        }
+
+        if (booking.status !== 'completed') {
+            return res.status(400).json({ success: false, message: "Cannot pay for a booking that is not completed" });
+        }
+
+        if (booking.paymentStatus === 'paid') {
+            return res.status(400).json({ success: false, message: "Booking is already paid" });
+        }
+
+        booking.paymentStatus = 'paid';
+        booking.paymentMethod = paymentMethod || 'cash';
+        await booking.save();
+
+        // Emit socket event to notify worker
+        const io = require('../sockets/socketManager').getIO();
+        const { emitBookingEvent } = require('../sockets/handlers/booking.handler');
+        emitBookingEvent(io, booking, 'booking:paid');
+
+        res.status(200).json({
+            success: true,
+            message: "Payment successful",
+            data: booking
+        });
+    } catch (error: any) {
+        logger.error("Error in payBooking:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
