@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test:notifications": "tsx test-notifications.ts"
   },
   "keywords": [],
   "author": "",
@@ -21,7 +22,7 @@
     "express": "^5.2.1",
     "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^8.3.2",
-    "firebase-admin": "^13.7.0",
+    "firebase-admin": "^13.8.0",
     "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.3.0",
