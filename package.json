@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
-    "test:notifications": "tsx test-notifications.ts"
+    "build": "tsc"
   },
   "keywords": [],
   "author": "",
