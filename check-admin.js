@@ -3,7 +3,13 @@ const bcrypt = require('bcrypt');
 
 const checkAdmin = async () => {
     try {
-        await mongoose.connect('mongodb+srv://replatechonologies_db_user:S7CSHXhVcvu1TDfu@apnacluster.fg69wjw.mongodb.net/ApnaUstad');
+        const mongoUri = process.env.MONGODB_URI;
+
+        if (!mongoUri) {
+            throw new Error('Missing required environment variable: MONGODB_URI');
+        }
+
+        await mongoose.connect(mongoUri);
         
         const adminSchema = new mongoose.Schema({
             email: { type: String, required: true },
