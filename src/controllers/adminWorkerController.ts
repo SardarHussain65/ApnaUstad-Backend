@@ -12,16 +12,35 @@ import { AdminAuthRequest } from "../middlewares/admin.middleware";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export const getAllWorkers = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { status, verified, city, page = '1', limit = '10' } = req.query;
+    const { status, verified, city, category, search, page = '1', limit = '100' } = req.query;
 
     const pageNum = parseInt(page as string, 10) || 1;
-    const limitNum = parseInt(limit as string, 10) || 10;
+    const limitNum = Math.min(parseInt(limit as string, 10) || 100, 200);
     const skip = (pageNum - 1) * limitNum;
 
     let query: any = {};
-    if (verified !== undefined) query.isVerified = verified === 'true';
-    if (status !== undefined) query.isActive = status === 'active';
-    if (city) query.city = new RegExp(escapeRegex(city as string), 'i');
+    const verifiedValue = String(verified || '').toLowerCase();
+    const statusValue = String(status || '').toLowerCase();
+
+    if (verifiedValue === 'true') query.isVerified = true;
+    if (verifiedValue === 'false') query.isVerified = false;
+
+    if (['active', 'true'].includes(statusValue)) query.isActive = true;
+    if (['inactive', 'false'].includes(statusValue)) query.isActive = false;
+
+    if (city && city !== 'undefined') query.city = new RegExp(`^${escapeRegex(city as string)}$`, 'i');
+    if (category && category !== 'undefined') query.category = new RegExp(`^${escapeRegex(category as string)}$`, 'i');
+    if (search && search !== 'undefined') {
+        const searchRegex = new RegExp(escapeRegex(search as string), 'i');
+        query.$or = [
+            { fullName: searchRegex },
+            { phone: searchRegex },
+            { email: searchRegex },
+            { cnicNumber: searchRegex },
+            { category: searchRegex },
+            { city: searchRegex }
+        ];
+    }
 
     const total = await Worker.countDocuments(query);
     const workers = await Worker.find(query)

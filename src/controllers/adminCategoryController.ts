@@ -1,25 +1,39 @@
 import Category from "../models/Category";
 import Worker from "../models/Workers";
 import Booking from "../models/Booking";
+import JobPost from "../models/JobPost";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, NotFoundError, ConflictError } from "../utils/ApiError";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
+
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Get all categories (Admin)
  * @route GET /api/v1/admin/categories
  */
 export const getAllCategories = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { page = '1', limit = '10' } = req.query;
+    const { page = '1', limit = '100', search, active } = req.query;
 
-    const pageNum = parseInt(page as string, 10) || 1;
-    const limitNum = parseInt(limit as string, 10) || 10;
+    const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 100));
     const skip = (pageNum - 1) * limitNum;
 
-    const total = await Category.countDocuments();
-    const categories = await Category.find()
-        .sort({ sortOrder: 1 })
+    const query: Record<string, any> = {};
+
+    if (search && typeof search === 'string') {
+        const searchRegex = new RegExp(escapeRegex(search), 'i');
+        query.$or = [{ name: searchRegex }, { description: searchRegex }];
+    }
+
+    if (active === 'true' || active === 'false') {
+        query.isActive = active === 'true';
+    }
+
+    const total = await Category.countDocuments(query);
+    const categories = await Category.find(query)
+        .sort({ sortOrder: 1, name: 1 })
         .skip(skip)
         .limit(limitNum);
 
@@ -31,13 +45,9 @@ export const getAllCategories = asyncHandler(async (req: AdminAuthRequest, res) 
  * @route POST /api/v1/admin/categories
  */
 export const createCategory = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { name, icon, color, description, sortOrder } = req.body;
+    const { name, icon, color, description, sortOrder, isActive } = req.body;
 
-    if (!name || !icon || !color) {
-        throw new BadRequestError("Name, icon, and color are required fields");
-    }
-
-    const existingCategory = await Category.findOne({ name });
+    const existingCategory = await Category.findOne({ name: new RegExp(`^${escapeRegex(name)}$`, 'i') });
     if (existingCategory) {
         throw new ConflictError("Category with this name already exists");
     }
@@ -48,7 +58,8 @@ export const createCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
             icon,
             color,
             description: description || "",
-            sortOrder: sortOrder || 0
+            sortOrder: sortOrder || 0,
+            isActive: isActive !== undefined ? isActive : true
         });
 
         return successResponse(res, 201, "Category created successfully", category);
@@ -73,9 +84,18 @@ export const updateCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
         throw new NotFoundError("Category not found");
     }
 
-    if (name) category.name = name;
-    if (icon) category.icon = icon;
-    if (color) category.color = color;
+    if (name !== undefined && name !== category.name) {
+        const existingCategory = await Category.findOne({
+            _id: { $ne: id },
+            name: new RegExp(`^${escapeRegex(name)}$`, 'i')
+        });
+        if (existingCategory) {
+            throw new ConflictError("Category with this name already exists");
+        }
+        category.name = name;
+    }
+    if (icon !== undefined) category.icon = icon;
+    if (color !== undefined) category.color = color;
     if (description !== undefined) category.description = description;
     if (sortOrder !== undefined) category.sortOrder = sortOrder;
     if (isActive !== undefined) category.isActive = isActive;
@@ -103,13 +123,16 @@ export const deleteCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
         throw new NotFoundError("Category not found");
     }
 
-    // Check for dependent Worker and Booking records referencing this category
+    // Check for dependent Worker, Booking, and Job records referencing this category
     const categoryName = category.name;
-    const workerExists = await Worker.exists({ category: categoryName });
-    const bookingExists = await Booking.exists({ category: categoryName });
+    const [workerExists, bookingExists, jobExists] = await Promise.all([
+        Worker.exists({ category: categoryName }),
+        Booking.exists({ category: categoryName }),
+        JobPost.exists({ category: categoryName })
+    ]);
 
-    if (workerExists || bookingExists) {
-        throw new BadRequestError("Cannot delete category as it is currently assigned to workers or bookings");
+    if (workerExists || bookingExists || jobExists) {
+        throw new BadRequestError("Cannot delete category as it is currently assigned to workers, bookings, or jobs");
     }
 
     await category.deleteOne();
