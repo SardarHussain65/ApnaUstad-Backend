@@ -24,12 +24,12 @@ export const getAdminNotifications = asyncHandler(async (req: AdminAuthRequest, 
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
 
-    const notifications = await Notifications.find({ type: 'admin_alert' }) // Assuming admin alert type exists
+    const notifications = await Notifications.find({})
         .skip((page - 1) * limit)
         .limit(limit)
         .sort({ createdAt: -1 });
 
-    const total = await Notifications.countDocuments({ type: 'admin_alert' });
+    const total = await Notifications.countDocuments({});
 
     return successResponse(res, 200, "Notifications fetched successfully", {
         notifications,
