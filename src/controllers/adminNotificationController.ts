@@ -7,13 +7,13 @@ import { AdminAuthRequest } from "../middlewares/admin.middleware";
  * Send global notification to users or workers
  * @route POST /api/v1/admin/notifications/global
  */
-export const sendGlobalNotification = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { title, body, target } = req.body; // target: 'all', 'users', 'workers'
-    
-    // In a real application we would batch process these or use a message queue
-    // For MVP, we can save them to the DB and push down chunks.
-    
-    return successResponse(res, 200, "Global notification queued successfully", null);
+export const sendGlobalNotification = asyncHandler(async (_req: AdminAuthRequest, res) => {
+    // This endpoint must not report success until notification persistence and/or
+    // background delivery has actually been implemented.
+    return res.status(501).json({
+        success: false,
+        message: "Global notification sending is not implemented yet. No notification was queued or persisted."
+    });
 });
 
 /**
