@@ -3,9 +3,14 @@ import * as adminController from '../controllers/adminController';
 import * as adminWorkerController from '../controllers/adminWorkerController';
 import * as adminUserController from '../controllers/adminUserController';
 import * as adminCategoryController from '../controllers/adminCategoryController';
+import * as adminJobController from '../controllers/adminJobController';
+import * as adminBookingController from '../controllers/adminBookingController';
+import * as adminReviewController from '../controllers/adminReviewController';
+import * as adminNotificationController from '../controllers/adminNotificationController';
 import { adminAuthMiddleware } from '../middlewares/admin.middleware';
 import validate from '../middlewares/validate.middleware';
 import { loginAdminSchema } from '../validations/admin.validation';
+import { createCategorySchema, updateCategorySchema } from '../validations/category.validation';
 
 const router = Router();
 
@@ -41,8 +46,33 @@ router.patch('/workers/:id/status', adminWorkerController.toggleWorkerStatus);
  * Category Management
  */
 router.get('/categories', adminCategoryController.getAllCategories);
-router.post('/categories', adminCategoryController.createCategory);
-router.patch('/categories/:id', adminCategoryController.updateCategory);
+router.post('/categories', validate(createCategorySchema), adminCategoryController.createCategory);
+router.patch('/categories/:id', validate(updateCategorySchema), adminCategoryController.updateCategory);
 router.delete('/categories/:id', adminCategoryController.deleteCategory);
+
+/**
+ * Job Management
+ */
+router.get('/jobs', adminJobController.getAllJobs);
+router.get('/jobs/:id', adminJobController.getJobDetails);
+router.delete('/jobs/:id', adminJobController.deleteJob);
+
+/**
+ * Booking Management
+ */
+router.get('/bookings', adminBookingController.getAllBookings);
+router.get('/bookings/:id', adminBookingController.getBookingDetails);
+
+/**
+ * Review Management
+ */
+router.get('/reviews', adminReviewController.getAllReviews);
+router.delete('/reviews/:id', adminReviewController.deleteReview);
+
+/**
+ * Notification Management
+ */
+router.post('/notifications/global', adminNotificationController.sendGlobalNotification);
+router.get('/notifications', adminNotificationController.getAdminNotifications);
 
 export default router;

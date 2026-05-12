@@ -39,7 +39,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         }
 
         if (longitude === undefined || latitude === undefined) {
-             return res.status(400).json({ success: false, message: "Location coordinates (longitude, latitude) are required" });
+            return res.status(400).json({ success: false, message: "Location coordinates (longitude, latitude) are required" });
         }
 
         const expiresAt = urgency === 'instant'
@@ -66,17 +66,17 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
 
         // 1. Emit socket event
         const io = require('../sockets/socketManager').getIO();
-        
+
         // Broadcast to relevant workers
         logger.info(`📡 Job Broadcast: Finding workers for category: ${category} at [${longitude}, ${latitude}]`);
-        
+
         const nearbyWorkers = await Worker.find({
             category: category,
             isAvailable: true,
             location: {
                 $near: {
                     $geometry: { type: "Point", coordinates: [longitude, latitude] },
-                    $maxDistance: 10000 // 10km
+                    $maxDistance: 100000 // 100km
                 }
             }
         }).limit(10).select('_id');
@@ -85,7 +85,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
 
         // Broadcast to relevant workers
         nearbyWorkers.forEach(worker => {
-             io.to(`worker:${worker._id.toString()}`).emit('job:new', jobPost);
+            io.to(`worker:${worker._id.toString()}`).emit('job:new', jobPost);
         });
 
         res.status(201).json({
@@ -118,11 +118,11 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         if (!jobPost) return res.status(404).json({ success: false, message: "Job post not found" });
 
         if (jobPost.status !== 'open') {
-             return res.status(400).json({ success: false, message: "This job is no longer open for bids" });
+            return res.status(400).json({ success: false, message: "This job is no longer open for bids" });
         }
 
         if (jobPost.expiresAt < new Date()) {
-             return res.status(400).json({ success: false, message: "This job post has expired" });
+            return res.status(400).json({ success: false, message: "This job post has expired" });
         }
 
         // Check Max Bids
@@ -146,7 +146,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         }
 
         const io = require('../sockets/socketManager').getIO();
-        
+
         // Notify Client immediately
         await newBid.populate('worker', 'fullName profileImage averageRating');
         io.to(`user:${jobPost.customer.toString()}`).emit('bid:new', newBid);
@@ -181,21 +181,21 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
 
         const jobPost = await JobPost.findById(bid.jobPost);
         if (!jobPost) return res.status(404).json({ success: false, message: "Associated job post not found" });
-        
+
         logger.info(`🔍 acceptBid Check: customerId=${customerId}, jobCustomer=${jobPost.customer.toString()}, status=${jobPost.status}`);
 
         if (jobPost.customer.toString() !== customerId) {
-             logger.warn(`🚫 acceptBid: Unauthorized. Customer mismatch. User: ${customerId}, Job Owner: ${jobPost.customer}`);
-             return res.status(403).json({ success: false, message: "Forbidden" });
+            logger.warn(`🚫 acceptBid: Unauthorized. Customer mismatch. User: ${customerId}, Job Owner: ${jobPost.customer}`);
+            return res.status(403).json({ success: false, message: "Forbidden" });
         }
 
         if (jobPost.status !== 'open') {
-             logger.warn(`🚫 acceptBid: Job status is ${jobPost.status}, not 'open'`);
-             return res.status(400).json({ 
-                success: false, 
+            logger.warn(`🚫 acceptBid: Job status is ${jobPost.status}, not 'open'`);
+            return res.status(400).json({
+                success: false,
                 message: `Job cannot be assigned. Current status: ${jobPost.status}`,
-                currentStatus: jobPost.status 
-             });
+                currentStatus: jobPost.status
+            });
         }
 
         // Update JobPost & Bid statuses
@@ -213,13 +213,13 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
 
         // Fetch worker details to populate rate or other stuff if needed
         const workerProfile = await Worker.findById(bid.worker);
-        
+
         // Calculate costs (assuming proposedPrice is flat rate for the job for simplicity)
         const config = getConfig();
         const baseAmount = bid.proposedPrice;
         const platformFeePercentage = config.platformFeePercentage || 10;
         const platformFee = Math.round((baseAmount * (platformFeePercentage / 100)) * 100) / 100;
-        
+
         const booking = await Booking.create({
             customer: customerId,
             worker: bid.worker,
@@ -244,7 +244,7 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
         // Notify winner and losers
         const io = require('../sockets/socketManager').getIO();
         io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking });
-        
+
         const otherBids = await JobBid.find({ jobPost: jobPost._id, _id: { $ne: bid._id } });
         otherBids.forEach(ob => {
             io.to(`worker:${ob.worker.toString()}`).emit('bid:lost', { jobPost });
@@ -257,8 +257,8 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
         });
 
     } catch (error: any) {
-         logger.error("Error in acceptBid:", error);
-         res.status(500).json({ success: false, message: "Internal server error" });
+        logger.error("Error in acceptBid:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 
@@ -267,36 +267,36 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
  * @route GET /api/v1/jobs/nearby
  */
 export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
-     try {
-         const { longitude, latitude } = req.query;
-         if (!longitude || !latitude) {
-              return res.status(400).json({ success: false, message: "Location coordinates required" });
-         }
+    try {
+        const { longitude, latitude } = req.query;
+        if (!longitude || !latitude) {
+            return res.status(400).json({ success: false, message: "Location coordinates required" });
+        }
 
-         const category = req.query.category; // Optional filter
+        const category = req.query.category; // Optional filter
 
-         const query: any = {
-             status: 'open',
-             expiresAt: { $gt: new Date() },
-             location: {
+        const query: any = {
+            status: 'open',
+            expiresAt: { $gt: new Date() },
+            location: {
                 $near: {
                     $geometry: { type: "Point", coordinates: [parseFloat(longitude as string), parseFloat(latitude as string)] },
                     $maxDistance: 10000 // 10km
                 }
             }
-         };
+        };
 
-         if (category) query.category = category;
+        if (category) query.category = category;
 
-         const jobs = await JobPost.find(query)
-           .populate('customer', 'fullName profileImage')
-           .sort({ createdAt: -1 });
+        const jobs = await JobPost.find(query)
+            .populate('customer', 'fullName profileImage')
+            .sort({ createdAt: -1 });
 
-         res.status(200).json({ success: true, data: jobs });
-     } catch (error: any) {
-         logger.error("Error in getNearbyJobs:", error);
-         res.status(500).json({ success: false, message: "Internal server error" });
-     }
+        res.status(200).json({ success: true, data: jobs });
+    } catch (error: any) {
+        logger.error("Error in getNearbyJobs:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
 };
 
 /**
@@ -304,16 +304,16 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
  * @route GET /api/v1/jobs/:jobId/bids
  */
 export const getJobBids = async (req: AuthRequest, res: Response) => {
-     try {
-          const { jobId } = req.params;
-          const bids = await JobBid.find({ jobPost: jobId })
-             .populate('worker', 'fullName profileImage averageRating')
-             .sort({ createdAt: -1 });
-          
-          res.status(200).json({ success: true, data: bids });
-     } catch(e) {
-          res.status(500).json({ success: false });
-     }
+    try {
+        const { jobId } = req.params;
+        const bids = await JobBid.find({ jobPost: jobId })
+            .populate('worker', 'fullName profileImage averageRating')
+            .sort({ createdAt: -1 });
+
+        res.status(200).json({ success: true, data: bids });
+    } catch (e) {
+        res.status(500).json({ success: false });
+    }
 }
 
 /**
@@ -338,11 +338,11 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
         }
 
         if (jobPost.status !== 'open') {
-             return res.status(400).json({ success: false, message: "Job is already taken or closed." });
+            return res.status(400).json({ success: false, message: "Job is already taken or closed." });
         }
 
         if (jobPost.expiresAt < new Date()) {
-             return res.status(400).json({ success: false, message: "This job post has expired" });
+            return res.status(400).json({ success: false, message: "This job post has expired" });
         }
 
         // Check if worker already bid
@@ -365,12 +365,12 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
         await newBid.populate('worker', 'fullName profileImage averageRating hourlyRate');
 
         const io = require('../sockets/socketManager').getIO();
-        
+
         // Notify client that a worker is interested
         const roomName = `user:${jobPost.customer.toString()}`;
         logger.info(`📡 Emitting bid:new to room ${roomName} for worker ${workerProfile?.fullName}`);
         io.to(roomName).emit('bid:new', newBid);
-        
+
         res.status(200).json({
             success: true,
             data: newBid,
@@ -378,8 +378,8 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
         });
 
     } catch (error: any) {
-         logger.error("Error in acceptInstantJob:", error);
-         res.status(500).json({ success: false, message: "Internal server error" });
+        logger.error("Error in acceptInstantJob:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
 

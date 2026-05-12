@@ -18,6 +18,8 @@ import reviewRoute from "./routes/reviewRoute";
 import otpRoute from "./routes/otpRoute";
 import jobRoute from "./routes/jobRoute";
 import messageRoute from "./routes/messageRoute";
+import notificationRoutes from './routes/notificationRoutes';
+
 
 const app = express();
 const config = getConfig();
@@ -67,6 +69,7 @@ app.use('/api/v1/jobs', jobRoute);
 app.use('/api/v1/reviews', reviewRoute);
 app.use('/api/v1/otp', otpRoute);
 app.use('/api/v1/messages', messageRoute);
+app.use('/api/v1/notifications', notificationRoutes);
 
 
 // --- ⚠️ Error Handling ---
