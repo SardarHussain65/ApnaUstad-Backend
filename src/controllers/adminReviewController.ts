@@ -9,8 +9,10 @@ import { NotFoundError } from "../utils/ApiError";
  * @route GET /api/v1/admin/reviews
  */
 export const getAllReviews = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
+    const parsedPage = parseInt(req.query.page as string, 10);
+    const parsedLimit = parseInt(req.query.limit as string, 10);
+    const page = Number.isNaN(parsedPage) ? 1 : Math.max(parsedPage, 1);
+    const limit = Number.isNaN(parsedLimit) ? 10 : Math.min(Math.max(parsedLimit, 1), 100);
     
     const total = await Reviews.countDocuments();
     const reviews = await Reviews.find()
