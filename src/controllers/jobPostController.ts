@@ -9,6 +9,8 @@ import { getConfig } from "../config/env";
 import logger from "../config/logger";
 
 const MAX_BIDS = 5;
+const DEFAULT_JOB_RADIUS_METERS = 100000;
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * @description Create a new open Job Post
@@ -71,12 +73,13 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         logger.info(`📡 Job Broadcast: Finding workers for category: ${category} at [${longitude}, ${latitude}]`);
 
         const nearbyWorkers = await Worker.find({
-            category: category,
+            category: new RegExp(`^${escapeRegex(category)}$`, 'i'),
             isAvailable: true,
+            isActive: true,
             location: {
                 $near: {
                     $geometry: { type: "Point", coordinates: [longitude, latitude] },
-                    $maxDistance: 100000 // 100km
+                    $maxDistance: DEFAULT_JOB_RADIUS_METERS
                 }
             }
         }).limit(10).select('_id');
@@ -268,25 +271,42 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
  */
 export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
     try {
-        const { longitude, latitude } = req.query;
-        if (!longitude || !latitude) {
-            return res.status(400).json({ success: false, message: "Location coordinates required" });
+        const workerId = req.tokenPayload?.id;
+        const worker = await Worker.findById(workerId).select('category location isActive isAvailable');
+
+        if (!worker) {
+            return res.status(404).json({ success: false, message: "Worker not found" });
         }
 
-        const category = req.query.category; // Optional filter
+        const queryLongitude = req.query.longitude ? parseFloat(req.query.longitude as string) : undefined;
+        const queryLatitude = req.query.latitude ? parseFloat(req.query.latitude as string) : undefined;
+        const savedLongitude = worker.location?.coordinates?.[0];
+        const savedLatitude = worker.location?.coordinates?.[1];
+
+        const longitude = Number.isFinite(queryLongitude) ? queryLongitude : savedLongitude;
+        const latitude = Number.isFinite(queryLatitude) ? queryLatitude : savedLatitude;
+
+        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+            return res.status(400).json({ success: false, message: "Worker location coordinates are required" });
+        }
+
+        const category = (req.query.category as string | undefined) || worker.category;
+        const maxDistance = req.query.radius
+            ? Math.min(parseInt(req.query.radius as string, 10) || DEFAULT_JOB_RADIUS_METERS, DEFAULT_JOB_RADIUS_METERS)
+            : DEFAULT_JOB_RADIUS_METERS;
 
         const query: any = {
             status: 'open',
             expiresAt: { $gt: new Date() },
             location: {
                 $near: {
-                    $geometry: { type: "Point", coordinates: [parseFloat(longitude as string), parseFloat(latitude as string)] },
-                    $maxDistance: 10000 // 10km
+                    $geometry: { type: "Point", coordinates: [longitude, latitude] },
+                    $maxDistance: maxDistance
                 }
             }
         };
 
-        if (category) query.category = category;
+        if (category) query.category = new RegExp(`^${escapeRegex(category)}$`, 'i');
 
         const jobs = await JobPost.find(query)
             .populate('customer', 'fullName profileImage')

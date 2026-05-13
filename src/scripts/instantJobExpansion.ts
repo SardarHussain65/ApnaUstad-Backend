@@ -4,6 +4,8 @@ import Worker from '../models/Workers';
 import { getIO } from '../sockets/socketManager';
 import logger from '../config/logger';
 
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
  * Script to handle Instant Job expansion and final timeout
  * 1. At 5 minutes: Expand radius to 25km and re-broadcast
@@ -29,8 +31,9 @@ export const startInstantJobExpansion = () => {
                 logger.info(`Expanding radius for instant job: ${job._id}`);
                 
                 const nearbyWorkers = await Worker.find({
-                    category: job.category,
+                    category: new RegExp(`^${escapeRegex(job.category)}$`, 'i'),
                     isAvailable: true,
+                    isActive: true,
                     location: {
                         $near: {
                             $geometry: job.location,
