@@ -286,7 +286,13 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     if (category !== undefined) worker.category = category;
     if (profileImage !== undefined) worker.profileImage = profileImage;
     if (fcmToken !== undefined) worker.fcmToken = fcmToken;
-    if (isAvailable !== undefined) worker.isAvailable = isAvailable;
+    if (isAvailable !== undefined) {
+        // Stamp lastOnlineAt when the worker comes back online
+        if (isAvailable === true && worker.isAvailable === false) {
+            worker.lastOnlineAt = new Date();
+        }
+        worker.isAvailable = isAvailable;
+    }
 
     try {
         await worker.save();
