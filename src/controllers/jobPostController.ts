@@ -682,3 +682,59 @@ export const uploadJobImages = async (req: UploadRequest, res: Response) => {
         res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
+
+/**
+ * @description Cancel an open Job Post
+ * @route POST /api/v1/jobs/:jobId/cancel
+ * @access Private (User)
+ */
+export const cancelJobPost = async (req: AuthRequest, res: Response) => {
+    try {
+        const customerId = req.tokenPayload?.id;
+        if (!customerId) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+        const { jobId } = req.params;
+
+        const jobPost = await JobPost.findById(jobId);
+        if (!jobPost) return res.status(404).json({ success: false, message: "Job post not found" });
+
+        if (jobPost.customer.toString() !== customerId) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not the owner of this job post." });
+        }
+
+        if (jobPost.status !== 'open' && jobPost.status !== 'reviewing') {
+            return res.status(400).json({ success: false, message: `Job cannot be cancelled. Current status: ${jobPost.status}` });
+        }
+
+        // Set status to cancelled
+        jobPost.status = 'cancelled';
+        await jobPost.save();
+
+        // Reject all pending bids
+        const bids = await JobBid.find({ jobPost: jobId, status: 'pending' });
+        await JobBid.updateMany(
+            { jobPost: jobId, status: 'pending' },
+            { $set: { status: 'rejected' } }
+        );
+
+        const io = require('../sockets/socketManager').getIO();
+
+        // Broadcast cancellation to all workers who had pending bids
+        bids.forEach(bid => {
+            io.to(`worker:${bid.worker.toString()}`).emit('bid:lost', { jobPost });
+        });
+
+        // Broadcast to general workers (if they are on the radar)
+        io.emit('job:cancelled', { jobId: jobPost._id });
+
+        res.status(200).json({
+            success: true,
+            data: jobPost,
+            message: "Job post cancelled successfully."
+        });
+
+    } catch (error: any) {
+        logger.error("Error in cancelJobPost:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};

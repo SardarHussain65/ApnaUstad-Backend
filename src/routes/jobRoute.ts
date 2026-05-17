@@ -12,7 +12,8 @@ import {
     getJobPostById,
     getWorkerBids,
     withdrawBid,
-    uploadJobImages
+    uploadJobImages,
+    cancelJobPost
 } from "../controllers/jobPostController";
 import { handleJobImagesUpload } from "../middlewares/multer.middleware";
 
@@ -50,6 +51,9 @@ router.post("/:jobId/bids/:bidId/accept", userAuthMiddleware, acceptBid);
 
 // Accept an instant job (for workers)
 router.post("/:jobId/accept-instant", workerAuthMiddleware, acceptInstantJob);
+
+// Cancel a job post (for users)
+router.post("/:jobId/cancel", userAuthMiddleware, cancelJobPost);
 
 // Get a single job post
 router.get("/:jobId", jwtAuthMiddleware, getJobPostById);
