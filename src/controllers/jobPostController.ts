@@ -7,6 +7,7 @@ import Worker from "../models/Workers";
 import Booking from "../models/Booking";
 import { getConfig } from "../config/env";
 import logger from "../config/logger";
+import { syncPaymentForBookingStatus } from "../services/paymentLedgerService";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
@@ -244,6 +245,7 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             status: 'accepted', // Auto accepted since they bid on it
             expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         });
+        await syncPaymentForBookingStatus(booking);
 
         // Notify winner and losers
         const io = require('../sockets/socketManager').getIO();

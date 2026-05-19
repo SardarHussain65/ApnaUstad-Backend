@@ -19,6 +19,7 @@ import otpRoute from "./routes/otpRoute";
 import jobRoute from "./routes/jobRoute";
 import messageRoute from "./routes/messageRoute";
 import notificationRoutes from './routes/notificationRoutes';
+import paymentRoute from './routes/paymentRoute';
 
 
 const app = express();
@@ -70,6 +71,7 @@ app.use('/api/v1/reviews', reviewRoute);
 app.use('/api/v1/otp', otpRoute);
 app.use('/api/v1/messages', messageRoute);
 app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/payments', paymentRoute);
 
 
 // --- ⚠️ Error Handling ---

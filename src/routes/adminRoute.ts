@@ -7,6 +7,7 @@ import * as adminJobController from '../controllers/adminJobController';
 import * as adminBookingController from '../controllers/adminBookingController';
 import * as adminReviewController from '../controllers/adminReviewController';
 import * as adminNotificationController from '../controllers/adminNotificationController';
+import * as adminPaymentController from '../controllers/adminPaymentController';
 import { adminAuthMiddleware } from '../middlewares/admin.middleware';
 import validate from '../middlewares/validate.middleware';
 import { loginAdminSchema } from '../validations/admin.validation';
@@ -62,6 +63,12 @@ router.delete('/jobs/:id', adminJobController.deleteJob);
  */
 router.get('/bookings', adminBookingController.getAllBookings);
 router.get('/bookings/:id', adminBookingController.getBookingDetails);
+
+/**
+ * Payment Ledger
+ */
+router.get('/payments', adminPaymentController.getAllPayments);
+router.get('/payments/summary', adminPaymentController.getPaymentSummary);
 
 /**
  * Review Management
