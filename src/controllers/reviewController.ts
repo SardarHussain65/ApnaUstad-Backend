@@ -32,6 +32,12 @@ export const createReview = async (req: AuthRequest, res: Response) => {
             return;
         }
 
+        const assignedWorkerId = booking.worker.toString();
+        if (worker !== assignedWorkerId) {
+            res.status(400).json({ success: false, message: "Review worker must match the booking worker" });
+            return;
+        }
+
         if (booking.status !== 'completed') {
             res.status(400).json({ success: false, message: "Can only review completed bookings" });
             return;
@@ -46,7 +52,7 @@ export const createReview = async (req: AuthRequest, res: Response) => {
         const review = await Review.create({
             booking: bookingId,
             customer: customerId,
-            worker,
+            worker: assignedWorkerId,
             rating,
             comment
         });
@@ -57,12 +63,12 @@ export const createReview = async (req: AuthRequest, res: Response) => {
 
         // Calculate and update Worker average rating
         const stats = await Review.aggregate([
-            { $match: { worker: new mongoose.Types.ObjectId(worker) } },
+            { $match: { worker: new mongoose.Types.ObjectId(assignedWorkerId) } },
             { $group: { _id: '$worker', averageRating: { $avg: '$rating' }, totalReviews: { $sum: 1 } } }
         ]);
 
         if (stats.length > 0) {
-            await Worker.findByIdAndUpdate(worker, {
+            await Worker.findByIdAndUpdate(assignedWorkerId, {
                 rating: Math.round(stats[0].averageRating * 10) / 10,
                 totalReviews: stats[0].totalReviews
             });

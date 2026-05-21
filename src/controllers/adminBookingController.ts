@@ -1,4 +1,5 @@
 import Booking from "../models/Booking";
+import Payment from "../models/Payment";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
@@ -42,8 +43,14 @@ export const getAllBookings = asyncHandler(async (req: AdminAuthRequest, res) =>
         .skip((page - 1) * limit)
         .limit(limit)
         .sort({ createdAt: -1 });
+    const payments = await Payment.find({ booking: { $in: bookings.map(booking => booking._id) } });
+    const paymentByBooking = new Map(payments.map(payment => [payment.booking.toString(), payment.toObject()]));
+    const rows = bookings.map(booking => ({
+        ...booking.toObject(),
+        payment: paymentByBooking.get(booking._id.toString()) || null
+    }));
 
-    return paginatedResponse(res, 200, "Bookings fetched successfully", bookings, page, limit, total);
+    return paginatedResponse(res, 200, "Bookings fetched successfully", rows, page, limit, total);
 });
 
 /**
@@ -57,5 +64,10 @@ export const getBookingDetails = asyncHandler(async (req: AdminAuthRequest, res)
 
     if (!booking) throw new NotFoundError("Booking not found");
 
-    return successResponse(res, 200, "Booking fetched successfully", booking);
+    const payment = await Payment.findOne({ booking: booking._id });
+
+    return successResponse(res, 200, "Booking fetched successfully", {
+        ...booking.toObject(),
+        payment
+    });
 });

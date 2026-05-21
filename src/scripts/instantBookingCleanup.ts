@@ -3,6 +3,7 @@ import Booking from '../models/Booking';
 import { getIO } from '../sockets/socketManager';
 import { emitBookingEvent } from '../sockets/handlers/booking.handler';
 import logger from '../config/logger';
+import { syncPaymentForBookingStatus } from '../services/paymentLedgerService';
 
 export const startInstantBookingCleanup = () => {
     // Runs every 1 minute
@@ -23,6 +24,7 @@ export const startInstantBookingCleanup = () => {
                 booking.cancelledBy = 'admin';
                 booking.cancelReason = 'Worker did not respond in time';
                 await booking.save();
+                await syncPaymentForBookingStatus(booking);
                 
                 emitBookingEvent(getIO(), booking, 'booking:cancelled');
             }

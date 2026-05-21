@@ -286,7 +286,13 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     if (category !== undefined) worker.category = category;
     if (profileImage !== undefined) worker.profileImage = profileImage;
     if (fcmToken !== undefined) worker.fcmToken = fcmToken;
-    if (isAvailable !== undefined) worker.isAvailable = isAvailable;
+    if (isAvailable !== undefined) {
+        // Stamp lastOnlineAt when the worker comes back online
+        if (isAvailable === true && worker.isAvailable === false) {
+            worker.lastOnlineAt = new Date();
+        }
+        worker.isAvailable = isAvailable;
+    }
 
     try {
         await worker.save();
@@ -296,7 +302,7 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
         }
         throw error;
     }
-    const updatedWorker = await Workers.findById(id).select("-password -fcmToken");
+    const updatedWorker = await Workers.findById(id).select("-password -fcmToken -refreshToken");
     return successResponse(res, 200, "Worker updated successfully", updatedWorker);
 });
 
@@ -337,6 +343,40 @@ export const changeWorkerPassword = asyncHandler(async (req: AuthRequest, res) =
     worker.password = newPassword;
     await worker.save();
     return successResponse(res, 200, "Password changed successfully", {});
+});
+
+export const logoutAllWorkerSessions = asyncHandler(async (req: AuthRequest, res) => {
+    const { id } = req.params;
+
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only reset your own sessions");
+    }
+
+    const worker = await Workers.findById(id).select("+refreshToken");
+    if (!worker) throw new BadRequestError("Worker not found");
+
+    const accessToken = generateToken({
+        id: worker._id.toString(),
+        username: worker.fullName,
+        type: 'worker'
+    });
+
+    const refreshToken = generateRefreshToken({
+        id: worker._id.toString(),
+        username: worker.fullName,
+        type: 'worker'
+    });
+
+    worker.refreshToken = refreshToken;
+    await worker.save();
+
+    const safeWorker = await Workers.findById(id).select("-password -fcmToken -refreshToken");
+
+    return successResponse(res, 200, "Sessions reset successfully", {
+        token: accessToken,
+        refreshToken,
+        worker: safeWorker
+    });
 });
 
 export const updateWorkerEmail = asyncHandler(async (req: AuthRequest, res) => {

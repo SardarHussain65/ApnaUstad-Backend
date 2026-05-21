@@ -4,6 +4,7 @@ import Booking from "../models/Booking";
 import Worker from "../models/Workers";
 import { getConfig } from "../config/env";
 import logger from "../config/logger";
+import { confirmCashPaymentForBooking, syncPaymentForBookingStatus } from "../services/paymentLedgerService";
 
 /**
  * @description Create a new booking
@@ -90,6 +91,7 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
             expiresAt,
             ...(location && { location })
         });
+        await syncPaymentForBookingStatus(booking);
 
         // Emit socket event to the worker
         const io = require('../sockets/socketManager').getIO();
@@ -314,6 +316,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         }
 
         await booking.save();
+        await syncPaymentForBookingStatus(booking);
 
         // Emit socket event
         const io = require('../sockets/socketManager').getIO();
@@ -356,7 +359,7 @@ const isAuthorizedForBooking = (booking: any, tokenPayload: any): boolean => {
 export const payBooking = async (req: AuthRequest, res: Response) => {
     try {
         const { id } = req.params;
-        const { paymentMethod } = req.body;
+        const { paymentMethod = 'cash', notes = '' } = req.body;
         const userId = req.tokenPayload?.id;
 
         const booking = await Booking.findById(id);
@@ -378,9 +381,14 @@ export const payBooking = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "Booking is already paid" });
         }
 
+        if (paymentMethod !== 'cash') {
+            return res.status(400).json({ success: false, message: "Only cash payments are supported in this version" });
+        }
+
         booking.paymentStatus = 'paid';
-        booking.paymentMethod = paymentMethod || 'cash';
+        booking.paymentMethod = 'cash';
         await booking.save();
+        const payment = await confirmCashPaymentForBooking(booking, 'customer', notes);
 
         // Emit socket event to notify worker
         const io = require('../sockets/socketManager').getIO();
@@ -389,8 +397,11 @@ export const payBooking = async (req: AuthRequest, res: Response) => {
 
         res.status(200).json({
             success: true,
-            message: "Payment successful",
-            data: booking
+            message: "Cash payment recorded successfully",
+            data: {
+                booking,
+                payment
+            }
         });
     } catch (error: any) {
         logger.error("Error in payBooking:", error);

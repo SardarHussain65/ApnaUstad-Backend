@@ -13,7 +13,8 @@ import {
     updateWorkerProfileImage,
     updateWorkerLocation,
     checkWorkerExists,
-    refreshWorkerAccessToken
+    refreshWorkerAccessToken,
+    logoutAllWorkerSessions
 } from "../controllers/workerController";
 import validate from "../middlewares/validate.middleware";
 import { loginWorkerSchema, registerWorkerSchema } from "../validations/worker.validation";
@@ -88,6 +89,12 @@ router.route("/:id/profile-image").put(updateWorkerProfileImage);
  * @access Private
  */
 router.route("/:id/change-password").put(changeWorkerPassword);
+
+/**
+ * @description Reset all sessions and rotate tokens
+ * @access Private
+ */
+router.route("/:id/logout-all").post(logoutAllWorkerSessions);
 
 /**
  * @description Update worker email

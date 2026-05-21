@@ -6,7 +6,8 @@ import {
     updateEmail, googleAuthUser, getCategories, 
     getWorkers,
     getWorkerById,
-    refreshAccessToken
+    refreshAccessToken,
+    logoutAllSessions
 } from "../controllers/userController";
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
@@ -99,6 +100,12 @@ router.route("/:id/profile-image").put(updateProfileImage);
  * @access Private
  */
 router.route("/:id/change-password").put(changePassword);
+
+/**
+ * @description Reset all sessions and rotate tokens
+ * @access Private
+ */
+router.route("/:id/logout-all").post(logoutAllSessions);
 
 
 /**

@@ -3,6 +3,7 @@ import User from "../models/User";
 import Worker from "../models/Workers";
 import Booking from "../models/Booking";
 import Category from "../models/Category";
+import Payment from "../models/Payment";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
@@ -62,13 +63,13 @@ export const getDashboardStats = asyncHandler(async (req: AdminAuthRequest, res)
     const totalWorkers = await Worker.countDocuments();
     const totalBookings = await Booking.countDocuments();
 
-    // Revenue and Commission logic using Aggregation
-    const revenueData = await Booking.aggregate([
-        { $match: { status: 'completed' } },
+    // Revenue and Commission are based on confirmed cash ledger rows.
+    const revenueData = await Payment.aggregate([
+        { $match: { status: 'paid' } },
         {
             $group: {
                 _id: null,
-                totalRevenue: { $sum: "$totalAmount" },
+                totalRevenue: { $sum: "$amount" },
                 totalCommission: { $sum: "$platformFee" }
             }
         }
