@@ -320,7 +320,8 @@ export const updateProfile = asyncHandler(async (req: AuthRequest, res) => {
         }
         throw error;
     }
-    return successResponse(res, 200, "User updated successfully", user);
+    const updatedUser = await User.findById(id).select("-password -fcmToken -refreshToken");
+    return successResponse(res, 200, "User updated successfully", updatedUser);
 });
 
 
@@ -362,6 +363,40 @@ export const changePassword = asyncHandler(async (req: AuthRequest, res) => {
     user.password = newPassword;
     await user.save();
     return successResponse(res, 200, "Password changed successfully", {});
+});
+
+export const logoutAllSessions = asyncHandler(async (req: AuthRequest, res) => {
+    const { id } = req.params;
+
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You can only reset your own sessions");
+    }
+
+    const user = await User.findById(id).select("+refreshToken");
+    if (!user) throw new BadRequestError("User not found");
+
+    const accessToken = generateToken({
+        id: user._id.toString(),
+        username: user.fullName,
+        type: 'user'
+    });
+
+    const refreshToken = generateRefreshToken({
+        id: user._id.toString(),
+        username: user.fullName,
+        type: 'user'
+    });
+
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    const safeUser = await User.findById(id).select("-password -fcmToken -refreshToken");
+
+    return successResponse(res, 200, "Sessions reset successfully", {
+        token: accessToken,
+        refreshToken,
+        user: safeUser
+    });
 });
 
 

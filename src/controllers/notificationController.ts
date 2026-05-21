@@ -14,6 +14,7 @@ import User from '../models/User';
 import Workers from '../models/Workers';
 import Admin from '../models/Admin';
 import { sendPushNotification, sendMultiplePushNotifications } from '../services/fcmService';
+import { Request } from 'express';
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../config/logger';
@@ -652,5 +653,48 @@ export const deleteNotification = async (req: AuthRequest, res: Response) => {
       error: 'Failed to delete notification',
       requestId
     });
+  }
+};
+
+// Admin: Broadcast notification to many users/workers
+export const sendBroadcastNotification = async (req: AuthRequest | Request, res: Response) => {
+  const requestId = uuidv4();
+  try {
+    const { target = 'all', title, body, type } = req.body;
+    const senderId = (req as any).tokenPayload?.id;
+
+    // Only admin can broadcast
+    if ((req as any).tokenPayload && (req as any).tokenPayload.type !== 'admin') {
+      return res.status(403).json({ error: 'Only admin can broadcast notifications', requestId });
+    }
+
+    if (!title || !body) {
+      return res.status(400).json({ error: 'Missing title/body', requestId });
+    }
+
+    // Decide tokens based on target
+    let tokens: string[] = [];
+    if (target === 'all') {
+      const pushDocs = await (PushToken as any).find({ isActive: true });
+      tokens = pushDocs.map((p: any) => p.token).filter(Boolean);
+    } else if (target === 'users' || target === 'workers') {
+      const model = target === 'users' ? User : Workers;
+      const users = await (model as any).find({}, { _id: 1 }).lean();
+      const ids = users.map((u: any) => u._id);
+      const pushDocs = await (PushToken as any).find({ user: { $in: ids }, isActive: true });
+      tokens = pushDocs.map((p: any) => p.token).filter(Boolean);
+    } else {
+      return res.status(400).json({ error: 'Invalid target', requestId });
+    }
+
+    if (tokens.length === 0) {
+      return res.status(404).json({ error: 'No active push tokens found', requestId });
+    }
+
+    const result = await sendMultiplePushNotifications(tokens, title, body, { type: type || 'general' });
+
+    return res.json({ success: true, result, requestId });
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Failed to broadcast', details: error.message });
   }
 };

@@ -15,6 +15,8 @@ services:
     # Pass environment variables from your .env file
     env_file:
       - .env
+    volumes:
+      - ./serviceAccountKey.json:/app/serviceAccountKey.json
     
     # This helps with health checks and restart policies
     restart: always

@@ -6,6 +6,7 @@ import {
   sendNotificationToUser,
   getNotifications,
   markAsRead,
+  sendBroadcastNotification,
 } from '../controllers/notificationController';
 
 const router = express.Router();
@@ -18,6 +19,8 @@ router.post('/remove-token', jwtAuthMiddleware, removePushToken);
 
 // Send notification to user
 router.post('/send', jwtAuthMiddleware, sendNotificationToUser);
+// Broadcast / bulk send for admin
+router.post('/broadcast', jwtAuthMiddleware, sendBroadcastNotification);
 
 // Get user's notifications
 router.get('/my-notifications', jwtAuthMiddleware, getNotifications);

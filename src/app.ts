@@ -20,6 +20,8 @@ import jobRoute from "./routes/jobRoute";
 import messageRoute from "./routes/messageRoute";
 import notificationRoutes from './routes/notificationRoutes';
 import paymentRoute from './routes/paymentRoute';
+import preferencesRoute from './routes/preferencesRoute';
+import supportRoute from './routes/supportRoute';
 
 
 const app = express();
@@ -72,6 +74,8 @@ app.use('/api/v1/otp', otpRoute);
 app.use('/api/v1/messages', messageRoute);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/payments', paymentRoute);
+app.use('/api/v1/preferences', preferencesRoute);
+app.use('/api/v1/support', supportRoute);
 
 
 // --- ⚠️ Error Handling ---
