@@ -3,7 +3,12 @@ const bcrypt = require('bcrypt');
 
 const seedAdmin = async () => {
     try {
-        await mongoose.connect('mongodb+srv://replatechonologies_db_user:S7CSHXhVcvu1TDfu@apnacluster.fg69wjw.mongodb.net/ApnaUstad');
+        const mongoUrl = process.env.MONGODB_URL;
+        if (!mongoUrl) {
+            throw new Error('Missing required environment variable: MONGODB_URL');
+        }
+
+        await mongoose.connect(mongoUrl);
         
         const adminSchema = new mongoose.Schema({
             name: { type: String },

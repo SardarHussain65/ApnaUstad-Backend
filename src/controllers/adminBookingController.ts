@@ -11,8 +11,10 @@ import mongoose from "mongoose";
  * @route GET /api/v1/admin/bookings
  */
 export const getAllBookings = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
+    const parsedPage = parseInt(req.query.page as string, 10);
+    const parsedLimit = parseInt(req.query.limit as string, 10);
+    const page = Number.isNaN(parsedPage) || parsedPage < 1 ? 1 : parsedPage;
+    const limit = Number.isNaN(parsedLimit) || parsedLimit < 1 ? 10 : Math.min(parsedLimit, 200);
     const status = req.query.status as string;
     const workerId = req.query.workerId as string;
     const customerId = req.query.customerId as string;
