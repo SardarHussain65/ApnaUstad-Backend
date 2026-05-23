@@ -5,6 +5,11 @@ import { helpTopics, helpArticles, supportChannels } from '../data/helpCenter';
 import { SupportRequest } from '../models/SupportRequest';
 import PushToken from '../models/PushToken';
 import { sendMultiplePushNotifications } from '../services/fcmService';
+import {
+  sendSupportRequestConfirmation,
+  sendSupportRequestAdminAlert,
+  sendSupportReplyNotification
+} from '../services/emailService';
 
 const normalize = (value: string) => value.trim().toLowerCase();
 
@@ -53,6 +58,15 @@ export const createSupportRequest = asyncHandler(async (req: Request, res: Respo
     metadata,
   });
 
+  // Trigger background emails without blocking the response
+  if (email) {
+    sendSupportRequestConfirmation(email, name || 'User', topic || subject || 'General', message, String(doc._id))
+      .catch((err) => console.error('Failed to send support confirmation email:', err));
+  }
+
+  sendSupportRequestAdminAlert(name || 'Anonymous', email || '', topic || subject || 'General', message, String(doc._id))
+    .catch((err) => console.error('Failed to send admin support alert email:', err));
+
   return successResponse(res, 201, 'Support request created', doc);
 });
 
@@ -98,6 +112,14 @@ export const replyToSupportRequest = asyncHandler(async (req: Request, res: Resp
     }
   } catch (notifyErr) {
     console.warn('Could not send support reply notification', notifyErr);
+  }
+
+  // Send support reply notification email
+  if (doc.email) {
+    const replyIndex = doc.replies.length - 1;
+    const replyId = `${doc._id}-reply-${replyIndex}`;
+    sendSupportReplyNotification(doc.email, doc.name || 'User', doc.message, message, replyId)
+      .catch((err) => console.error('Failed to send support reply email:', err));
   }
 
   return successResponse(res, 200, 'Reply added', doc);
