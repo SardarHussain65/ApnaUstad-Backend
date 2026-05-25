@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # The Backend Service
@@ -7,20 +7,20 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: apna-ustad-backend
-    
+
     # Map the container's port 5000 to your host's port 5000
     ports:
-      - "5000:5000"
-    
+      - "5001:5000"
+
     # Pass environment variables from your .env file
     env_file:
       - .env
     volumes:
       - ./serviceAccountKey.json:/app/serviceAccountKey.json
-    
+
     # This helps with health checks and restart policies
     restart: always
-    
+
     # Ensure the database starts before the application
     depends_on:
       - mongo

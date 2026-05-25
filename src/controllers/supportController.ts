@@ -84,7 +84,7 @@ export const getSupportRequest = asyncHandler(async (req: Request, res: Response
 
 export const getSupportRequestsByUser = asyncHandler(async (req: Request, res: Response) => {
   const userId = req.params.userId;
-  const docs = await SupportRequest.find({ user: userId }).sort({ createdAt: -1 });
+  const docs = await SupportRequest.find({ user: userId as string }).sort({ createdAt: -1 });
   return successResponse(res, 200, 'Support requests fetched', docs);
 });
 

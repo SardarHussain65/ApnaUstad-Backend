@@ -8,6 +8,7 @@ import Booking from "../models/Booking";
 import { getConfig } from "../config/env";
 import logger from "../config/logger";
 import { syncPaymentForBookingStatus } from "../services/paymentLedgerService";
+import { sendNotificationToRecipient } from "../services/notificationHelper";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
@@ -87,9 +88,17 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
 
         logger.info(`📡 Found ${nearbyWorkers.length} workers to notify: ${nearbyWorkers.map(w => w._id).join(', ')}`);
 
-        // Broadcast to relevant workers
+        // Broadcast to relevant workers via sockets and push notifications
         nearbyWorkers.forEach(worker => {
             io.to(`worker:${worker._id.toString()}`).emit('job:new', jobPost);
+            
+            sendNotificationToRecipient(
+                worker._id,
+                'worker',
+                `New ${category} Job Post Available!`,
+                `A new job post is available near you: "${description.substring(0, 100)}${description.length > 100 ? '...' : ''}"`,
+                { jobId: jobPost._id.toString(), type: 'new_job' }
+            ).catch(err => logger.error(`Failed to send job post push notification to worker ${worker._id}:`, err));
         });
 
         res.status(201).json({
@@ -247,9 +256,17 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
         });
         await syncPaymentForBookingStatus(booking);
 
-        // Notify winner and losers
+        // Notify winner and losers via sockets and push notifications
         const io = require('../sockets/socketManager').getIO();
         io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking });
+
+        sendNotificationToRecipient(
+            bid.worker,
+            'worker',
+            'Bid Accepted! 🎉',
+            `Your bid for "${jobPost.category}" has been accepted! A booking has been created.`,
+            { bookingId: booking._id.toString(), type: 'bid_won' }
+        ).catch(err => logger.error(`Failed to send bid acceptance push notification to worker ${bid.worker}:`, err));
 
         const otherBids = await JobBid.find({ jobPost: jobPost._id, _id: { $ne: bid._id } });
         otherBids.forEach(ob => {
