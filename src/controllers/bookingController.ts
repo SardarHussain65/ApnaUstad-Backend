@@ -5,6 +5,7 @@ import Worker from "../models/Workers";
 import { getConfig } from "../config/env";
 import logger from "../config/logger";
 import { confirmCashPaymentForBooking, syncPaymentForBookingStatus } from "../services/paymentLedgerService";
+import { sendNotificationToRecipient } from "../services/notificationHelper";
 
 /**
  * @description Create a new booking
@@ -100,6 +101,15 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
             ? { ...booking.toObject(), urgent: true } 
             : booking;
         emitBookingEvent(io, eventPayload, 'booking:new');
+        
+        // Send push notification to the specific worker
+        sendNotificationToRecipient(
+            workerId,
+            'worker',
+            'New Direct Booking Request! 📅',
+            `You have received a new booking request for ${category}.`,
+            { bookingId: booking._id.toString(), type: 'booking_new' }
+        ).catch(err => logger.error(`Failed to send direct booking push notification to worker ${workerId}:`, err));
 
         res.status(201).json({
             success: true,
