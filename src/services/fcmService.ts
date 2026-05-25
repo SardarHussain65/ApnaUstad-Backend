@@ -16,15 +16,24 @@ let app: admin.app.App;
 let firebaseInitialized = false;
 
 try {
-  if (!admin.apps.length) {
-    app = admin.initializeApp({
-      credential: admin.credential.cert(require(serviceAccountPath)),
-    });
-  } else {
+  if (admin.apps.length > 0) {
     app = admin.app();
+    firebaseInitialized = true;
+    logger.info('Firebase Admin initialized successfully (reused existing app)');
+  } else {
+    let serviceAccount;
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+    } else {
+      serviceAccount = require(serviceAccountPath);
+    }
+
+    app = admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    firebaseInitialized = true;
+    logger.info('Firebase Admin initialized successfully');
   }
-  firebaseInitialized = true;
-  logger.info('Firebase Admin initialized successfully');
 } catch (error) {
   logger.error('Error initializing Firebase Admin:', error);
   firebaseInitialized = false;
