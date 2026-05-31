@@ -12,11 +12,11 @@ export enum NotificationDeliveryStatus {
 
 export interface INotification extends Document {
   recipient: mongoose.Types.ObjectId;
-  recipientType: 'user' | 'worker';
+  recipientType: 'user' | 'worker' | 'admin';
   title: string;
   message: string;
   type: 'booking_accepted' | 'booking_cancelled' | 'job_started' | 'job_completed' | 
-        'payment_received' | 'new_review' | 'worker_verified' | 'general';
+        'payment_received' | 'new_review' | 'worker_verified' | 'wallet_topup' | 'general';
   icon: string;
   color: string;
   booking?: mongoose.Types.ObjectId | null;
@@ -55,7 +55,7 @@ const notificationSchema = new Schema<INotification>(
     },
     recipientType: { 
       type: String, 
-      enum: ['user', 'worker'], 
+      enum: ['user', 'worker', 'admin'],
       required: true,
       index: true
     },
@@ -75,7 +75,7 @@ const notificationSchema = new Schema<INotification>(
       type: String,
       enum: ['booking_accepted', 'booking_cancelled', 'job_started', 
              'job_completed', 'payment_received', 'new_review', 
-             'worker_verified', 'general'],
+             'worker_verified', 'wallet_topup', 'general'],
       default: 'general',
       index: true
     },

@@ -23,6 +23,8 @@ export interface IWorker extends Document {
         coordinates: number[];
     };
     isAvailable: boolean;
+    isInstantAvailable: boolean;
+    isScheduledAvailable: boolean;
     isVerified: boolean;
     isActive: boolean;
     rating: number;
@@ -57,6 +59,8 @@ const workerSchema = new Schema<IWorker>(
             coordinates: { type: [Number], default: [0, 0] }
         },
         isAvailable: { type: Boolean, default: true },
+        isInstantAvailable: { type: Boolean, default: true },
+        isScheduledAvailable: { type: Boolean, default: true },
         isVerified: { type: Boolean, default: false },
         isActive: { type: Boolean, default: true },
         rating: { type: Number, default: 0, min: 0, max: 5 },
@@ -72,6 +76,7 @@ const workerSchema = new Schema<IWorker>(
 
 workerSchema.index({ location: '2dsphere' });
 workerSchema.index({ category: 1, isAvailable: 1, isVerified: 1 });
+workerSchema.index({ category: 1, isInstantAvailable: 1, isScheduledAvailable: 1, isActive: 1 });
 workerSchema.index({ city: 1, isAvailable: 1 });
 workerSchema.index({ rating: -1 });
 

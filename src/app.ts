@@ -22,6 +22,7 @@ import notificationRoutes from './routes/notificationRoutes';
 import paymentRoute from './routes/paymentRoute';
 import preferencesRoute from './routes/preferencesRoute';
 import supportRoute from './routes/supportRoute';
+import walletRoute from './routes/walletRoute';
 
 
 const app = express();
@@ -76,6 +77,7 @@ app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/payments', paymentRoute);
 app.use('/api/v1/preferences', preferencesRoute);
 app.use('/api/v1/support', supportRoute);
+app.use('/api/v1/wallet', walletRoute);
 
 
 // --- ⚠️ Error Handling ---

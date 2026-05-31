@@ -2,7 +2,9 @@ import { Router } from "express";
 import {
     createBooking,
     getBookingById,
+    getClientHomeSummary,
     getUserBookings,
+    getWorkerHomeSummary,
     getWorkerBookings,
     updateBookingStatus,
     payBooking
@@ -24,6 +26,18 @@ router.route("/").post(userAuthMiddleware, validate(createBookingSchema), create
  * @access Private (User)
  */
 router.route("/my-bookings").get(userAuthMiddleware, getUserBookings);
+
+/**
+ * @description Get lightweight client home stats and recent bookings
+ * @access Private (User)
+ */
+router.route("/home-summary").get(userAuthMiddleware, getClientHomeSummary);
+
+/**
+ * @description Get lightweight worker home stats and active bookings
+ * @access Private (Worker)
+ */
+router.route("/worker-home-summary").get(workerAuthMiddleware, getWorkerHomeSummary);
 
 /**
  * @description Get all bookings for the authenticated worker

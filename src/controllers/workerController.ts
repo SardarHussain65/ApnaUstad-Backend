@@ -258,7 +258,8 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     const {
         fullName, phone, email, bio, experience,
         city, address, hourlyRate, skills, category,
-        latitude, longitude, profileImage, fcmToken, isAvailable
+        latitude, longitude, profileImage, fcmToken, isAvailable,
+        isInstantAvailable, isScheduledAvailable
     } = req.body;
 
     const worker = await Workers.findById(id);
@@ -286,12 +287,28 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     if (category !== undefined) worker.category = category;
     if (profileImage !== undefined) worker.profileImage = profileImage;
     if (fcmToken !== undefined) worker.fcmToken = fcmToken;
-    if (isAvailable !== undefined) {
-        // Stamp lastOnlineAt when the worker comes back online
-        if (isAvailable === true && worker.isAvailable === false) {
-            worker.lastOnlineAt = new Date();
+    const wasAvailable = worker.isAvailable !== false;
+    if (isInstantAvailable !== undefined || isScheduledAvailable !== undefined) {
+        worker.isInstantAvailable = isInstantAvailable !== undefined
+            ? Boolean(isInstantAvailable)
+            : worker.isInstantAvailable !== false;
+        worker.isScheduledAvailable = isScheduledAvailable !== undefined
+            ? Boolean(isScheduledAvailable)
+            : worker.isScheduledAvailable !== false;
+        worker.isAvailable = worker.isInstantAvailable || worker.isScheduledAvailable;
+    } else if (isAvailable !== undefined) {
+        // Legacy callers can still use the master switch.
+        worker.isAvailable = Boolean(isAvailable);
+        if (!worker.isAvailable) {
+            worker.isInstantAvailable = false;
+            worker.isScheduledAvailable = false;
+        } else if (worker.isInstantAvailable === false && worker.isScheduledAvailable === false) {
+            worker.isInstantAvailable = true;
+            worker.isScheduledAvailable = true;
         }
-        worker.isAvailable = isAvailable;
+    }
+    if (worker.isAvailable && !wasAvailable) {
+        worker.lastOnlineAt = new Date();
     }
 
     try {

@@ -16,6 +16,9 @@ export const createBookingSchema = z.object({
     address: z.string().optional(),
     longitude: z.number().min(-180).max(180).optional(),
     latitude: z.number().min(-90).max(90).optional(),
+    imageUrls: z.array(z.string().url()).max(5).optional(),
+    videoUrls: z.array(z.string().url()).max(5).optional(),
+    audioUrls: z.array(z.string().url()).max(1).optional(),
 });
 
 export const updateBookingStatusSchema = z.object({

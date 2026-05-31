@@ -416,6 +416,95 @@ export async function sendSupportRequestAdminAlert(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TEMPLATE 2B — ADMIN WALLET TOP-UP ALERT
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sends an email notification to Admin when a worker submits wallet top-up proof.
+ */
+export async function sendWalletTopUpAdminAlert({
+  workerName,
+  workerPhone,
+  amount,
+  methodLabel,
+  requestId,
+}: {
+  workerName: string;
+  workerPhone?: string;
+  amount: number;
+  methodLabel: string;
+  requestId: string;
+}) {
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@apnaustad.com';
+  const subject = `New Worker Top-Up Request · ${requestId}`;
+  const safe = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  }[char] || char));
+
+  const content = `
+    <p style="${bodyText}">A worker has submitted wallet recharge proof. Please verify the payment in the admin panel before crediting the wallet.</p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px 0;border-radius:16px;overflow:hidden;border:1px solid rgba(0,245,255,0.18);background:rgba(0,245,255,0.04);">
+      <tr>
+        <td style="padding:14px 24px;border-bottom:1px solid rgba(0,245,255,0.12);">
+          <p style="margin:0;font-size:10px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:#00F5FF;">Wallet Top-Up Review</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:18px 24px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0">
+            <tr>
+              <td style="padding:7px 0;width:35%;font-size:11px;color:rgba(255,255,255,0.45);font-weight:700;text-transform:uppercase;">Request ID</td>
+              <td style="padding:7px 0;font-size:14px;color:#00F5FF;font-weight:800;font-family:'SF Mono','Fira Code',monospace;">${safe(requestId)}</td>
+            </tr>
+            <tr>
+              <td style="padding:7px 0;font-size:11px;color:rgba(255,255,255,0.45);font-weight:700;text-transform:uppercase;">Worker</td>
+              <td style="padding:7px 0;font-size:14px;color:rgba(255,255,255,0.92);font-weight:700;">${safe(workerName)}</td>
+            </tr>
+            <tr>
+              <td style="padding:7px 0;font-size:11px;color:rgba(255,255,255,0.45);font-weight:700;text-transform:uppercase;">Phone</td>
+              <td style="padding:7px 0;font-size:14px;color:rgba(255,255,255,0.82);font-weight:600;">${safe(workerPhone || 'Not provided')}</td>
+            </tr>
+            <tr>
+              <td style="padding:7px 0;font-size:11px;color:rgba(255,255,255,0.45);font-weight:700;text-transform:uppercase;">Amount</td>
+              <td style="padding:7px 0;font-size:18px;color:#34C759;font-weight:900;">Rs. ${Number(amount || 0).toLocaleString('en-PK')}</td>
+            </tr>
+            <tr>
+              <td style="padding:7px 0;font-size:11px;color:rgba(255,255,255,0.45);font-weight:700;text-transform:uppercase;">Method</td>
+              <td style="padding:7px 0;font-size:14px;color:rgba(255,255,255,0.82);font-weight:600;">${safe(methodLabel)}</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+
+    <p style="${mutedText}">Open the Wallets section in the admin portal to approve or reject this request.</p>
+  `;
+
+  const html = cosmicShell({
+    headerGradient: 'linear-gradient(160deg, #031B24 0%, #082A35 50%, #050510 100%)',
+    headerBadgeBorder: 'rgba(0,245,255,0.5)',
+    headerBadgeGlow: 'rgba(0,245,255,0.25)',
+    statusLabel: 'Wallet Review',
+    statusLabelColor: '#00F5FF',
+    title: 'New Top-Up Request',
+    content,
+    footerNote: 'Apna Ustad Wallet Verification System',
+  });
+
+  return sendEmail({
+    to: adminEmail,
+    subject,
+    html,
+    idempotencyKey: `wallet-topup-admin-alert/${requestId}`,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TEMPLATE 3 — USER SUPPORT REPLY NOTIFICATION
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -580,5 +669,4 @@ export async function sendOTPEmail(
     idempotencyKey: `email-otp/${userEmail}/${otpCode}`,
   });
 }
-
 

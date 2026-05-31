@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { 
     registerUser, loginUser, uploadImage, checkUserExists, 
-    updateProfileImage, updateLocation, getUserById, 
+    updateProfileImage, updateLocation, getUserById,
+    getPublicUserProfile,
     updateProfile, changePassword, deleteUser, 
     updateEmail, googleAuthUser, getCategories, 
     getWorkers,
@@ -12,7 +13,7 @@ import {
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
 import { registerUserSchema, loginUserSchema } from "../validations/user.validation";
-import { userAuthMiddleware } from "../middlewares/jwt.middleware";
+import { jwtAuthMiddleware, userAuthMiddleware } from "../middlewares/jwt.middleware";
 import { uploadRateLimiter } from "../middlewares/rateLimiter.middleware";
 
 const router = Router();
@@ -69,6 +70,12 @@ router.route("/workers/:id").get(getWorkerById);
  */
 router.route("/google-auth").post(googleAuthUser);
 router.route("/refresh-token").post(refreshAccessToken);
+
+/**
+ * @description Get safe public client profile
+ * @access Private
+ */
+router.route("/public/:id").get(jwtAuthMiddleware, getPublicUserProfile);
 
 
 

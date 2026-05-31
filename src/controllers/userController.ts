@@ -1,6 +1,7 @@
 import User from "../models/User";
 import Workers from "../models/Workers";
 import Category from "../models/Category";
+import Booking from "../models/Booking";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
@@ -98,7 +99,7 @@ export const getWorkers = asyncHandler(async (req, res) => {
 
     // Fetch workers with filters
     const workers = await Workers.find(filter)
-        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -hourlyRate -location -address -city -experience -rating -reviews")
+        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -hourlyRate -location -address -city -experience -rating -reviews -phone -email")
         .skip(skip)
         .limit(limit)
         .lean();
@@ -118,7 +119,7 @@ export const getWorkers = asyncHandler(async (req, res) => {
             hasPrevPage: page > 1
         }
     });
-});   
+});
 
 
 
@@ -129,7 +130,7 @@ export const getWorkers = asyncHandler(async (req, res) => {
 export const getWorkerById = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
-    const worker = await Workers.findById(id).select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage");
+    const worker = await Workers.findById(id).select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -phone -email");
     if (!worker) {
         throw new BadRequestError("Worker not found");
     }
@@ -255,10 +256,10 @@ export const loginUser = asyncHandler(async (req, res) => {
     delete userResponse.refreshToken;
 
     // 8. Return response
-    return successResponse(res, 200, "User logged in successfully", { 
-        user: userResponse, 
+    return successResponse(res, 200, "User logged in successfully", {
+        user: userResponse,
         token: accessToken,
-        refreshToken: refreshToken 
+        refreshToken: refreshToken
     });
 });
 
@@ -276,6 +277,54 @@ export const getUserById = asyncHandler(async (req: AuthRequest, res) => {
         throw new BadRequestError("User not found");
     }
     return successResponse(res, 200, "User fetched successfully", user);
+});
+
+/**
+ * Get a safe public client profile for authenticated users.
+ * @route GET /api/v1/users/public/:id
+ */
+export const getPublicUserProfile = asyncHandler(async (req: AuthRequest, res) => {
+    const { id } = req.params;
+
+    const user = await User.findById(id).select("fullName profileImage address city createdAt isActive");
+    if (!user) {
+        throw new BadRequestError("User not found");
+    }
+
+    const [bookingStats] = await Booking.aggregate([
+        { $match: { customer: user._id } },
+        {
+            $group: {
+                _id: null,
+                totalBookings: { $sum: 1 },
+                completedBookings: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+                activeBookings: { $sum: { $cond: [{ $in: ["$status", ["pending", "accepted", "ongoing"]] }, 1, 0] } },
+                cancelledBookings: { $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] } }
+            }
+        }
+    ]);
+    const {
+        totalBookings = 0,
+        completedBookings = 0,
+        activeBookings = 0,
+        cancelledBookings = 0
+    } = bookingStats || {};
+
+    const resolvedBookings = completedBookings + cancelledBookings;
+    const reliabilityRate = resolvedBookings > 0
+        ? Math.round((completedBookings / resolvedBookings) * 100)
+        : null;
+
+    return successResponse(res, 200, "Client profile fetched successfully", {
+        ...user.toObject(),
+        stats: {
+            totalBookings,
+            completedBookings,
+            activeBookings,
+            cancelledBookings,
+            reliabilityRate
+        }
+    });
 });
 
 

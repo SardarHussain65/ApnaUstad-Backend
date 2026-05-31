@@ -8,6 +8,9 @@ import * as adminBookingController from '../controllers/adminBookingController';
 import * as adminReviewController from '../controllers/adminReviewController';
 import * as adminNotificationController from '../controllers/adminNotificationController';
 import * as adminPaymentController from '../controllers/adminPaymentController';
+import * as adminWalletController from '../controllers/adminWalletController';
+import * as adminWalletTopUpController from '../controllers/adminWalletTopUpController';
+import * as adminWalletPaymentMethodController from '../controllers/adminWalletPaymentMethodController';
 import { adminAuthMiddleware } from '../middlewares/admin.middleware';
 import validate from '../middlewares/validate.middleware';
 import { loginAdminSchema } from '../validations/admin.validation';
@@ -81,5 +84,27 @@ router.delete('/reviews/:id', adminReviewController.deleteReview);
  */
 router.post('/notifications/global', adminNotificationController.sendGlobalNotification);
 router.get('/notifications', adminNotificationController.getAdminNotifications);
+
+/**
+ * Wallet Management
+ */
+router.get('/wallets', adminWalletController.getAllWorkerWallets);
+router.get('/wallets/summary', adminWalletController.getWalletSummary);
+router.get('/wallet-settings', adminWalletController.getWalletSettingsController);
+router.patch('/wallet-settings', adminWalletController.updateWalletSettingsController);
+router.get('/wallets/:workerId', adminWalletController.getWorkerWalletDetails);
+router.post('/wallets/:workerId/recharge', adminWalletController.rechargeWorkerWallet);
+router.post('/wallets/:workerId/adjust', adminWalletController.adjustWorkerWallet);
+router.get('/wallet-payment-methods', adminWalletPaymentMethodController.getWalletPaymentMethods);
+router.patch('/wallet-payment-methods', adminWalletPaymentMethodController.updateWalletPaymentMethods);
+
+/**
+ * Wallet Top-Up Verification
+ */
+router.get('/wallet-topups/summary', adminWalletTopUpController.getWalletTopUpSummary);
+router.get('/wallet-topups', adminWalletTopUpController.getAllWalletTopUps);
+router.get('/wallet-topups/:id', adminWalletTopUpController.getWalletTopUpDetails);
+router.patch('/wallet-topups/:id/approve', adminWalletTopUpController.approveWalletTopUp);
+router.patch('/wallet-topups/:id/reject', adminWalletTopUpController.rejectWalletTopUp);
 
 export default router;

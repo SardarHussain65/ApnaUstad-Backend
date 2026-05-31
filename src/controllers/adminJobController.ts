@@ -1,4 +1,5 @@
 import JobPost from "../models/JobPost";
+import JobBid from "../models/JobBid";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
@@ -30,8 +31,17 @@ export const getAllJobs = asyncHandler(async (req: AdminAuthRequest, res) => {
         .skip((page - 1) * limit)
         .limit(limit)
         .sort({ createdAt: -1 });
+    const acceptedBids = await JobBid.find({
+        jobPost: { $in: jobs.map(job => job._id) },
+        status: 'accepted'
+    }).populate('worker', 'fullName phone profileImage');
+    const acceptedBidByJob = new Map(acceptedBids.map(bid => [bid.jobPost.toString(), bid.toObject()]));
+    const rows = jobs.map(job => ({
+        ...job.toObject(),
+        acceptedBid: acceptedBidByJob.get(job._id.toString()) || null
+    }));
 
-    return paginatedResponse(res, 200, "Jobs fetched successfully", jobs, page, limit, total);
+    return paginatedResponse(res, 200, "Jobs fetched successfully", rows, page, limit, total);
 });
 
 /**
@@ -44,7 +54,14 @@ export const getJobDetails = asyncHandler(async (req: AdminAuthRequest, res) => 
 
     if (!job) throw new NotFoundError("Job not found");
 
-    return successResponse(res, 200, "Job details fetched successfully", job);
+    const bids = await JobBid.find({ jobPost: job._id })
+        .populate('worker', 'fullName phone profileImage rating totalReviews totalJobs category')
+        .sort({ createdAt: -1 });
+
+    return successResponse(res, 200, "Job details fetched successfully", {
+        ...job.toObject(),
+        bids
+    });
 });
 
 /**

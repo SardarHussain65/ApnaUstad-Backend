@@ -6,12 +6,23 @@ import logger from '../../config/logger';
 export const registerChatHandlers = (io: Server, socket: Socket) => {
     socket.on('chat:send', async (data) => {
         try {
-            const { bookingId, content } = data;
+            const {
+                bookingId,
+                content,
+                messageType = 'text',
+                audioUrl,
+                audioDurationSeconds,
+            } = data;
             const senderId = (socket as any).user.id;
             const senderType = (socket as any).user.type; // 'user' or 'worker'
+            const isAudioMessage = messageType === 'audio';
+            const normalizedContent = typeof content === 'string' ? content.trim() : '';
 
-            if (!bookingId || !content) {
+            if (!bookingId || !['text', 'audio'].includes(messageType) || (!isAudioMessage && !normalizedContent)) {
                 return socket.emit('chat:error', { message: "Invalid chat data" });
+            }
+            if (isAudioMessage && (typeof audioUrl !== 'string' || !audioUrl.startsWith('https://') || !audioUrl.includes('/messages/audio/'))) {
+                return socket.emit('chat:error', { message: "Upload a valid voice message first" });
             }
 
             // Verify booking participation
@@ -27,14 +38,21 @@ export const registerChatHandlers = (io: Server, socket: Socket) => {
                 return socket.emit('chat:error', { message: "Unauthorized to chat in this booking" });
             }
 
-            // Emit to both parties in the thread
-            const socketMessage = {
+            if (booking.status === 'completed' || booking.status === 'cancelled') {
+                return socket.emit('chat:error', { message: "Chat is closed because this booking has ended" });
+            }
+
+            const socketMessage = await Message.create({
                 booking: bookingId,
                 sender: senderId,
                 senderModel: senderType === 'user' ? 'User' : 'Worker',
-                content: content,
-                createdAt: new Date().toISOString()
-            };
+                content: normalizedContent || 'Voice message',
+                messageType,
+                ...(isAudioMessage ? {
+                    audioUrl,
+                    audioDurationSeconds: Math.min(120, Math.max(0, Number(audioDurationSeconds || 0))),
+                } : {}),
+            });
 
             io.to(`user:${booking.customer.toString()}`).emit('chat:receive', socketMessage);
             io.to(`worker:${booking.worker.toString()}`).emit('chat:receive', socketMessage);

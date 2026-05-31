@@ -15,7 +15,15 @@ export interface IJobPost extends Document {
     status: 'open' | 'assigned' | 'closed' | 'cancelled' | 'reviewing';
     imageUrl?: string;
     imageUrls?: string[];
+    videoUrl?: string;
+    videoUrls?: string[];
+    audioUrls?: string[];
     amount?: number;
+    pricing?: {
+        clientOffer: number;
+        currency: 'PKR';
+        pricingVersion: number;
+    };
     radiusExpanded?: boolean;
     expiresAt: Date;
 }
@@ -40,7 +48,15 @@ const jobPostSchema = new Schema<IJobPost>(
         },
         imageUrl: { type: String, default: null },
         imageUrls: { type: [String], default: [] },
+        videoUrl: { type: String, default: null },
+        videoUrls: { type: [String], default: [] },
+        audioUrls: { type: [String], default: [] },
         amount: { type: Number, default: 0 },
+        pricing: {
+            clientOffer: { type: Number, min: 0, default: 0 },
+            currency: { type: String, enum: ['PKR'], default: 'PKR' },
+            pricingVersion: { type: Number, default: 2 }
+        },
         radiusExpanded: { type: Boolean, default: false },
         expiresAt: { type: Date, required: true }
     },

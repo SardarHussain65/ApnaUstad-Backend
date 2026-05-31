@@ -1,18 +1,460 @@
 import { Response } from "express";
+import mongoose, { Types } from "mongoose";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import { UploadRequest } from "../middlewares/multer.middleware";
 import JobPost from "../models/JobPost";
 import JobBid from "../models/JobBid";
 import Worker from "../models/Workers";
 import Booking from "../models/Booking";
-import { getConfig } from "../config/env";
 import logger from "../config/logger";
 import { syncPaymentForBookingStatus } from "../services/paymentLedgerService";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
+import {
+    buildInsufficientBalanceMessage,
+    calculateCommissionAmount,
+    getWalletEligibility
+} from "../services/workerWalletService";
+import {
+    buildAvailableWorkerFilterForJobType,
+    getEnabledJobTypesForWorker,
+    workerAcceptsJobType
+} from "../services/workerJobAvailabilityService";
+import { reserveCommission } from "../services/commissionReservationService";
+import { getWalletSettings } from "../services/walletSettingsService";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
+const WORKER_BID_PROFILE_SELECT = 'fullName phone email profileImage category rating totalReviews totalJobs hourlyRate experience city address bio skills isVerified isAvailable';
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const toPlainObject = (doc: any) => doc?.toObject ? doc.toObject() : doc;
+const uniqueUrls = (urls: (string | undefined | null)[]) =>
+    Array.from(new Set(urls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)));
+const toPublicAreaLabel = (address?: string) => {
+    const parts = String(address || '').split(',').map(part => part.trim()).filter(Boolean);
+    if (parts.length >= 3) return parts.slice(-2).join(', ');
+    if (parts.length === 2) return parts[1] || 'Nearby service area';
+    return 'Nearby service area';
+};
+
+const getCustomerId = (job: any) => {
+    const customer = job?.customer;
+    return (customer?._id || customer)?.toString?.() || '';
+};
+
+const buildJobMediaMeta = (job: any) => {
+    const images = uniqueUrls([job.imageUrl, ...(Array.isArray(job.imageUrls) ? job.imageUrls : [])]);
+    const videos = uniqueUrls([job.videoUrl, ...(Array.isArray(job.videoUrls) ? job.videoUrls : [])]);
+    const audios = uniqueUrls(Array.isArray(job.audioUrls) ? job.audioUrls : []);
+    return {
+        images,
+        videos,
+        audios,
+        coverUrl: images[0] || '',
+        totalCount: images.length + videos.length + audios.length,
+        hasVideo: videos.length > 0,
+        hasAudio: audios.length > 0,
+    };
+};
+
+const formatJobDate = (date?: Date | string) => {
+    const parsedDate = date ? new Date(date) : null;
+    if (!parsedDate || Number.isNaN(parsedDate.getTime())) {
+        return {
+            dateLabel: 'Today',
+            dayLabel: '',
+            fullDateLabel: 'Today',
+        };
+    }
+
+    return {
+        dateLabel: parsedDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        dayLabel: parsedDate.toLocaleDateString('en-US', { weekday: 'short' }),
+        fullDateLabel: parsedDate.toLocaleDateString('en-US', {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+        }),
+    };
+};
+
+const calculateDistanceMeters = (from?: number[], to?: number[]) => {
+    if (!Array.isArray(from) || !Array.isArray(to) || from.length < 2 || to.length < 2) return null;
+    const fromLongitude = Number(from[0]);
+    const fromLatitude = Number(from[1]);
+    const toLongitude = Number(to[0]);
+    const toLatitude = Number(to[1]);
+    if (![fromLongitude, fromLatitude, toLongitude, toLatitude].every(Number.isFinite)) return null;
+
+    const radius = 6371e3;
+    const latitudeDelta = ((toLatitude - fromLatitude) * Math.PI) / 180;
+    const longitudeDelta = ((toLongitude - fromLongitude) * Math.PI) / 180;
+    const fromLatitudeRadians = (fromLatitude * Math.PI) / 180;
+    const toLatitudeRadians = (toLatitude * Math.PI) / 180;
+    const a = Math.sin(latitudeDelta / 2) ** 2
+        + Math.cos(fromLatitudeRadians) * Math.cos(toLatitudeRadians) * Math.sin(longitudeDelta / 2) ** 2;
+
+    return Math.round(radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+};
+
+const formatDistance = (meters: number | null) => {
+    if (meters === null) return 'Nearby';
+    if (meters < 1000) return `${meters} m`;
+    return `${(meters / 1000).toFixed(1)} km`;
+};
+
+const buildCustomerStatsById = async (jobDocs: any[]) => {
+    const ids = uniqueUrls(jobDocs.map(jobDoc => getCustomerId(toPlainObject(jobDoc))))
+        .filter(id => Types.ObjectId.isValid(id));
+
+    if (ids.length === 0) return new Map<string, { totalJobs: number; completedJobs: number }>();
+
+    const rows = await Booking.aggregate([
+        { $match: { customer: { $in: ids.map(id => new Types.ObjectId(id)) } } },
+        {
+            $group: {
+                _id: '$customer',
+                totalJobs: { $sum: 1 },
+                completedJobs: {
+                    $sum: {
+                        $cond: [{ $eq: ['$status', 'completed'] }, 1, 0]
+                    }
+                }
+            }
+        }
+    ]);
+
+    return new Map(
+        rows.map((row: any) => [
+            row._id.toString(),
+            {
+                totalJobs: Number(row.totalJobs || 0),
+                completedJobs: Number(row.completedJobs || 0),
+            }
+        ])
+    );
+};
+
+const buildWorkerJobSignalPayload = (
+    jobDoc: any,
+    customerStatsById = new Map<string, { totalJobs: number; completedJobs: number }>(),
+    workerProfile?: any
+) => {
+    const job = toPlainObject(jobDoc);
+    const customer = typeof job.customer === 'object' ? job.customer : null;
+    const customerId = getCustomerId(job);
+    const customerStats = customerStatsById.get(customerId) || { totalJobs: 0, completedJobs: 0 };
+    const media = buildJobMediaMeta(job);
+    const schedule = formatJobDate(job.scheduledDate || job.createdAt);
+    const clientBudget = Number(job.amount || 0);
+    const offerAmount = Number(clientBudget || workerProfile?.hourlyRate || 0);
+    const distanceMeters = calculateDistanceMeters(workerProfile?.location?.coordinates, job.location?.coordinates);
+    const responseWindowSeconds = Math.max(0, Math.floor((new Date(job.expiresAt).getTime() - Date.now()) / 1000));
+
+    return {
+        ...job,
+        address: toPublicAreaLabel(job.address),
+        media,
+        clientMeta: {
+            _id: customer?._id || customerId,
+            fullName: customer?.fullName || 'Client',
+            profileImage: customer?.profileImage || '',
+            rating: customer?.rating ?? null,
+            totalReviews: customer?.totalReviews ?? 0,
+            totalJobs: customerStats.totalJobs,
+            completedJobs: customerStats.completedJobs,
+        },
+        signalMeta: {
+            title: job.category,
+            description: job.description,
+            missionKind: job.urgency,
+            missionKindLabel: job.urgency === 'instant' ? 'Instant response' : 'Scheduled mission',
+            evidenceCount: media.totalCount,
+            hasMedia: media.totalCount > 0,
+            amount: offerAmount,
+            amountText: offerAmount > 0 ? `Rs. ${offerAmount.toLocaleString()}` : 'Open budget',
+            clientBudget,
+            clientBudgetText: clientBudget > 0 ? `Rs. ${clientBudget.toLocaleString()}` : 'Open budget',
+            distanceMeters,
+            distanceText: formatDistance(distanceMeters),
+            expiresAt: job.expiresAt,
+            responseWindowSeconds,
+            schedule: {
+                ...schedule,
+                timeLabel: job.scheduledTime || (job.urgency === 'instant' ? 'ASAP' : ''),
+            },
+            location: {
+                address: toPublicAreaLabel(job.address),
+            },
+        },
+    };
+};
+
+const buildPersonalizedWorkerJobSignalPayload = async (
+    jobDoc: any,
+    customerStatsById: Map<string, { totalJobs: number; completedJobs: number }>,
+    workerProfile: any
+) => {
+    const payload = buildWorkerJobSignalPayload(jobDoc, customerStatsById, workerProfile);
+    const offerAmount = Number(payload.signalMeta.amount || 0);
+    const estimatedCommission = await calculateCommissionAmount(offerAmount);
+    const walletEligibility = workerProfile?._id
+        ? await getWalletEligibility(workerProfile._id, estimatedCommission)
+        : null;
+
+    return {
+        ...payload,
+        signalMeta: {
+            ...payload.signalMeta,
+            estimatedCommission,
+            estimatedCommissionText: `Rs. ${estimatedCommission.toLocaleString()}`,
+            estimatedNetEarning: Math.max(0, offerAmount - estimatedCommission),
+            estimatedNetEarningText: `Rs. ${Math.max(0, offerAmount - estimatedCommission).toLocaleString()}`,
+            requiredWalletBalance: walletEligibility?.requiredBalance ?? 0,
+            walletBalance: walletEligibility?.availableBalance ?? walletEligibility?.balance ?? 0,
+            walletTotalBalance: walletEligibility?.balance ?? 0,
+            walletReservedBalance: walletEligibility?.reservedBalance ?? 0,
+            isWalletEligible: walletEligibility?.isEligible ?? true,
+        }
+    };
+};
+
+const buildJobPostCardPayload = async (jobDoc: any) => {
+    const job = toPlainObject(jobDoc);
+    const [bidCount, pendingBidCount, acceptedBid] = await Promise.all([
+        JobBid.countDocuments({ jobPost: job._id }),
+        JobBid.countDocuments({ jobPost: job._id, status: 'pending' }),
+        JobBid.findOne({ jobPost: job._id, status: 'accepted' })
+            .populate('worker', WORKER_BID_PROFILE_SELECT)
+    ]);
+    const acceptedWorker = acceptedBid?.worker as any;
+    const primaryImageUrl = acceptedWorker?.profileImage || job.imageUrls?.[0] || job.imageUrl || '';
+    const media = buildJobMediaMeta(job);
+    const counterParty = acceptedWorker ? {
+        _id: acceptedWorker._id,
+        fullName: acceptedWorker.fullName,
+        phone: acceptedWorker.phone || '',
+        email: acceptedWorker.email || '',
+        profileImage: acceptedWorker.profileImage || '',
+        roleLabel: 'Accepted Ustad',
+        category: acceptedWorker.category || '',
+        rating: acceptedWorker.rating || 0,
+        totalJobs: acceptedWorker.totalJobs || 0,
+    } : {
+        fullName: bidCount > 0 ? `${bidCount} bids received` : 'Open broadcast',
+        profileImage: primaryImageUrl,
+        roleLabel: bidCount > 0 ? 'Bids' : 'Mission',
+    };
+
+    return {
+        ...job,
+        bidCount,
+        pendingBidCount,
+        acceptedBid: acceptedBid ? {
+            _id: acceptedBid._id,
+            proposedPrice: acceptedBid.proposedPrice,
+            message: acceptedBid.message,
+            status: acceptedBid.status,
+            worker: acceptedWorker || null,
+        } : null,
+        cardMeta: {
+            source: 'job_post',
+            title: job.category,
+            description: job.description,
+            missionKind: job.urgency,
+            primaryImageUrl,
+            media,
+            counterParty,
+            financial: {
+                label: acceptedBid ? 'Accepted Bid' : 'Budget',
+                amount: Number(acceptedBid?.proposedPrice || job.amount || 0),
+                currency: 'PKR',
+            },
+            bidSummary: {
+                total: bidCount,
+                pending: pendingBidCount,
+                hasAcceptedBid: Boolean(acceptedBid),
+            }
+        }
+    };
+};
+
+const reconcileAssignedJobPost = async (jobDoc: any) => {
+    if (jobDoc.status !== 'assigned') return jobDoc;
+
+    const acceptedBid = await JobBid.findOne({
+        jobPost: jobDoc._id,
+        status: 'accepted'
+    }).select('worker');
+
+    if (!acceptedBid) return jobDoc;
+
+    const responseWindowEnd = new Date(jobDoc.expiresAt);
+    responseWindowEnd.setMinutes(responseWindowEnd.getMinutes() + 5);
+    const createdAtWindow = Number.isNaN(responseWindowEnd.getTime())
+        ? { $gte: jobDoc.createdAt }
+        : { $gte: jobDoc.createdAt, $lte: responseWindowEnd };
+    const legacyBookingMatch = {
+        customer: jobDoc.customer?._id || jobDoc.customer,
+        worker: acceptedBid.worker,
+        category: jobDoc.category,
+        description: jobDoc.description,
+        address: jobDoc.address,
+        bookingType: jobDoc.urgency,
+        createdAt: createdAtWindow
+    };
+
+    const booking = await Booking.findOne({
+        $or: [
+            { jobPost: jobDoc._id },
+            {
+                $and: [
+                    { $or: [{ jobPost: { $exists: false } }, { jobPost: null }] },
+                    legacyBookingMatch
+                ]
+            }
+        ]
+    }).sort({ createdAt: 1 });
+
+    if (!booking) return jobDoc;
+
+    if (!booking.jobPost) {
+        booking.jobPost = jobDoc._id;
+        await booking.save();
+    }
+
+    if (booking.status === 'completed' || booking.status === 'cancelled') {
+        jobDoc.status = booking.status === 'completed' ? 'closed' : 'cancelled';
+        await jobDoc.save();
+    }
+
+    return jobDoc;
+};
+
+const buildJobPostDetailPayload = async (
+    jobDoc: any,
+    customerStatsById = new Map<string, { totalJobs: number; completedJobs: number }>()
+) => {
+    const job = toPlainObject(jobDoc);
+    const customer = typeof job.customer === 'object' ? job.customer : null;
+    const customerId = getCustomerId(job);
+    const customerStats = customerStatsById.get(customerId) || { totalJobs: 0, completedJobs: 0 };
+    const media = buildJobMediaMeta(job);
+    const schedule = formatJobDate(job.scheduledDate || job.createdAt);
+    const [bidCount, pendingBidCount, acceptedBidCount] = await Promise.all([
+        JobBid.countDocuments({ jobPost: job._id }),
+        JobBid.countDocuments({ jobPost: job._id, status: 'pending' }),
+        JobBid.countDocuments({ jobPost: job._id, status: 'accepted' }),
+    ]);
+    const statusInfo = job.status === 'cancelled'
+        ? { value: job.status, label: 'Cancelled', tone: 'danger', accentColor: '#FF3B30' }
+        : job.status === 'assigned'
+            ? { value: job.status, label: 'Ustad assigned', tone: 'success', accentColor: '#00FF7F' }
+            : job.status === 'reviewing'
+                ? { value: job.status, label: 'Reviewing proposals', tone: 'warning', accentColor: '#FF8C00' }
+                : job.status === 'closed'
+                    ? { value: job.status, label: 'Closed', tone: 'neutral', accentColor: '#8E8E93' }
+                    : { value: job.status, label: 'Open request', tone: 'info', accentColor: '#00F5FF' };
+    const budget = Number(job.amount || 0);
+
+    return {
+        ...job,
+        bidCount,
+        pendingBidCount,
+        media,
+        clientMeta: {
+            _id: customer?._id || customerId,
+            fullName: customer?.fullName || 'Client',
+            profileImage: customer?.profileImage || '',
+            phone: customer?.phone || '',
+            totalJobs: customerStats.totalJobs,
+            completedJobs: customerStats.completedJobs,
+        },
+        detailMeta: {
+            statusInfo,
+            missionKind: job.urgency,
+            missionKindLabel: job.urgency === 'instant' ? 'Instant visit' : 'Scheduled visit',
+            schedule: {
+                ...schedule,
+                timeLabel: job.scheduledTime || (job.urgency === 'instant' ? 'ASAP' : ''),
+            },
+            location: {
+                address: toPublicAreaLabel(job.address),
+            },
+            financial: {
+                label: 'Client budget',
+                amount: budget,
+                amountText: budget > 0 ? `Rs. ${budget.toLocaleString()}` : 'Open budget',
+                currency: 'PKR',
+            },
+            bidSummary: {
+                total: bidCount,
+                pending: pendingBidCount,
+                hasAcceptedBid: acceptedBidCount > 0,
+            },
+            media,
+        },
+    };
+};
+
+const buildWorkerBidCardPayload = (
+    bidDoc: any,
+    customerStatsById = new Map<string, { totalJobs: number; completedJobs: number }>()
+) => {
+    const bid = toPlainObject(bidDoc);
+    const job = typeof bid.jobPost === 'object' ? bid.jobPost : null;
+    if (!job) return bid;
+
+    const customer = typeof job.customer === 'object' ? job.customer : null;
+    const customerId = getCustomerId(job);
+    const customerStats = customerStatsById.get(customerId) || { totalJobs: 0, completedJobs: 0 };
+    const media = buildJobMediaMeta(job);
+    const schedule = formatJobDate(job.scheduledDate || job.createdAt);
+    const quotedAmount = Number(bid.proposedPrice || job.amount || 0);
+    const statusInfo = bid.status === 'accepted'
+        ? { value: bid.status, label: 'Accepted', tone: 'success', accentColor: '#00FF7F' }
+        : bid.status === 'rejected'
+            ? { value: bid.status, label: 'Declined', tone: 'danger', accentColor: '#FF3B30' }
+            : { value: bid.status, label: 'Awaiting client', tone: 'warning', accentColor: '#FF8C00' };
+
+    return {
+        ...bid,
+        cardMeta: {
+            source: 'worker_bid',
+            title: job.category,
+            description: job.description,
+            missionKind: job.urgency,
+            missionKindLabel: job.urgency === 'instant' ? 'Instant visit' : 'Scheduled visit',
+            primaryImageUrl: customer?.profileImage || '',
+            media,
+            statusInfo,
+            schedule: {
+                ...schedule,
+                timeLabel: job.scheduledTime || (job.urgency === 'instant' ? 'ASAP' : ''),
+            },
+            location: {
+                address: toPublicAreaLabel(job.address),
+            },
+            counterParty: {
+                _id: customer?._id || customerId,
+                fullName: customer?.fullName || 'Client',
+                profileImage: customer?.profileImage || '',
+                roleLabel: 'Client',
+                totalJobs: customerStats.totalJobs,
+                completedJobs: customerStats.completedJobs,
+            },
+            financial: {
+                label: 'Your quote',
+                amount: quotedAmount,
+                amountText: quotedAmount > 0 ? `Rs. ${quotedAmount.toLocaleString()}` : 'Open quote',
+                currency: 'PKR',
+            },
+            actionLabel: 'View details',
+            submittedAt: bid.createdAt,
+        }
+    };
+};
 
 /**
  * @description Create a new open Job Post
@@ -27,10 +469,18 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         const {
             category, description, urgency,
             longitude, latitude, address,
-            imageUrl, imageUrls, amount
+            imageUrl, imageUrls, videoUrl, videoUrls, audioUrls, amount
         } = req.body;
 
         let { scheduledDate, scheduledTime } = req.body;
+        const clientOffer = Number(amount);
+
+        if (!Number.isFinite(clientOffer) || clientOffer <= 0) {
+            return res.status(400).json({
+                success: false,
+                message: "A positive client offer is required so workers can make an informed decision."
+            });
+        }
 
         if (urgency === 'instant') {
             const now = new Date();
@@ -64,9 +514,22 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             },
             imageUrl,
             imageUrls,
-            amount,
+            videoUrl,
+            videoUrls,
+            audioUrls,
+            amount: clientOffer,
+            pricing: {
+                clientOffer,
+                currency: 'PKR',
+                pricingVersion: 2
+            },
             expiresAt
         });
+
+        const populatedJobPost = await JobPost.findById(jobPost._id)
+            .populate('customer', 'fullName profileImage phone');
+        const customerStats = await buildCustomerStatsById(populatedJobPost ? [populatedJobPost] : [jobPost]);
+        const signalPayload = buildWorkerJobSignalPayload(populatedJobPost || jobPost, customerStats);
 
         // 1. Emit socket event
         const io = require('../sockets/socketManager').getIO();
@@ -76,22 +539,22 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
 
         const nearbyWorkers = await Worker.find({
             category: new RegExp(`^${escapeRegex(category)}$`, 'i'),
-            isAvailable: true,
-            isActive: true,
+            ...buildAvailableWorkerFilterForJobType(urgency),
             location: {
                 $near: {
                     $geometry: { type: "Point", coordinates: [longitude, latitude] },
                     $maxDistance: DEFAULT_JOB_RADIUS_METERS
                 }
             }
-        }).limit(10).select('_id');
+        }).limit(10).select('_id hourlyRate location');
 
         logger.info(`📡 Found ${nearbyWorkers.length} workers to notify: ${nearbyWorkers.map(w => w._id).join(', ')}`);
 
         // Broadcast to relevant workers via sockets and push notifications
-        nearbyWorkers.forEach(worker => {
-            io.to(`worker:${worker._id.toString()}`).emit('job:new', jobPost);
-            
+        await Promise.all(nearbyWorkers.map(async worker => {
+            const personalizedSignal = await buildPersonalizedWorkerJobSignalPayload(populatedJobPost || jobPost, customerStats, worker);
+            io.to(`worker:${worker._id.toString()}`).emit('job:new', personalizedSignal);
+
             sendNotificationToRecipient(
                 worker._id,
                 'worker',
@@ -99,11 +562,11 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
                 `A new job post is available near you: "${description.substring(0, 100)}${description.length > 100 ? '...' : ''}"`,
                 { jobId: jobPost._id.toString(), type: 'new_job' }
             ).catch(err => logger.error(`Failed to send job post push notification to worker ${worker._id}:`, err));
-        });
+        }));
 
         res.status(201).json({
             success: true,
-            data: jobPost,
+            data: signalPayload,
             message: `Job post created and broadcasted to ${nearbyWorkers.length} workers.`
         });
     } catch (error: any) {
@@ -125,10 +588,20 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         }
 
         const { jobId } = req.params;
-        const { message, proposedPrice } = req.body;
+        const { message, proposedPrice, estimatedDays } = req.body;
+        const proposedAmount = Number(proposedPrice);
 
         const jobPost = await JobPost.findById(jobId);
         if (!jobPost) return res.status(404).json({ success: false, message: "Job post not found" });
+
+        const workerProfile = await Worker.findById(workerId)
+            .select('isAvailable isActive isInstantAvailable isScheduledAvailable');
+        if (!workerAcceptsJobType(workerProfile, jobPost.urgency)) {
+            return res.status(403).json({
+                success: false,
+                message: `${jobPost.urgency === 'instant' ? 'Instant' : 'Scheduled'} job availability is turned off. Enable it before responding to this job.`
+            });
+        }
 
         if (jobPost.status !== 'open') {
             return res.status(400).json({ success: false, message: "This job is no longer open for bids" });
@@ -138,6 +611,26 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "This job post has expired" });
         }
 
+        if (!Number.isFinite(proposedAmount) || proposedAmount <= 0) {
+            return res.status(400).json({ success: false, message: "Proposed price must be a positive number" });
+        }
+        if (!String(message || '').trim()) {
+            return res.status(400).json({ success: false, message: "A short proposal message is required" });
+        }
+
+        const estimatedCommission = await calculateCommissionAmount(proposedAmount);
+        const walletSettings = await getWalletSettings();
+        const clientOffer = Number(jobPost.pricing?.clientOffer ?? jobPost.amount ?? 0);
+        const walletEligibility = await getWalletEligibility(workerId, estimatedCommission);
+        if (!walletEligibility.isEligible) {
+            return res.status(402).json({
+                success: false,
+                requiredBalance: walletEligibility.requiredBalance,
+                currentBalance: walletEligibility.availableBalance,
+                message: buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance)
+            });
+        }
+
         // Check Max Bids
         const bidCount = await JobBid.countDocuments({ jobPost: jobId });
         if (bidCount >= MAX_BIDS && jobPost.urgency !== 'instant') {
@@ -145,11 +638,16 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         }
 
         // Create Bid
+        const parsedEstimatedDays = estimatedDays ? Number(estimatedDays) : undefined;
         const newBid = await JobBid.create({
             jobPost: jobId,
             worker: workerId,
-            message,
-            proposedPrice
+            message: String(message).trim(),
+            proposedPrice: proposedAmount,
+            priceMode: proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer',
+            clientOfferSnapshot: clientOffer,
+            commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
+            ...(Number.isFinite(parsedEstimatedDays) && parsedEstimatedDays! > 0 ? { estimatedDays: parsedEstimatedDays } : {}),
         });
 
         // Cap Bidding: if we just hit the MAX_BIDS, change job status to reviewing
@@ -161,7 +659,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         const io = require('../sockets/socketManager').getIO();
 
         // Notify Client immediately
-        await newBid.populate('worker', 'fullName profileImage averageRating');
+        await newBid.populate('worker', WORKER_BID_PROFILE_SELECT);
         io.to(`user:${jobPost.customer.toString()}`).emit('bid:new', newBid);
         io.to(`worker:${workerId.toString()}`).emit('bid:submitted', { bidId: newBid._id, jobId: jobPost._id });
 
@@ -186,75 +684,108 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
  * @access Private (User)
  */
 export const acceptBid = async (req: AuthRequest, res: Response) => {
+    const session = await mongoose.startSession();
     try {
         const customerId = req.tokenPayload?.id;
         const { bidId } = req.params;
+        let bid: any = null;
+        let jobPost: any = null;
+        let booking: any = null;
 
-        const bid = await JobBid.findById(bidId);
-        if (!bid) return res.status(404).json({ success: false, message: "Bid not found" });
+        await session.withTransaction(async () => {
+            bid = await JobBid.findOne({ _id: bidId, status: 'pending' }).session(session);
+            if (!bid) {
+                const error = new Error("Bid is no longer available");
+                (error as any).statusCode = 409;
+                throw error;
+            }
 
-        const jobPost = await JobPost.findById(bid.jobPost);
-        if (!jobPost) return res.status(404).json({ success: false, message: "Associated job post not found" });
+            jobPost = await JobPost.findOne({ _id: bid.jobPost, status: { $in: ['open', 'reviewing'] } }).session(session);
+            if (!jobPost) {
+                const error = new Error("Job is no longer available for assignment");
+                (error as any).statusCode = 409;
+                throw error;
+            }
 
-        logger.info(`🔍 acceptBid Check: customerId=${customerId}, jobCustomer=${jobPost.customer.toString()}, status=${jobPost.status}`);
+            if (jobPost.customer.toString() !== customerId) {
+                const error = new Error("Forbidden");
+                (error as any).statusCode = 403;
+                throw error;
+            }
 
-        if (jobPost.customer.toString() !== customerId) {
-            logger.warn(`🚫 acceptBid: Unauthorized. Customer mismatch. User: ${customerId}, Job Owner: ${jobPost.customer}`);
-            return res.status(403).json({ success: false, message: "Forbidden" });
-        }
+            const agreedPrice = Number(bid.proposedPrice);
+            const commissionAmount = await calculateCommissionAmount(agreedPrice);
+            const walletSettings = await getWalletSettings();
+            const walletEligibility = await getWalletEligibility(bid.worker, commissionAmount, session);
+            if (!walletEligibility.isEligible) {
+                const error = new Error(buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance));
+                (error as any).statusCode = 402;
+                (error as any).requiredBalance = walletEligibility.requiredBalance;
+                (error as any).currentBalance = walletEligibility.availableBalance;
+                throw error;
+            }
 
-        if (jobPost.status !== 'open') {
-            logger.warn(`🚫 acceptBid: Job status is ${jobPost.status}, not 'open'`);
-            return res.status(400).json({
-                success: false,
-                message: `Job cannot be assigned. Current status: ${jobPost.status}`,
-                currentStatus: jobPost.status
-            });
-        }
+            const workerProfile = await Worker.findById(bid.worker).session(session);
+            const workerNetIncome = Math.max(0, agreedPrice - commissionAmount);
+            const clientOffer = Number(bid.clientOfferSnapshot || jobPost.pricing?.clientOffer || jobPost.amount || 0);
+            const [createdBooking] = await Booking.create([{
+                jobPost: jobPost._id,
+                acceptedBid: bid._id,
+                customer: customerId,
+                worker: bid.worker,
+                category: jobPost.category,
+                description: jobPost.description,
+                scheduledDate: jobPost.scheduledDate,
+                scheduledTime: jobPost.scheduledTime,
+                estimatedHours: 1,
+                hourlyRate: workerProfile ? workerProfile.hourlyRate : 0,
+                subtotal: agreedPrice,
+                platformFee: commissionAmount,
+                totalAmount: agreedPrice,
+                workerEarning: workerNetIncome,
+                agreement: {
+                    clientOffer,
+                    agreedPrice,
+                    cashDue: agreedPrice,
+                    priceSource: bid.priceMode || (agreedPrice === clientOffer ? 'accepted_offer' : 'counter_offer'),
+                    commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
+                    commissionAmount,
+                    workerNetIncome,
+                    lockedAt: new Date(),
+                    pricingVersion: 2
+                },
+                address: jobPost.address,
+                location: jobPost.location,
+                imageUrls: jobPost.imageUrls || [],
+                videoUrls: jobPost.videoUrls || [],
+                audioUrls: jobPost.audioUrls || [],
+                bookingType: jobPost.urgency,
+                status: 'accepted',
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+            }], { session });
+            if (!createdBooking) throw new Error("Unable to create booking");
+            booking = createdBooking;
 
-        // Update JobPost & Bid statuses
-        jobPost.status = 'assigned';
-        await jobPost.save();
+            await reserveCommission({
+                workerId: bid.worker,
+                bookingId: booking._id,
+                jobPostId: jobPost._id,
+                bidId: bid._id,
+                amount: commissionAmount,
+                commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0
+            }, { session });
 
-        bid.status = 'accepted';
-        await bid.save();
-
-        // Reject other pending bids
-        await JobBid.updateMany(
-            { jobPost: jobPost._id, _id: { $ne: bid._id } },
-            { $set: { status: 'rejected' } }
-        );
-
-        // Fetch worker details to populate rate or other stuff if needed
-        const workerProfile = await Worker.findById(bid.worker);
-
-        // Calculate costs (assuming proposedPrice is flat rate for the job for simplicity)
-        const config = getConfig();
-        const baseAmount = bid.proposedPrice;
-        const platformFeePercentage = config.platformFeePercentage || 10;
-        const platformFee = Math.round((baseAmount * (platformFeePercentage / 100)) * 100) / 100;
-
-        const booking = await Booking.create({
-            customer: customerId,
-            worker: bid.worker,
-            category: jobPost.category,
-            description: jobPost.description,
-            scheduledDate: jobPost.scheduledDate,
-            scheduledTime: jobPost.scheduledTime,
-            estimatedHours: 1, // Optional: might need to adjust based on bid or job post
-            hourlyRate: workerProfile ? workerProfile.hourlyRate : 0, // Fallback
-            subtotal: baseAmount,
-            platformFee: platformFee,
-            totalAmount: baseAmount + platformFee,
-            workerEarning: baseAmount - platformFee,
-            address: jobPost.address,
-            location: jobPost.location,
-            imageUrls: jobPost.imageUrls || [],
-            bookingType: jobPost.urgency,
-            status: 'accepted', // Auto accepted since they bid on it
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+            jobPost.status = 'assigned';
+            await jobPost.save({ session });
+            bid.status = 'accepted';
+            await bid.save({ session });
+            await JobBid.updateMany(
+                { jobPost: jobPost._id, _id: { $ne: bid._id } },
+                { $set: { status: 'rejected' } },
+                { session }
+            );
+            await syncPaymentForBookingStatus(booking, session);
         });
-        await syncPaymentForBookingStatus(booking);
 
         // Notify winner and losers via sockets and push notifications
         const io = require('../sockets/socketManager').getIO();
@@ -281,7 +812,14 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
 
     } catch (error: any) {
         logger.error("Error in acceptBid:", error);
-        res.status(500).json({ success: false, message: "Internal server error" });
+        res.status(error.statusCode || 500).json({
+            success: false,
+            message: error.message || "Internal server error",
+            ...(error.requiredBalance !== undefined ? { requiredBalance: error.requiredBalance } : {}),
+            ...(error.currentBalance !== undefined ? { currentBalance: error.currentBalance } : {})
+        });
+    } finally {
+        await session.endSession();
     }
 };
 
@@ -312,12 +850,24 @@ export const getJobPostById = async (req: AuthRequest, res: Response) => {
             return res.status(403).json({ success: false, message: "Forbidden" });
         }
 
-        // Include bidCount
-        const bidCount = await JobBid.countDocuments({ jobPost: jobId });
-        const jobWithBidCount = {
-            ...jobPost.toObject(),
-            bidCount
-        };
+        const stats = await buildCustomerStatsById([jobPost]);
+        const workerProfile = userType === 'worker'
+            ? await Worker.findById(userId).select('_id hourlyRate location')
+            : null;
+        const detailPayload = await buildJobPostDetailPayload(jobPost, stats);
+        const personalizedPayload = userType === 'worker' && workerProfile
+            ? await buildPersonalizedWorkerJobSignalPayload(jobPost, stats, workerProfile)
+            : null;
+        const jobWithBidCount = personalizedPayload
+            ? { ...detailPayload, ...personalizedPayload, detailMeta: detailPayload.detailMeta }
+            : detailPayload;
+        if (userType === 'worker' && !isAdmin) {
+            const publicArea = toPublicAreaLabel((jobPost as any).address);
+            jobWithBidCount.address = publicArea;
+            if (jobWithBidCount.clientMeta) jobWithBidCount.clientMeta.phone = '';
+            if (jobWithBidCount.detailMeta?.location) jobWithBidCount.detailMeta.location.address = publicArea;
+            if (jobWithBidCount.signalMeta?.location) jobWithBidCount.signalMeta.location.address = publicArea;
+        }
 
         res.status(200).json({ success: true, data: jobWithBidCount });
     } catch (error: any) {
@@ -333,7 +883,8 @@ export const getJobPostById = async (req: AuthRequest, res: Response) => {
 export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
     try {
         const workerId = req.tokenPayload?.id;
-        const worker = await Worker.findById(workerId).select('category location isActive isAvailable');
+        const worker = await Worker.findById(workerId)
+            .select('category location hourlyRate isActive isAvailable isInstantAvailable isScheduledAvailable');
 
         if (!worker) {
             return res.status(404).json({ success: false, message: "Worker not found" });
@@ -352,6 +903,10 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
         }
 
         const category = (req.query.category as string | undefined) || worker.category;
+        const enabledJobTypes = getEnabledJobTypesForWorker(worker);
+        if (enabledJobTypes.length === 0) {
+            return res.status(200).json({ success: true, data: [] });
+        }
         const maxDistance = req.query.radius
             ? Math.min(parseInt(req.query.radius as string, 10) || DEFAULT_JOB_RADIUS_METERS, DEFAULT_JOB_RADIUS_METERS)
             : DEFAULT_JOB_RADIUS_METERS;
@@ -368,12 +923,16 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
         };
 
         if (category) query.category = new RegExp(`^${escapeRegex(category)}$`, 'i');
+        query.urgency = { $in: enabledJobTypes };
 
         const jobs = await JobPost.find(query)
-            .populate('customer', 'fullName profileImage')
+            .populate('customer', 'fullName profileImage phone')
             .sort({ createdAt: -1 });
 
-        res.status(200).json({ success: true, data: jobs });
+        const customerStats = await buildCustomerStatsById(jobs);
+        const payload = await Promise.all(jobs.map(job => buildPersonalizedWorkerJobSignalPayload(job, customerStats, worker)));
+
+        res.status(200).json({ success: true, data: payload });
     } catch (error: any) {
         logger.error("Error in getNearbyJobs:", error);
         res.status(500).json({ success: false, message: "Internal server error" });
@@ -388,10 +947,16 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
 export const getMissedJobs = async (req: AuthRequest, res: Response) => {
     try {
         const workerId = req.tokenPayload?.id;
-        const worker = await Worker.findById(workerId).select('category location isActive lastOnlineAt');
+        const worker = await Worker.findById(workerId)
+            .select('category location hourlyRate isActive isAvailable isInstantAvailable isScheduledAvailable lastOnlineAt');
 
         if (!worker) {
             return res.status(404).json({ success: false, message: "Worker not found" });
+        }
+
+        const enabledJobTypes = getEnabledJobTypesForWorker(worker);
+        if (enabledJobTypes.length === 0) {
+            return res.status(200).json({ success: true, data: [] });
         }
 
         const longitude = worker.location?.coordinates?.[0];
@@ -416,6 +981,7 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
             expiresAt: { $gt: new Date() },
             createdAt: { $gt: since },
             _id: { $nin: existingBidJobIds },
+            urgency: { $in: enabledJobTypes },
             location: {
                 $near: {
                     $geometry: { type: "Point", coordinates: [longitude, latitude] },
@@ -429,11 +995,14 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
         }
 
         const jobs = await JobPost.find(query)
-            .populate('customer', 'fullName profileImage')
+            .populate('customer', 'fullName profileImage phone')
             .sort({ createdAt: -1 })
             .limit(20);
 
-        res.status(200).json({ success: true, data: jobs });
+        const customerStats = await buildCustomerStatsById(jobs);
+        const payload = await Promise.all(jobs.map(job => buildPersonalizedWorkerJobSignalPayload(job, customerStats, worker)));
+
+        res.status(200).json({ success: true, data: payload });
     } catch (error: any) {
         logger.error("Error in getMissedJobs:", error);
         res.status(500).json({ success: false, message: "Internal server error" });
@@ -448,7 +1017,7 @@ export const getJobBids = async (req: AuthRequest, res: Response) => {
     try {
         const { jobId } = req.params;
         const bids = await JobBid.find({ jobPost: jobId })
-            .populate('worker', 'fullName profileImage averageRating')
+            .populate('worker', WORKER_BID_PROFILE_SELECT)
             .sort({ createdAt: -1 });
 
         res.status(200).json({ success: true, data: bids });
@@ -486,18 +1055,24 @@ export const getWorkerBids = async (req: AuthRequest, res: Response) => {
         const bids = await JobBid.find(query)
             .populate({
                 path: 'jobPost',
-                select: 'customer category description urgency scheduledDate scheduledTime address location amount imageUrl imageUrls status expiresAt createdAt updatedAt',
+                select: 'customer category description urgency scheduledDate scheduledTime address location amount imageUrl imageUrls videoUrl videoUrls audioUrls status expiresAt createdAt updatedAt',
                 populate: { path: 'customer', select: 'fullName profileImage phone' }
             })
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit);
 
+        const customerStats = await buildCustomerStatsById(
+            bids
+                .map((bid: any) => typeof bid.jobPost === 'object' ? bid.jobPost : null)
+                .filter(Boolean)
+        );
+        const responseBids = bids.map(bid => buildWorkerBidCardPayload(bid, customerStats));
         const total = await JobBid.countDocuments(query);
 
         res.status(200).json({
             success: true,
-            data: bids,
+            data: responseBids,
             pagination: {
                 total,
                 page,
@@ -605,16 +1180,44 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
 
         // Create a Bid instead of assigning immediately
         const workerProfile = await Worker.findById(workerId);
+        if (!workerAcceptsJobType(workerProfile, 'instant')) {
+            return res.status(403).json({
+                success: false,
+                message: "Instant job availability is turned off. Enable it before accepting this mission."
+            });
+        }
+        const proposedPrice = Number(jobPost.pricing?.clientOffer || jobPost.amount || 0);
+        if (!Number.isFinite(proposedPrice) || proposedPrice <= 0) {
+            return res.status(409).json({
+                success: false,
+                message: "This legacy job does not have a valid client offer. Ask the client to post a new request."
+            });
+        }
+        const estimatedCommission = await calculateCommissionAmount(proposedPrice);
+        const walletSettings = await getWalletSettings();
+        const walletEligibility = await getWalletEligibility(workerId, estimatedCommission);
+        if (!walletEligibility.isEligible) {
+            return res.status(402).json({
+                success: false,
+                requiredBalance: walletEligibility.requiredBalance,
+                currentBalance: walletEligibility.availableBalance,
+                message: buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance)
+            });
+        }
+
         const newBid = await JobBid.create({
             jobPost: jobId,
             worker: workerId,
             message: "Instant Mission Acceptance",
-            proposedPrice: workerProfile ? workerProfile.hourlyRate : 0,
+            proposedPrice,
+            priceMode: 'accepted_offer',
+            clientOfferSnapshot: proposedPrice,
+            commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
             status: 'pending'
         });
 
         // Populate worker details for the client
-        await newBid.populate('worker', 'fullName profileImage averageRating hourlyRate');
+        await newBid.populate('worker', WORKER_BID_PROFILE_SELECT);
 
         const io = require('../sockets/socketManager').getIO();
 
@@ -649,24 +1252,19 @@ export const getMyJobPosts = async (req: AuthRequest, res: Response) => {
         const skip = (page - 1) * limit;
 
         const jobs = await JobPost.find({ customer: customerId })
+            .populate('customer', 'fullName phone email profileImage')
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit);
 
-        // Include bidCount for each job
-        const jobsWithBidCount = await Promise.all(jobs.map(async (job) => {
-            const bidCount = await JobBid.countDocuments({ jobPost: job._id });
-            return {
-                ...job.toObject(),
-                bidCount
-            };
-        }));
+        await Promise.all(jobs.map((job) => reconcileAssignedJobPost(job)));
+        const jobsWithCardData = await Promise.all(jobs.map((job) => buildJobPostCardPayload(job)));
 
         const total = await JobPost.countDocuments({ customer: customerId });
 
         res.status(200).json({
             success: true,
-            data: jobsWithBidCount,
+            data: jobsWithCardData,
             pagination: {
                 total,
                 page,
@@ -686,15 +1284,20 @@ export const getMyJobPosts = async (req: AuthRequest, res: Response) => {
  */
 export const uploadJobImages = async (req: UploadRequest, res: Response) => {
     try {
-        if (!req.uploadedImageUrls || req.uploadedImageUrls.length === 0) {
-            return res.status(400).json({ success: false, message: "No images uploaded" });
+        const imageUrls = req.uploadedImageUrls || [];
+        const videoUrls = req.uploadedVideoUrls || [];
+        const audioUrls = req.uploadedAudioUrls || [];
+        if (imageUrls.length === 0 && videoUrls.length === 0 && audioUrls.length === 0) {
+            return res.status(400).json({ success: false, message: "No media uploaded" });
         }
         res.status(200).json({
             success: true,
             data: {
-                imageUrls: req.uploadedImageUrls
+                imageUrls,
+                videoUrls,
+                audioUrls
             },
-            message: "Images uploaded successfully"
+            message: "Job media uploaded successfully"
         });
     } catch (error: any) {
         logger.error("Error in uploadJobImages:", error);

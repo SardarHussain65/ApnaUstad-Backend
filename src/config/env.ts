@@ -48,7 +48,47 @@ const getConfig = () => ({
     allowFirebaseInitFailure: process.env.ALLOW_FIREBASE_INIT_FAILURE === 'true',
     skipFirebaseInit: process.env.SKIP_FIREBASE_INIT === 'true',
     platformFeePercentage: parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || '10'),
-
+    minimumWalletBalance: parseFloat(process.env.MINIMUM_WALLET_BALANCE || '500'),
+    walletPaymentMethods: [
+        {
+            method: 'easypaisa',
+            label: 'Easypaisa',
+            accountTitle: process.env.WALLET_EASYPAISA_ACCOUNT_TITLE || '',
+            accountNumber: process.env.WALLET_EASYPAISA_NUMBER || '',
+            instructions: process.env.WALLET_EASYPAISA_INSTRUCTIONS || 'Send the selected amount and upload the payment screenshot.',
+            enabled: process.env.WALLET_EASYPAISA_ENABLED !== 'false',
+            isConfigured: Boolean(process.env.WALLET_EASYPAISA_NUMBER),
+        },
+        {
+            method: 'jazzcash',
+            label: 'JazzCash',
+            accountTitle: process.env.WALLET_JAZZCASH_ACCOUNT_TITLE || '',
+            accountNumber: process.env.WALLET_JAZZCASH_NUMBER || '',
+            instructions: process.env.WALLET_JAZZCASH_INSTRUCTIONS || 'Send the selected amount and upload the payment screenshot.',
+            enabled: process.env.WALLET_JAZZCASH_ENABLED !== 'false',
+            isConfigured: Boolean(process.env.WALLET_JAZZCASH_NUMBER),
+        },
+        {
+            method: 'bank_transfer',
+            label: 'Bank Transfer',
+            accountTitle: process.env.WALLET_BANK_ACCOUNT_TITLE || '',
+            accountNumber: process.env.WALLET_BANK_ACCOUNT_NUMBER || '',
+            bankName: process.env.WALLET_BANK_NAME || '',
+            iban: process.env.WALLET_BANK_IBAN || '',
+            instructions: process.env.WALLET_BANK_INSTRUCTIONS || 'Transfer the selected amount and upload the transfer receipt.',
+            enabled: process.env.WALLET_BANK_ENABLED !== 'false',
+            isConfigured: Boolean(process.env.WALLET_BANK_ACCOUNT_NUMBER || process.env.WALLET_BANK_IBAN),
+        },
+        {
+            method: 'other',
+            label: process.env.WALLET_OTHER_METHOD_LABEL || 'Other Method',
+            accountTitle: process.env.WALLET_OTHER_ACCOUNT_TITLE || '',
+            accountNumber: process.env.WALLET_OTHER_ACCOUNT_NUMBER || '',
+            instructions: process.env.WALLET_OTHER_INSTRUCTIONS || '',
+            enabled: process.env.WALLET_OTHER_ENABLED === 'true',
+            isConfigured: Boolean(process.env.WALLET_OTHER_ACCOUNT_NUMBER || process.env.WALLET_OTHER_INSTRUCTIONS),
+        }
+    ],
 });
 
 export {

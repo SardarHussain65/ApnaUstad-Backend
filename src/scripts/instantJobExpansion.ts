@@ -3,6 +3,7 @@ import JobPost from '../models/JobPost';
 import Worker from '../models/Workers';
 import { getIO } from '../sockets/socketManager';
 import logger from '../config/logger';
+import { buildAvailableWorkerFilterForJobType } from '../services/workerJobAvailabilityService';
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -32,8 +33,7 @@ export const startInstantJobExpansion = () => {
                 
                 const nearbyWorkers = await Worker.find({
                     category: new RegExp(`^${escapeRegex(job.category)}$`, 'i'),
-                    isAvailable: true,
-                    isActive: true,
+                    ...buildAvailableWorkerFilterForJobType('instant'),
                     location: {
                         $near: {
                             $geometry: job.location,
@@ -49,25 +49,6 @@ export const startInstantJobExpansion = () => {
 
                 job.radiusExpanded = true;
                 await job.save();
-            }
-
-            // 2. Cancel jobs older than 10 mins and still open
-            const jobsToCancel = await JobPost.find({
-                urgency: 'instant',
-                status: 'open',
-                createdAt: { $lt: tenMinutesAgo }
-            });
-
-            for (const job of jobsToCancel) {
-                logger.info(`Timeout: Cancelling instant job ${job._id}`);
-                job.status = 'cancelled';
-                await job.save();
-
-                const io = getIO();
-                io.to(`user:${job.customer.toString()}`).emit('job:cancelled', { 
-                    jobId: job._id, 
-                    reason: "No workers available in your area at this time." 
-                });
             }
 
         } catch (error) {
