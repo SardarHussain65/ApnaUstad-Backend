@@ -23,6 +23,8 @@ import paymentRoute from './routes/paymentRoute';
 import preferencesRoute from './routes/preferencesRoute';
 import supportRoute from './routes/supportRoute';
 import walletRoute from './routes/walletRoute';
+import disputeRoute from './routes/disputeRoute';
+import promoRoute from './routes/promoRoute';
 
 
 const app = express();
@@ -78,6 +80,8 @@ app.use('/api/v1/payments', paymentRoute);
 app.use('/api/v1/preferences', preferencesRoute);
 app.use('/api/v1/support', supportRoute);
 app.use('/api/v1/wallet', walletRoute);
+app.use('/api/v1/disputes', disputeRoute);
+app.use('/api/v1/promos', promoRoute);
 
 
 // --- ⚠️ Error Handling ---

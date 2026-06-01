@@ -7,6 +7,7 @@ export interface ISupportRequest extends Document {
   topic?: string;
   message: string;
   status: 'open' | 'closed' | 'pending';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
   metadata?: Record<string, any>;
   replies?: {
     from: 'admin' | 'user';
@@ -24,6 +25,7 @@ const SupportRequestSchema = new Schema<ISupportRequest>({
   topic: { type: String, required: false },
   message: { type: String, required: true },
   status: { type: String, enum: ['open', 'closed', 'pending'], default: 'open' },
+  priority: { type: String, enum: ['low', 'medium', 'high', 'urgent'], default: 'medium' },
   metadata: { type: Schema.Types.Mixed, required: false },
   replies: [
     {

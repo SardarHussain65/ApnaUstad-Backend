@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, NotFoundError } from "../utils/ApiError";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
+import { recordAdminAction } from "../services/adminAuditLog";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -64,6 +65,11 @@ export const getUserDetails = asyncHandler(async (req: AdminAuthRequest, res) =>
 export const toggleUserStatus = asyncHandler(async (req: AdminAuthRequest, res) => {
     const { id } = req.params;
     const { isActive } = req.body;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+
+    if (reason.length > 500) {
+        throw new BadRequestError("Reason is too long");
+    }
 
     if (isActive === undefined) {
         throw new BadRequestError("isActive field is required");
@@ -78,6 +84,18 @@ export const toggleUserStatus = asyncHandler(async (req: AdminAuthRequest, res) 
     if (!user) {
         throw new NotFoundError("User not found");
     }
+
+    await recordAdminAction(req, {
+        action: isActive ? 'user.activate' : 'user.deactivate',
+        entityType: 'user',
+        entityId: user._id.toString(),
+        reason,
+        metadata: {
+            fullName: user.fullName,
+            phone: user.phone,
+            email: user.email
+        }
+    });
 
     const message = isActive ? "User activated successfully" : "User deactivated successfully";
     return successResponse(res, 200, message, user);

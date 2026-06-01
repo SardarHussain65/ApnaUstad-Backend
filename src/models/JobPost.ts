@@ -26,6 +26,9 @@ export interface IJobPost extends Document {
     };
     radiusExpanded?: boolean;
     expiresAt: Date;
+    cancelledBy?: 'customer' | 'admin' | null;
+    cancelReason?: string;
+    cancelledAt?: Date | null;
 }
 
 const jobPostSchema = new Schema<IJobPost>(
@@ -58,7 +61,10 @@ const jobPostSchema = new Schema<IJobPost>(
             pricingVersion: { type: Number, default: 2 }
         },
         radiusExpanded: { type: Boolean, default: false },
-        expiresAt: { type: Date, required: true }
+        expiresAt: { type: Date, required: true },
+        cancelledBy: { type: String, enum: ['customer', 'admin', null], default: null },
+        cancelReason: { type: String, trim: true, default: '' },
+        cancelledAt: { type: Date, default: null }
     },
     { timestamps: true }
 );

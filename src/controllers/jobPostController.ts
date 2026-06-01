@@ -6,6 +6,8 @@ import JobPost from "../models/JobPost";
 import JobBid from "../models/JobBid";
 import Worker from "../models/Workers";
 import Booking from "../models/Booking";
+import PromoCode from "../models/PromoCode";
+import UserPromoUsage from "../models/UserPromoUsage";
 import logger from "../config/logger";
 import { syncPaymentForBookingStatus } from "../services/paymentLedgerService";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
@@ -688,6 +690,7 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
     try {
         const customerId = req.tokenPayload?.id;
         const { bidId } = req.params;
+        const { promoCode } = req.body;
         let bid: any = null;
         let jobPost: any = null;
         let booking: any = null;
@@ -728,6 +731,71 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             const workerProfile = await Worker.findById(bid.worker).session(session);
             const workerNetIncome = Math.max(0, agreedPrice - commissionAmount);
             const clientOffer = Number(bid.clientOfferSnapshot || jobPost.pricing?.clientOffer || jobPost.amount || 0);
+
+            // Promo code validation & computation
+            let discountAmount = 0;
+            let promoId: mongoose.Types.ObjectId | null = null;
+
+            if (promoCode) {
+                const uppercaseCode = promoCode.trim().toUpperCase();
+                const promo = await PromoCode.findOne({ code: uppercaseCode }).session(session);
+                if (!promo) {
+                    const error = new Error("Invalid promo code");
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
+                if (!promo.isActive) {
+                    const error = new Error("This promo code is no longer active");
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
+                const now = new Date();
+                if (now < promo.startDate) {
+                    const error = new Error("This promo code has not started yet");
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
+                if (now > promo.endDate) {
+                    const error = new Error("This promo code has expired");
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
+                if (agreedPrice < promo.minBookingAmount) {
+                    const error = new Error(`Minimum booking amount to use this code is Rs. ${promo.minBookingAmount}`);
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
+                if (promo.usageLimit > 0 && promo.usageCount >= promo.usageLimit) {
+                    const error = new Error("This promo code global limit has been reached");
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
+
+                // Check user usage limit
+                const userUsage = await UserPromoUsage.countDocuments({
+                    user: customerId,
+                    promoCode: promo._id
+                }).session(session);
+                if (userUsage >= promo.userUsageLimit) {
+                    const error = new Error("You have exceeded the usage limit for this promo code");
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
+
+                // Calculate discount amount
+                if (promo.discountType === 'fixed') {
+                    discountAmount = promo.discountValue;
+                } else {
+                    discountAmount = (agreedPrice * promo.discountValue) / 100;
+                    if (promo.maxDiscountAmount > 0 && discountAmount > promo.maxDiscountAmount) {
+                        discountAmount = promo.maxDiscountAmount;
+                    }
+                }
+
+                discountAmount = Math.min(discountAmount, agreedPrice);
+                promoId = promo._id as mongoose.Types.ObjectId;
+            }
+
             const [createdBooking] = await Booking.create([{
                 jobPost: jobPost._id,
                 acceptedBid: bid._id,
@@ -741,16 +809,18 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
                 hourlyRate: workerProfile ? workerProfile.hourlyRate : 0,
                 subtotal: agreedPrice,
                 platformFee: commissionAmount,
-                totalAmount: agreedPrice,
+                totalAmount: agreedPrice - discountAmount,
                 workerEarning: workerNetIncome,
                 agreement: {
                     clientOffer,
                     agreedPrice,
-                    cashDue: agreedPrice,
+                    cashDue: agreedPrice - discountAmount,
                     priceSource: bid.priceMode || (agreedPrice === clientOffer ? 'accepted_offer' : 'counter_offer'),
                     commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
                     commissionAmount,
                     workerNetIncome,
+                    promoCode: promoCode ? promoCode.trim().toUpperCase() : undefined,
+                    discountAmount,
                     lockedAt: new Date(),
                     pricingVersion: 2
                 },
@@ -765,6 +835,20 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             }], { session });
             if (!createdBooking) throw new Error("Unable to create booking");
             booking = createdBooking;
+
+            // Track promo usage
+            if (promoId) {
+                await UserPromoUsage.create([{
+                    user: customerId,
+                    promoCode: promoId,
+                    booking: booking._id,
+                    usedAt: new Date()
+                }], { session });
+
+                await PromoCode.findByIdAndUpdate(promoId, {
+                    $inc: { usageCount: 1 }
+                }).session(session);
+            }
 
             await reserveCommission({
                 workerId: bid.worker,
@@ -1316,6 +1400,7 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
         if (!customerId) return res.status(401).json({ success: false, message: "Unauthorized" });
 
         const { jobId } = req.params;
+        const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
 
         const jobPost = await JobPost.findById(jobId);
         if (!jobPost) return res.status(404).json({ success: false, message: "Job post not found" });
@@ -1330,6 +1415,9 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
 
         // Set status to cancelled
         jobPost.status = 'cancelled';
+        jobPost.cancelledBy = 'customer';
+        jobPost.cancelReason = reason;
+        jobPost.cancelledAt = new Date();
         await jobPost.save();
 
         // Reject all pending bids

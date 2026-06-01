@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, NotFoundError } from "../utils/ApiError";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
+import { recordAdminAction } from "../services/adminAuditLog";
 
 /**
  * Get all workers for admin management
@@ -58,6 +59,11 @@ export const getAllWorkers = asyncHandler(async (req: AdminAuthRequest, res) => 
 export const verifyWorker = asyncHandler(async (req: AdminAuthRequest, res) => {
     const { id } = req.params;
     const { isVerified } = req.body;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+
+    if (reason.length > 500) {
+        throw new BadRequestError("Reason is too long");
+    }
 
     if (isVerified === undefined) {
         throw new BadRequestError("isVerified field is required");
@@ -73,6 +79,19 @@ export const verifyWorker = asyncHandler(async (req: AdminAuthRequest, res) => {
         throw new NotFoundError("Worker not found");
     }
 
+    await recordAdminAction(req, {
+        action: isVerified ? 'worker.verify' : 'worker.reject_verification',
+        entityType: 'worker',
+        entityId: worker._id.toString(),
+        reason,
+        metadata: {
+            fullName: worker.fullName,
+            phone: worker.phone,
+            email: worker.email,
+            category: worker.category
+        }
+    });
+
     const message = isVerified ? "Worker verified successfully" : "Worker verification revoked";
     return successResponse(res, 200, message, worker);
 });
@@ -84,6 +103,11 @@ export const verifyWorker = asyncHandler(async (req: AdminAuthRequest, res) => {
 export const toggleWorkerStatus = asyncHandler(async (req: AdminAuthRequest, res) => {
     const { id } = req.params;
     const { isActive } = req.body;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+
+    if (reason.length > 500) {
+        throw new BadRequestError("Reason is too long");
+    }
 
     if (isActive === undefined) {
         throw new BadRequestError("isActive field is required");
@@ -99,6 +123,19 @@ export const toggleWorkerStatus = asyncHandler(async (req: AdminAuthRequest, res
         throw new NotFoundError("Worker not found");
     }
 
+    await recordAdminAction(req, {
+        action: isActive ? 'worker.activate' : 'worker.deactivate',
+        entityType: 'worker',
+        entityId: worker._id.toString(),
+        reason,
+        metadata: {
+            fullName: worker.fullName,
+            phone: worker.phone,
+            email: worker.email,
+            category: worker.category
+        }
+    });
+
     const message = isActive ? "Worker activated successfully" : "Worker deactivated successfully";
     return successResponse(res, 200, message, worker);
 });
@@ -113,4 +150,45 @@ export const getWorkerDetails = asyncHandler(async (req: AdminAuthRequest, res) 
         throw new NotFoundError("Worker not found");
     }
     return successResponse(res, 200, "Worker details fetched successfully", worker);
+});
+
+/**
+ * Update worker profile (admin override)
+ * @route PATCH /api/v1/admin/workers/:id
+ */
+export const updateWorkerProfile = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const { id } = req.params;
+    const { fullName, phone, email, category, hourlyRate, bio, experience, city, address } = req.body;
+
+    const worker = await Worker.findById(id);
+    if (!worker) {
+        throw new NotFoundError("Worker not found");
+    }
+
+    if (fullName) worker.fullName = fullName;
+    if (phone) worker.phone = phone;
+    if (email !== undefined) worker.email = email;
+    if (category) worker.category = category;
+    if (hourlyRate !== undefined) worker.hourlyRate = Number(hourlyRate);
+    if (bio !== undefined) worker.bio = bio;
+    if (experience !== undefined) worker.experience = Number(experience);
+    if (city) worker.city = city;
+    if (address !== undefined) worker.address = address;
+
+    await worker.save();
+
+    await recordAdminAction(req, {
+        action: 'worker.update_profile',
+        entityType: 'worker',
+        entityId: worker._id.toString(),
+        reason: 'Admin updated worker profile',
+        metadata: {
+            fullName: worker.fullName,
+            phone: worker.phone,
+            category: worker.category,
+            hourlyRate: worker.hourlyRate
+        }
+    });
+
+    return successResponse(res, 200, "Worker profile updated successfully", worker);
 });

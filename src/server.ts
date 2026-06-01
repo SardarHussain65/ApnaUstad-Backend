@@ -20,6 +20,7 @@ import http from 'http';
 import { initSocket } from './sockets/socketManager';
 import { startInstantBookingCleanup } from './scripts/instantBookingCleanup';
 import { startInstantJobExpansion } from './scripts/instantJobExpansion';
+import { startNotificationScheduler } from './scripts/notificationScheduler';
 
 // Validate environment variables before starting
 validateEnv();
@@ -44,6 +45,7 @@ const startServer = async () => {
         // Start periodic cleanups
         startInstantBookingCleanup();
         startInstantJobExpansion();
+        startNotificationScheduler();
 
         // Start HTTP server
         const server = httpServer.listen(config.port, () => {

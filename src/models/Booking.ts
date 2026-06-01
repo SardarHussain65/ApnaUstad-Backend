@@ -42,6 +42,8 @@ export interface IBooking extends Document {
         commissionRateSnapshot: number;
         commissionAmount: number;
         workerNetIncome: number;
+        promoCode?: string;
+        discountAmount?: number;
         lockedAt: Date;
         pricingVersion: number;
     };
@@ -104,6 +106,8 @@ const bookingSchema = new Schema<IBooking>(
             commissionRateSnapshot: { type: Number, min: 0, max: 100, default: 0 },
             commissionAmount: { type: Number, min: 0, default: 0 },
             workerNetIncome: { type: Number, min: 0, default: 0 },
+            promoCode: { type: String, trim: true, default: null },
+            discountAmount: { type: Number, min: 0, default: 0 },
             lockedAt: { type: Date, default: Date.now },
             pricingVersion: { type: Number, default: 2 }
         }

@@ -3,7 +3,8 @@ import JobBid from "../models/JobBid";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
-import { NotFoundError } from "../utils/ApiError";
+import { NotFoundError, BadRequestError } from "../utils/ApiError";
+import { recordAdminAction } from "../services/adminAuditLog";
 
 /**
  * Get all job posts for admin with pagination and filtering
@@ -69,8 +70,120 @@ export const getJobDetails = asyncHandler(async (req: AdminAuthRequest, res) => 
  * @route DELETE /api/v1/admin/jobs/:id
  */
 export const deleteJob = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const reason = typeof req.body?.reason === 'string'
+        ? req.body.reason.trim()
+        : typeof req.query?.reason === 'string'
+            ? String(req.query.reason).trim()
+            : '';
+
     const job = await JobPost.findByIdAndDelete(req.params.id);
     if (!job) throw new NotFoundError("Job not found");
 
+    await recordAdminAction(req, {
+        action: 'job.delete',
+        entityType: 'job',
+        entityId: job._id.toString(),
+        reason,
+        metadata: {
+            category: job.category,
+            status: job.status,
+            customer: job.customer?.toString?.() || ''
+        }
+    });
+
     return successResponse(res, 200, "Job deleted successfully", null);
+});
+
+/**
+ * Cancel a job post (admin moderation)
+ * @route PATCH /api/v1/admin/jobs/:id/cancel
+ */
+export const cancelJob = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const { id } = req.params;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+
+    const job = await JobPost.findById(id);
+    if (!job) throw new NotFoundError("Job not found");
+
+    if (job.status === 'cancelled') {
+        return successResponse(res, 200, "Job already cancelled", job);
+    }
+
+    job.status = 'cancelled';
+    job.cancelledBy = 'admin';
+    job.cancelReason = reason;
+    job.cancelledAt = new Date();
+    await job.save();
+
+    await JobBid.updateMany(
+        { jobPost: job._id, status: 'pending' },
+        { $set: { status: 'rejected' } }
+    );
+
+    try {
+        const io = require('../sockets/socketManager').getIO();
+        io.emit('job:cancelled', { jobId: job._id, reason });
+    } catch (error) {
+        // Ignore socket errors
+    }
+
+    await recordAdminAction(req, {
+        action: 'job.cancel',
+        entityType: 'job',
+        entityId: job._id.toString(),
+        reason,
+        metadata: {
+            category: job.category,
+            status: job.status,
+            customer: job.customer?.toString?.() || ''
+        }
+    });
+
+    return successResponse(res, 200, "Job cancelled successfully", job);
+});
+
+/**
+ * Update job post status (admin override)
+ * @route PATCH /api/v1/admin/jobs/:id/status
+ */
+export const updateJobStatus = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const { id } = req.params;
+    const { status: nextStatus, reason } = req.body;
+
+    if (!nextStatus) {
+        throw new BadRequestError("Status is required");
+    }
+
+    const job = await JobPost.findById(id);
+    if (!job) throw new NotFoundError("Job not found");
+
+    const previousStatus = job.status;
+    job.status = nextStatus;
+
+    if (nextStatus === 'cancelled') {
+        job.cancelledBy = 'admin';
+        job.cancelReason = reason || 'Admin force cancel';
+        job.cancelledAt = new Date();
+    }
+    await job.save();
+
+    if (nextStatus === 'cancelled') {
+        await JobBid.updateMany(
+            { jobPost: job._id, status: 'pending' },
+            { $set: { status: 'rejected' } }
+        );
+    }
+
+    await recordAdminAction(req, {
+        action: 'job.update_status',
+        entityType: 'job',
+        entityId: job._id.toString(),
+        reason: reason || `Status force changed to ${nextStatus}`,
+        metadata: {
+            previousStatus,
+            newStatus: nextStatus
+        }
+    });
+
+    return successResponse(res, 200, `Job status updated to ${nextStatus} successfully`, job);
 });

@@ -20,6 +20,7 @@ export interface INotification extends Document {
   icon: string;
   color: string;
   booking?: mongoose.Types.ObjectId | null;
+  broadcastId?: string;
   
   // ✅ NEW: Delivery tracking
   deliveryStatus: NotificationDeliveryStatus;
@@ -39,6 +40,9 @@ export interface INotification extends Document {
   
   // ✅ NEW: Idempotency
   idempotencyKey?: string;
+
+  // ✅ NEW: Scheduled time
+  scheduledAt?: Date;
   
   // Timestamps
   createdAt: Date;
@@ -91,6 +95,12 @@ const notificationSchema = new Schema<INotification>(
       type: Schema.Types.ObjectId, 
       ref: 'Booking', 
       default: null 
+    },
+
+    broadcastId: {
+      type: String,
+      index: true,
+      sparse: true
     },
     
     // ✅ NEW: Delivery Tracking
@@ -147,6 +157,13 @@ const notificationSchema = new Schema<INotification>(
       unique: true,
       sparse: true,  // Only unique if present
       index: true
+    },
+
+    // ✅ NEW: Scheduled send time
+    scheduledAt: {
+      type: Date,
+      index: true,
+      sparse: true
     }
   },
   { 
@@ -162,6 +179,7 @@ notificationSchema.index({ recipient: 1, recipientType: 1 });
 notificationSchema.index({ recipient: 1, createdAt: -1, isRead: 1 });
 notificationSchema.index({ deliveryStatus: 1, retryCount: 1 });  // For finding notifications to retry
 notificationSchema.index({ createdAt: -1 });
+notificationSchema.index({ broadcastId: 1 });
 
 // ✅ NEW: Text index for searching notifications
 notificationSchema.index({ title: 'text', message: 'text' });

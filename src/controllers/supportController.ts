@@ -70,8 +70,29 @@ export const createSupportRequest = asyncHandler(async (req: Request, res: Respo
   return successResponse(res, 201, 'Support request created', doc);
 });
 
-export const listSupportRequests = asyncHandler(async (_req, res: Response) => {
-  const docs = await SupportRequest.find().sort({ createdAt: -1 }).limit(200);
+export const listSupportRequests = asyncHandler(async (req: Request, res: Response) => {
+  const { status, search, priority } = req.query;
+  const filter: any = {};
+
+  if (status) {
+    filter.status = status;
+  }
+
+  if (priority) {
+    filter.priority = priority;
+  }
+
+  if (search) {
+    const searchRegex = new RegExp(String(search), 'i');
+    filter.$or = [
+      { name: searchRegex },
+      { email: searchRegex },
+      { topic: searchRegex },
+      { message: searchRegex },
+    ];
+  }
+
+  const docs = await SupportRequest.find(filter).sort({ createdAt: -1 }).limit(200);
   return successResponse(res, 200, 'Support requests fetched', docs);
 });
 
@@ -90,37 +111,82 @@ export const getSupportRequestsByUser = asyncHandler(async (req: Request, res: R
 
 export const replyToSupportRequest = asyncHandler(async (req: Request, res: Response) => {
   const id = req.params.id;
-  const { message, authorName } = req.body;
+  const { message, authorName, from = 'admin' } = req.body;
   if (!message) return successResponse(res, 400, 'Missing message');
 
   const doc = await SupportRequest.findById(id);
   if (!doc) return successResponse(res, 404, 'Support request not found');
 
-  const reply = { from: 'admin' as const, message, authorName: authorName || 'Admin', createdAt: new Date() };
+  const reply = { 
+    from: (from === 'user' ? 'user' : 'admin') as 'user' | 'admin', 
+    message, 
+    authorName: authorName || (from === 'user' ? 'User' : 'Admin'), 
+    createdAt: new Date() 
+  };
   doc.replies = doc.replies || [];
   doc.replies.push(reply as any);
+
+  if (from === 'user') {
+    doc.status = 'open'; // Reopen ticket when user replies
+  }
   await doc.save();
 
-  // Send push notifications to user's active devices (best-effort)
-  try {
-    if (doc.user) {
-      const tokens = await (PushToken as any).findActiveForUser(String(doc.user));
-      const deviceTokens = (tokens || []).map((t: any) => t.token).filter(Boolean);
-      if (deviceTokens.length > 0) {
-        await sendMultiplePushNotifications(deviceTokens, 'Support Reply', message, { supportId: String(doc._id) });
+  // Send push notifications to user's active devices (only if reply is from admin)
+  if (from === 'admin') {
+    try {
+      if (doc.user) {
+        const tokens = await (PushToken as any).findActiveForUser(String(doc.user));
+        const deviceTokens = (tokens || []).map((t: any) => t.token).filter(Boolean);
+        if (deviceTokens.length > 0) {
+          await sendMultiplePushNotifications(deviceTokens, 'Support Reply', message, { supportId: String(doc._id) });
+        }
       }
+    } catch (notifyErr) {
+      console.warn('Could not send support reply notification', notifyErr);
     }
-  } catch (notifyErr) {
-    console.warn('Could not send support reply notification', notifyErr);
-  }
 
-  // Send support reply notification email
-  if (doc.email) {
-    const replyIndex = doc.replies.length - 1;
-    const replyId = `${doc._id}-reply-${replyIndex}`;
-    sendSupportReplyNotification(doc.email, doc.name || 'User', doc.message, message, replyId)
-      .catch((err) => console.error('Failed to send support reply email:', err));
+    // Send support reply notification email
+    if (doc.email) {
+      const replyIndex = doc.replies.length - 1;
+      const replyId = `${doc._id}-reply-${replyIndex}`;
+      sendSupportReplyNotification(doc.email, doc.name || 'User', doc.message, message, replyId)
+        .catch((err) => console.error('Failed to send support reply email:', err));
+    }
   }
 
   return successResponse(res, 200, 'Reply added', doc);
+});
+
+export const updateSupportStatus = asyncHandler(async (req: Request, res: Response) => {
+  const id = req.params.id;
+  const { status } = req.body;
+
+  if (!['open', 'closed', 'pending'].includes(status)) {
+    return successResponse(res, 400, 'Invalid status value');
+  }
+
+  const doc = await SupportRequest.findById(id);
+  if (!doc) return successResponse(res, 404, 'Support request not found');
+
+  doc.status = status;
+  await doc.save();
+
+  return successResponse(res, 200, 'Support request status updated', doc);
+});
+
+export const updateSupportPriority = asyncHandler(async (req: Request, res: Response) => {
+  const id = req.params.id;
+  const { priority } = req.body;
+
+  if (!['low', 'medium', 'high', 'urgent'].includes(priority)) {
+    return successResponse(res, 400, 'Invalid priority value');
+  }
+
+  const doc = await SupportRequest.findById(id);
+  if (!doc) return successResponse(res, 404, 'Support request not found');
+
+  doc.priority = priority;
+  await doc.save();
+
+  return successResponse(res, 200, 'Support request priority updated', doc);
 });
