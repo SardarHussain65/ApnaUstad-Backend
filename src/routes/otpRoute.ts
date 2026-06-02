@@ -4,13 +4,18 @@ import {
     verifyFirebaseTokenSchema, 
     firebaseResetPasswordSchema,
     sendEmailOtpSchema,
-    verifyEmailOtpSchema
+    verifyEmailOtpSchema,
+    sendForgotPasswordOtpSchema,
+    resetForgotPasswordSchema
 } from "../validations/otp.validation";
 import { 
     verifyFirebaseToken, 
     resetPassword,
     sendEmailOTP,
-    verifyEmailOTP
+    verifyEmailOTP,
+    sendForgotPasswordOTP,
+    verifyForgotPasswordOTP,
+    resetForgotPassword
 } from "../controllers/otpController";
 import { otpLimiter } from "../middlewares/rateLimiter";
 
@@ -39,5 +44,23 @@ router.route("/send-email-otp").post(otpLimiter, validate(sendEmailOtpSchema), s
  * @access Public
  */
 router.route("/verify-email-otp").post(validate(verifyEmailOtpSchema), verifyEmailOTP);
+
+/**
+ * @description Send an OTP code to a registered email for password recovery
+ * @access Public
+ */
+router.route("/forgot-password/send-otp").post(otpLimiter, validate(sendForgotPasswordOtpSchema), sendForgotPasswordOTP);
+
+/**
+ * @description Validate the 6-digit OTP code sent for forgot password
+ * @access Public
+ */
+router.route("/forgot-password/verify-otp").post(validate(verifyEmailOtpSchema), verifyForgotPasswordOTP);
+
+/**
+ * @description Reset a forgotten password using a verified email OTP code
+ * @access Public
+ */
+router.route("/forgot-password/reset").post(validate(resetForgotPasswordSchema), resetForgotPassword);
 
 export default router;

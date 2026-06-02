@@ -204,3 +204,173 @@ export const verifyEmailOTP = async (req: Request, res: Response): Promise<void>
         res.status(500).json({ success: false, message: "An internal server error occurred during verification" });
     }
 };
+
+/**
+ * @description Generate, store, and send a 6-digit OTP to a registered user/worker email for password reset
+ * @route POST /api/v1/otp/forgot-password/send-otp
+ * @access Public
+ */
+export const sendForgotPasswordOTP = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { email, type } = req.body;
+        const accountType = type || 'user';
+
+        if (!email) {
+            res.status(400).json({ success: false, message: "Email address is required" });
+            return;
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+
+        // 1. Verify the account exists
+        const Model = accountType === 'worker' ? Worker : User;
+        const account = await Model.findOne({ email: normalizedEmail });
+
+        if (!account) {
+            res.status(404).json({ 
+                success: false, 
+                message: `No active ${accountType} account found with that email address.` 
+            });
+            return;
+        }
+
+        // 2. Generate a random 6-digit verification code
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+        // 3. Set expiration time to 10 minutes from now
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+        // 4. Remove any existing pending OTPs for this email address to avoid conflicts
+        await EmailOTP.deleteMany({ email: normalizedEmail });
+
+        // 5. Save the new OTP record to the database
+        await EmailOTP.create({
+            email: normalizedEmail,
+            code: otpCode,
+            expiresAt
+        });
+
+        // 6. Send the OTP email via Resend
+        const { error } = await sendOTPEmail(normalizedEmail, otpCode);
+
+        if (error) {
+            console.error("Resend API failed to dispatch forgot-password OTP email:", error);
+            res.status(500).json({ 
+                success: false, 
+                message: "Failed to send reset email. Please try again later." 
+            });
+            return;
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Password reset code sent to your email address successfully"
+        });
+
+    } catch (error: any) {
+        console.error("sendForgotPasswordOTP Error:", error);
+        res.status(500).json({ success: false, message: "An internal server error occurred while sending the code" });
+    }
+};
+
+/**
+ * @description Validate the 6-digit OTP code sent for forgot password
+ * @route POST /api/v1/otp/forgot-password/verify-otp
+ * @access Public
+ */
+export const verifyForgotPasswordOTP = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { email, code } = req.body;
+
+        if (!email || !code) {
+            res.status(400).json({ success: false, message: "Email address and verification code are required" });
+            return;
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+        const cleanedCode = code.trim();
+
+        // 1. Find the active OTP document matching email and code
+        const otpRecord = await EmailOTP.findOne({ 
+            email: normalizedEmail, 
+            code: cleanedCode 
+        });
+
+        if (!otpRecord) {
+            res.status(400).json({ 
+                success: false, 
+                message: "Invalid or expired verification code" 
+            });
+            return;
+        }
+
+        res.status(200).json({
+            success: true,
+            message: "Code verified successfully. You can now reset your password."
+        });
+
+    } catch (error: any) {
+        console.error("verifyForgotPasswordOTP Error:", error);
+        res.status(500).json({ success: false, message: "An internal server error occurred during verification" });
+    }
+};
+
+/**
+ * @description Reset Password using a verified Email OTP code
+ * @route POST /api/v1/otp/forgot-password/reset
+ * @access Public
+ */
+export const resetForgotPassword = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { email, code, newPassword, type } = req.body;
+        const accountType = type || 'user';
+
+        if (!email || !code || !newPassword) {
+            res.status(400).json({ success: false, message: "Email, code, and new password are required" });
+            return;
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+        const cleanedCode = code.trim();
+
+        // 1. Verify OTP code
+        const otpRecord = await EmailOTP.findOne({ 
+            email: normalizedEmail, 
+            code: cleanedCode 
+        });
+
+        if (!otpRecord) {
+            res.status(400).json({ 
+                success: false, 
+                message: "Invalid or expired verification code" 
+            });
+            return;
+        }
+
+        // 2. Find Account
+        const Model = accountType === 'worker' ? Worker : User;
+        const account = await Model.findOne({ email: normalizedEmail });
+
+        if (!account) {
+            res.status(404).json({ success: false, message: `Account not found for email: ${normalizedEmail}` });
+            return;
+        }
+
+        // 3. Apply and hash new password (hashing is handled by model pre-save hook)
+        account.password = newPassword;
+        await account.save();
+
+        // 4. Delete the OTP record so it can't be reused
+        await EmailOTP.deleteOne({ _id: otpRecord._id });
+
+        res.status(200).json({
+            success: true,
+            message: "Password reset successful. You can now login with your new password."
+        });
+
+    } catch (error: any) {
+        console.error("resetForgotPassword Error:", error);
+        res.status(500).json({ success: false, message: "An internal server error occurred while resetting the password" });
+    }
+};
+
