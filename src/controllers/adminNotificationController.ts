@@ -23,8 +23,13 @@ export const sendGlobalNotification = asyncHandler(async (_req: AdminAuthRequest
     }
 
     const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
-    const isScheduled = scheduledDate && scheduledDate.getTime() > Date.now();
-
+    if (scheduledAt && (!scheduledDate || Number.isNaN(scheduledDate.getTime()))) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid scheduledAt timestamp'
+        });
+    }
+    const isScheduled = Boolean(scheduledDate) && scheduledDate.getTime() > Date.now();
     // If scheduled for future, save to DB with 'created' status and scheduledAt timestamp
     if (isScheduled) {
         const broadcastId = uuidv4();
