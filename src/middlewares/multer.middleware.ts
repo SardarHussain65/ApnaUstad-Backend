@@ -210,15 +210,24 @@ const createJobMediaUploadMiddleware = (fieldName: string, folder: string, maxCo
                     mimetype: file.mimetype,
                 }))
             );
-            req.uploadedImageUrls = uploadedMedia
+            const imageUrls = uploadedMedia
                 .filter(file => imageMimeTypes.includes(file.mimetype))
                 .map(file => file.url);
-            req.uploadedVideoUrls = uploadedMedia
+            const videoUrls = uploadedMedia
                 .filter(file => videoMimeTypes.includes(file.mimetype))
                 .map(file => file.url);
-            req.uploadedAudioUrls = uploadedMedia
+            const audioUrls = uploadedMedia
                 .filter(file => audioMimeTypes.includes(file.mimetype))
                 .map(file => file.url);
+
+            if (imageUrls.length > 5 || videoUrls.length > 5 || audioUrls.length > 1) {
+                res.status(400).json({ error: 'You can upload up to 5 images, 5 videos, and 1 audio file.' });
+                return;
+            }
+
+            req.uploadedImageUrls = imageUrls;
+            req.uploadedVideoUrls = videoUrls;
+            req.uploadedAudioUrls = audioUrls;
             next();
         } catch (uploadError) {
             console.error(`ImageKit job media upload failed [${folder}]:`, uploadError);
