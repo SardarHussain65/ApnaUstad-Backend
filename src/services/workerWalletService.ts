@@ -12,19 +12,26 @@ export const getOrCreateWallet = async (
 ): Promise<IWorkerWallet> => {
     let wallet = await WorkerWallet.findOne({ worker: workerId }).session(session ?? null);
     if (!wallet) {
-        const [createdWallet] = await WorkerWallet.create([{
-            worker: workerId,
-            balance: 0,
-            reservedBalance: 0,
-            totalRecharged: 0,
-            totalCommissionDeducted: 0,
-            isActive: true
-        }], session ? { session } : {});
-        wallet = createdWallet || null;
+        try {
+            const [createdWallet] = await WorkerWallet.create([{
+                worker: workerId,
+                balance: 0,
+                reservedBalance: 0,
+                totalRecharged: 0,
+                totalCommissionDeducted: 0,
+                isActive: true
+            }], session ? { session } : {});
+            wallet = createdWallet || null;
+        } catch (error: any) {
+            if (error?.code === 11000) {
+                wallet = await WorkerWallet.findOne({ worker: workerId }).session(session ?? null);
+            } else {
+                throw error;
+            }
+        }
     }
     if (!wallet) throw new Error('Unable to create worker wallet');
     return wallet;
-};
 
 /**
  * Get wallet balance for a worker
