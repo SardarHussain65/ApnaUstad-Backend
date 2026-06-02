@@ -32,6 +32,7 @@ export const getOrCreateWallet = async (
     }
     if (!wallet) throw new Error('Unable to create worker wallet');
     return wallet;
+};
 
 /**
  * Get wallet balance for a worker
