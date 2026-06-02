@@ -50,7 +50,11 @@ export const registerChatHandlers = (io: Server, socket: Socket) => {
                 messageType,
                 ...(isAudioMessage ? {
                     audioUrl,
-                    audioDurationSeconds: Math.min(120, Math.max(0, Number(audioDurationSeconds || 0))),
+                    audioDurationSeconds: (() => {
+                        const duration = Number(audioDurationSeconds);
+                        if (!Number.isFinite(duration)) return 0;
+                        return Math.min(120, Math.max(0, duration));
+                    })(),
                 } : {}),
             });
 
