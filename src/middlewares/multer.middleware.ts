@@ -273,7 +273,7 @@ const createChatAudioUploadMiddleware = (fieldName: string, folder: string) => (
 const handleProfileImageUpload = createUploadMiddleware("profileImage", "profiles");
 
 // Jobs
-const handleJobImagesUpload = createJobMediaUploadMiddleware("images", "jobs", 6);
+const handleJobImagesUpload = createJobMediaUploadMiddleware("images", "jobs", 11);
 
 // Worker wallet top-up proof
 const handleWalletProofUpload = createUploadMiddleware("proof", "workers/wallet-proofs");
