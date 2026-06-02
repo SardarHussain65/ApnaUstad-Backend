@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, NotFoundError } from "../utils/ApiError";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
+import { recordAdminAction } from "../services/adminAuditLog";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -11,10 +12,10 @@ const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * @route GET /api/v1/admin/users
  */
 export const getAllUsers = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { status, search, city, page = '1', limit = '10' } = req.query;
+    const { status, search, city, dateFrom, page = '1', limit = '10' } = req.query;
 
     const pageNum = parseInt(page as string, 10) || 1;
-    const limitNum = parseInt(limit as string, 10) || 10;
+    const limitNum = Math.min(parseInt(limit as string, 10) || 10, 200);
     const skip = (pageNum - 1) * limitNum;
 
     let query: any = {};
@@ -33,6 +34,14 @@ export const getAllUsers = asyncHandler(async (req: AdminAuthRequest, res) => {
     
     if (city) {
         query.city = new RegExp(escapeRegex(city as string), 'i');
+    }
+
+    if (dateFrom) {
+        const joinedAfter = new Date(dateFrom as string);
+        if (Number.isNaN(joinedAfter.getTime())) {
+            throw new BadRequestError("Invalid dateFrom");
+        }
+        query.createdAt = { $gte: joinedAfter };
     }
 
     // Admins get to see everything for analysis
@@ -64,6 +73,11 @@ export const getUserDetails = asyncHandler(async (req: AdminAuthRequest, res) =>
 export const toggleUserStatus = asyncHandler(async (req: AdminAuthRequest, res) => {
     const { id } = req.params;
     const { isActive } = req.body;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+
+    if (reason.length > 500) {
+        throw new BadRequestError("Reason is too long");
+    }
 
     if (isActive === undefined) {
         throw new BadRequestError("isActive field is required");
@@ -78,6 +92,18 @@ export const toggleUserStatus = asyncHandler(async (req: AdminAuthRequest, res) 
     if (!user) {
         throw new NotFoundError("User not found");
     }
+
+    await recordAdminAction(req, {
+        action: isActive ? 'user.activate' : 'user.deactivate',
+        entityType: 'user',
+        entityId: user._id.toString(),
+        reason,
+        metadata: {
+            fullName: user.fullName,
+            phone: user.phone,
+            email: user.email
+        }
+    });
 
     const message = isActive ? "User activated successfully" : "User deactivated successfully";
     return successResponse(res, 200, message, user);

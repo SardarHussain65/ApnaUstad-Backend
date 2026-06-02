@@ -1,8 +1,75 @@
-import { Response } from "express";
+import { NextFunction, Response } from "express";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import Message from "../models/Message";
 import Booking from "../models/Booking";
 import logger from "../config/logger";
+import { UploadRequest } from "../middlewares/multer.middleware";
+import { getIO } from "../sockets/socketManager";
+
+const isCommunicationLocked = (status: string) => status === "completed" || status === "cancelled";
+const isTrustedAudioUrl = (value: string) => {
+    try {
+        const url = new URL(value);
+        return url.protocol === "https:" && url.pathname.includes("/messages/audio/");
+    } catch {
+        return false;
+    }
+};
+
+export const ensureActiveBookingCommunication = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const { bookingId } = req.params;
+        const userId = req.tokenPayload?.id;
+        const booking = await Booking.findById(bookingId);
+
+        if (!booking) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+        if (booking.customer.toString() !== userId && booking.worker.toString() !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not part of this booking" });
+        }
+        if (isCommunicationLocked(booking.status)) {
+            return res.status(409).json({ success: false, message: "Chat is closed because this booking has ended" });
+        }
+
+        return next();
+    } catch (error) {
+        logger.error("Error in ensureActiveBookingCommunication:", error);
+        return res.status(500).json({ success: false, message: "Could not verify chat access" });
+    }
+};
+
+/**
+ * @description Upload a voice message attachment for an active booking
+ * @route POST /api/v1/messages/:bookingId/upload-audio
+ */
+export const uploadChatAudio = async (req: AuthRequest & UploadRequest, res: Response) => {
+    try {
+        const { bookingId } = req.params;
+        const userId = req.tokenPayload?.id;
+        const booking = await Booking.findById(bookingId);
+
+        if (!booking) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+        if (booking.customer.toString() !== userId && booking.worker.toString() !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not part of this booking" });
+        }
+        if (isCommunicationLocked(booking.status)) {
+            return res.status(409).json({ success: false, message: "Chat is closed because this booking has ended" });
+        }
+
+        const audioUrl = req.uploadedAudioUrls?.[0];
+        if (!audioUrl) {
+            return res.status(400).json({ success: false, message: "Voice message audio is required" });
+        }
+
+        return res.status(201).json({ success: true, data: { audioUrl } });
+    } catch (error) {
+        logger.error("Error in uploadChatAudio:", error);
+        return res.status(500).json({ success: false, message: "Voice message upload failed" });
+    }
+};
 
 /**
  * @description Get chat history for a specific booking
@@ -38,6 +105,8 @@ export const getBookingMessages = async (req: AuthRequest, res: Response) => {
         res.status(200).json({
             success: true,
             data: messages.reverse(), // Return in chronological order
+            communicationLocked: isCommunicationLocked(booking.status),
+            bookingStatus: booking.status,
             pagination: {
                 total,
                 page,
@@ -58,6 +127,15 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
     try {
         const { bookingId } = req.params;
         const userId = req.tokenPayload?.id;
+
+        const booking = await Booking.findById(bookingId);
+        if (!booking) {
+            return res.status(404).json({ success: false, message: "Booking not found" });
+        }
+
+        if (booking.customer.toString() !== userId && booking.worker.toString() !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not part of this booking" });
+        }
 
         // Mark only messages sent by the OTHER person as read
         await Message.updateMany(
@@ -81,12 +159,27 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
 export const sendMessage = async (req: AuthRequest, res: Response) => {
     try {
         const { bookingId } = req.params;
-        const { message: content } = req.body;
+        const {
+            message,
+            messageType = "text",
+            audioUrl: rawAudioUrl,
+            audioDurationSeconds: rawAudioDurationSeconds,
+        } = req.body;
         const userId = req.tokenPayload?.id;
         const userType = req.tokenPayload?.type;
+        const audioUrl = typeof rawAudioUrl === "string" ? rawAudioUrl.trim() : "";
+        const content = typeof message === "string" ? message.trim() : "";
+        const isAudioMessage = messageType === "audio";
+        const audioDurationSeconds = Math.min(120, Math.max(0, Number(rawAudioDurationSeconds || 0)));
 
-        if (!content) {
+        if (!["text", "audio"].includes(messageType)) {
+            return res.status(400).json({ success: false, message: "Unsupported message type" });
+        }
+        if (!isAudioMessage && !content) {
             return res.status(400).json({ success: false, message: "Message content is required" });
+        }
+        if (isAudioMessage && !isTrustedAudioUrl(audioUrl)) {
+            return res.status(400).json({ success: false, message: "Upload a valid voice message first" });
         }
 
         const booking = await Booking.findById(bookingId);
@@ -102,15 +195,24 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
             return res.status(403).json({ success: false, message: "Forbidden: You are not part of this booking" });
         }
 
+        if (isCommunicationLocked(booking.status)) {
+            return res.status(409).json({
+                success: false,
+                message: "Chat is closed because this booking has ended"
+            });
+        }
+
         const newMessage = await Message.create({
             booking: bookingId,
             sender: userId,
             senderModel: userType === 'user' ? 'User' : 'Worker',
-            content: content
+            content: content || "Voice message",
+            messageType,
+            ...(isAudioMessage ? { audioUrl, audioDurationSeconds } : {}),
         });
 
         // Emit socket event for real-time update
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
         io.to(`user:${booking.customer.toString()}`).emit('chat:receive', newMessage);
         io.to(`worker:${booking.worker.toString()}`).emit('chat:receive', newMessage);
 

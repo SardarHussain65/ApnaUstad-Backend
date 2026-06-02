@@ -15,8 +15,15 @@ const changeAdminPasswordSchema = z.object({
     newPassword: z.string().min(6, "New password must be at least 6 characters long"),
 });
 
+const reviewVerificationSchema = z.object({
+    status: z.enum(['approved', 'rejected'], { error: "Status must be 'approved' or 'rejected'" }),
+    rejectionReason: z.string().max(500, "Rejection reason is too long").optional(),
+    adminNotes: z.string().max(1000, "Admin notes are too long").optional(),
+});
+
 export {
     loginAdminSchema,
     updateAdminProfileSchema,
     changeAdminPasswordSchema,
+    reviewVerificationSchema,
 }

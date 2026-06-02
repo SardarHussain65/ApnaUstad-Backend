@@ -4,10 +4,12 @@ import morgan from "morgan";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import mongoSanitize from "express-mongo-sanitize";
+import compression from "compression";
 
 import { getConfig } from "./config/env";
 import { errorHandler } from "./middlewares/error.middleware";
 import logger, { stream } from "./config/logger";
+import { requestTimeout } from "./middlewares/timeout.middleware";
 
 import healthRoute from "./routes/healthRoute";
 import usersRoute from "./routes/usersRoute";
@@ -22,6 +24,10 @@ import notificationRoutes from './routes/notificationRoutes';
 import paymentRoute from './routes/paymentRoute';
 import preferencesRoute from './routes/preferencesRoute';
 import supportRoute from './routes/supportRoute';
+import walletRoute from './routes/walletRoute';
+import disputeRoute from './routes/disputeRoute';
+import promoRoute from './routes/promoRoute';
+import userWalletRoute from './routes/userWalletRoute';
 
 
 const app = express();
@@ -30,10 +36,29 @@ const config = getConfig();
 // --- 🪵 Logging Middleware ---
 app.use(morgan(config.nodeEnv === 'development' ? 'dev' : 'combined', { stream }));
 
+// --- ⏱️ Request Timeout Middleware ---
+app.use(requestTimeout(15000));
+
+// --- 📦 Response Compression Middleware ---
+app.use(compression());
+
 // --- ⚙️ Core Middlewares ---
 // Enable CORS
+const allowedOrigins = config.clientUrl === '*' 
+    ? '*' 
+    : config.clientUrl.split(',').map((url: string) => url.trim());
+
 app.use(cors({
-    origin: config.clientUrl,
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like React Native mobile app, Postman, or curl)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins === '*' || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        
+        return callback(new Error('Not allowed by CORS'));
+    },
     credentials: true
 }));
 
@@ -76,6 +101,10 @@ app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/payments', paymentRoute);
 app.use('/api/v1/preferences', preferencesRoute);
 app.use('/api/v1/support', supportRoute);
+app.use('/api/v1/wallet', walletRoute);
+app.use('/api/v1/user-wallet', userWalletRoute);
+app.use('/api/v1/disputes', disputeRoute);
+app.use('/api/v1/promos', promoRoute);
 
 
 // --- ⚠️ Error Handling ---

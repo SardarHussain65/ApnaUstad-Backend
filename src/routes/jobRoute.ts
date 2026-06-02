@@ -16,6 +16,8 @@ import {
     cancelJobPost
 } from "../controllers/jobPostController";
 import { handleJobImagesUpload } from "../middlewares/multer.middleware";
+import validate from "../middlewares/validate.middleware";
+import { createJobPostSchema, submitJobBidSchema } from "../validations/job.validation";
 
 const router = Router();
 
@@ -29,7 +31,7 @@ router.get("/nearby", workerAuthMiddleware, getNearbyJobs);
 router.get("/missed", workerAuthMiddleware, getMissedJobs);
 
 // Create a new job post (for users)
-router.post("/", userAuthMiddleware, createJobPost);
+router.post("/", userAuthMiddleware, validate(createJobPostSchema), createJobPost);
 
 // Get all job posts created by the authenticated user
 router.get("/my-posts", userAuthMiddleware, getMyJobPosts);
@@ -41,7 +43,7 @@ router.get("/my-bids", workerAuthMiddleware, getWorkerBids);
 router.delete("/bids/:bidId", workerAuthMiddleware, withdrawBid);
 
 // Submit a bid on a job post (for workers)
-router.post("/:jobId/bids", workerAuthMiddleware, submitBid);
+router.post("/:jobId/bids", workerAuthMiddleware, validate(submitJobBidSchema), submitBid);
 
 // Get all bids for a job post (for users)
 router.get("/:jobId/bids", userAuthMiddleware, getJobBids);

@@ -16,10 +16,16 @@ let io: SocketIOServer;
 const config = getConfig();
 
 export const initSocket = (httpServer: HttpServer) => {
+    const allowedOrigins = config.clientUrl === '*' 
+        ? '*' 
+        : config.clientUrl.split(',').map((url: string) => url.trim());
+
     io = new SocketIOServer(httpServer, {
+        pingInterval: 15000, // Send ping every 15 seconds to check if client is alive
+        pingTimeout: 10000,  // Consider connection dead and disconnect if no pong received within 10 seconds
         cors: {
-            origin: config.clientUrl,
-            methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+            origin: allowedOrigins,
+            methods: ["GET", "POST"],
             credentials: true,
         },
     });

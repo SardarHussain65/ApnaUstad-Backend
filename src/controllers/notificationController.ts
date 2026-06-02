@@ -18,6 +18,7 @@ import { Request } from 'express';
 import mongoose from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../config/logger';
+import { broadcastNotification, type BroadcastTarget } from '../services/notificationBroadcast';
 
 // ✅ NEW: Input validation utility
 const validateNotificationInput = (title: string, body: string, type: string) => {
@@ -661,7 +662,6 @@ export const sendBroadcastNotification = async (req: AuthRequest | Request, res:
   const requestId = uuidv4();
   try {
     const { target = 'all', title, body, type } = req.body;
-    const senderId = (req as any).tokenPayload?.id;
 
     // Only admin can broadcast
     if ((req as any).tokenPayload && (req as any).tokenPayload.type !== 'admin') {
@@ -672,26 +672,25 @@ export const sendBroadcastNotification = async (req: AuthRequest | Request, res:
       return res.status(400).json({ error: 'Missing title/body', requestId });
     }
 
-    // Decide tokens based on target
-    let tokens: string[] = [];
-    if (target === 'all') {
-      const pushDocs = await (PushToken as any).find({ isActive: true });
-      tokens = pushDocs.map((p: any) => p.token).filter(Boolean);
-    } else if (target === 'users' || target === 'workers') {
-      const model = target === 'users' ? User : Workers;
-      const users = await (model as any).find({}, { _id: 1 }).lean();
-      const ids = users.map((u: any) => u._id);
-      const pushDocs = await (PushToken as any).find({ user: { $in: ids }, isActive: true });
-      tokens = pushDocs.map((p: any) => p.token).filter(Boolean);
-    } else {
+    const validationErrors = validateNotificationInput(title, body, type || 'general');
+    if (validationErrors.length > 0) {
+      return res.status(400).json({
+        error: 'Invalid notification content',
+        details: validationErrors,
+        requestId
+      });
+    }
+
+    if (!['all', 'users', 'workers'].includes(target)) {
       return res.status(400).json({ error: 'Invalid target', requestId });
     }
 
-    if (tokens.length === 0) {
-      return res.status(404).json({ error: 'No active push tokens found', requestId });
-    }
-
-    const result = await sendMultiplePushNotifications(tokens, title, body, { type: type || 'general' });
+    const result = await broadcastNotification({
+      target: target as BroadcastTarget,
+      title,
+      body,
+      type: type || 'general',
+    });
 
     return res.json({ success: true, result, requestId });
   } catch (error: any) {

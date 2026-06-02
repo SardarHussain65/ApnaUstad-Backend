@@ -15,9 +15,20 @@ export interface IJobPost extends Document {
     status: 'open' | 'assigned' | 'closed' | 'cancelled' | 'reviewing';
     imageUrl?: string;
     imageUrls?: string[];
+    videoUrl?: string;
+    videoUrls?: string[];
+    audioUrls?: string[];
     amount?: number;
+    pricing?: {
+        clientOffer: number;
+        currency: 'PKR';
+        pricingVersion: number;
+    };
     radiusExpanded?: boolean;
     expiresAt: Date;
+    cancelledBy?: 'customer' | 'admin' | null;
+    cancelReason?: string;
+    cancelledAt?: Date | null;
 }
 
 const jobPostSchema = new Schema<IJobPost>(
@@ -40,9 +51,20 @@ const jobPostSchema = new Schema<IJobPost>(
         },
         imageUrl: { type: String, default: null },
         imageUrls: { type: [String], default: [] },
+        videoUrl: { type: String, default: null },
+        videoUrls: { type: [String], default: [] },
+        audioUrls: { type: [String], default: [] },
         amount: { type: Number, default: 0 },
+        pricing: {
+            clientOffer: { type: Number, min: 0, default: 0 },
+            currency: { type: String, enum: ['PKR'], default: 'PKR' },
+            pricingVersion: { type: Number, default: 2 }
+        },
         radiusExpanded: { type: Boolean, default: false },
-        expiresAt: { type: Date, required: true }
+        expiresAt: { type: Date, required: true },
+        cancelledBy: { type: String, enum: ['customer', 'admin', null], default: null },
+        cancelReason: { type: String, trim: true, default: '' },
+        cancelledAt: { type: Date, default: null }
     },
     { timestamps: true }
 );
@@ -50,5 +72,7 @@ const jobPostSchema = new Schema<IJobPost>(
 jobPostSchema.index({ location: '2dsphere' });
 jobPostSchema.index({ customer: 1, status: 1 });
 jobPostSchema.index({ category: 1, status: 1 });
+jobPostSchema.index({ status: 1, expiresAt: 1, category: 1 });
+jobPostSchema.index({ customer: 1, createdAt: -1 });
 
 export default mongoose.models.JobPost || mongoose.model<IJobPost>('JobPost', jobPostSchema);

@@ -1,27 +1,23 @@
 import * as jwt from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 import { getConfig } from "../config/env";
-
+import { BlacklistedToken } from "../models/BlacklistedToken";
 
 const config = getConfig();
 
-
-export interface AuthRequest extends Request {
-    tokenPayload?: jwt.JwtPayload | any;
-}
-
-
-export interface TokenPayload {
+export interface TokenPayload extends jwt.JwtPayload {
     id: string;
     username?: string;
     role?: string;
     type: 'user' | 'worker' | 'admin';
 }
 
+export interface AuthRequest extends Request {
+    tokenPayload?: TokenPayload;
+    token?: string;
+}
 
-
-const jwtAuthMiddleware = (req: AuthRequest, res: Response, next: NextFunction) => {
-
+const jwtAuthMiddleware = async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!config.jwtSecret) {
         console.error("JWT_SECRET is not configured");
         res.status(500).json({ error: "Internal server error" });
@@ -45,31 +41,36 @@ const jwtAuthMiddleware = (req: AuthRequest, res: Response, next: NextFunction) 
     const secret = config.jwtSecret;
 
     try {
-        const decodedToken = jwt.verify(token, secret);
+        // Check if token is blacklisted
+        const isBlacklisted = await BlacklistedToken.findOne({ token });
+        if (isBlacklisted) {
+            res.status(401).json({ message: "Token has been revoked/logged out" });
+            return;
+        }
+
+        const decodedToken = jwt.verify(token, secret) as TokenPayload;
         req.tokenPayload = decodedToken;
+        req.token = token;
         next();
     } catch (error) {
         console.error("JWT verification failed:", error);
         res.status(401).json({ message: "Invalid Token" });
     }
-
-}
-
+};
 
 const generateToken = (payload: TokenPayload) => {
     if (!config.jwtSecret) {
         throw new Error("JWT_SECRET is not configured");
     }
     return jwt.sign({ ...payload }, config.jwtSecret, { expiresIn: config.jwtExpiresIn as any });
-}
-
+};
 
 const generateRefreshToken = (payload: TokenPayload) => {
     if (!config.refreshTokenSecret) {
         throw new Error("REFRESH_TOKEN_SECRET is not configured");
     }
     return jwt.sign({ ...payload }, config.refreshTokenSecret, { expiresIn: config.refreshTokenExpiresIn as any });
-}
+};
 
 const verifyRefreshToken = (token: string) => {
     if (!config.refreshTokenSecret) {
@@ -80,8 +81,36 @@ const verifyRefreshToken = (token: string) => {
     } catch (error) {
         return null;
     }
-}
+};
 
+/**
+ * Utility function to blacklist a token upon logout
+ * @param token The JWT token to blacklist
+ */
+export const blacklistToken = async (token: string): Promise<boolean> => {
+    try {
+        const decoded = jwt.decode(token) as jwt.JwtPayload;
+        let expiresAt = new Date();
+        
+        if (decoded && decoded.exp) {
+            // Set expiration to 5 seconds past token expiration to account for clock skew
+            expiresAt = new Date((decoded.exp * 1000) + 5000);
+        } else {
+            // Default 24 hours if no expiration in token
+            expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        }
+
+        await BlacklistedToken.findOneAndUpdate(
+            { token },
+            { token, expiresAt },
+            { upsert: true, new: true }
+        );
+        return true;
+    } catch (error) {
+        console.error("Error blacklisting token:", error);
+        return false;
+    }
+};
 
 /**
  * Middleware to restrict access to Standard Users only
@@ -106,6 +135,5 @@ export const workerAuthMiddleware = (req: AuthRequest, res: Response, next: Next
         next();
     });
 };
-
 
 export { jwtAuthMiddleware, generateToken, generateRefreshToken, verifyRefreshToken };

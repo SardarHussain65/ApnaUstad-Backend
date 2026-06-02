@@ -7,6 +7,7 @@ export interface IReview extends Document {
     worker: mongoose.Types.ObjectId;
     rating: number;
     comment: string;
+    isFlagged: boolean;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -17,7 +18,8 @@ const reviewSchema = new Schema<IReview>(
         customer: { type: Schema.Types.ObjectId, ref: 'User', required: true },
         worker: { type: Schema.Types.ObjectId, ref: 'Worker', required: true },
         rating: { type: Number, required: true, min: 1, max: 5 },
-        comment: { type: String, trim: true, maxlength: 500, default: '' }
+        comment: { type: String, trim: true, maxlength: 500, default: '' },
+        isFlagged: { type: Boolean, default: false }
     },
     { timestamps: true }
 );

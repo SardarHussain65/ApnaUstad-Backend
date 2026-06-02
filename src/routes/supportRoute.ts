@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getHelpTopics, getHelpArticles, searchHelpArticles, getSupportChannels, createSupportRequest, listSupportRequests, getSupportRequest, getSupportRequestsByUser, replyToSupportRequest } from '../controllers/supportController';
+import { getHelpTopics, getHelpArticles, searchHelpArticles, getSupportChannels, createSupportRequest, listSupportRequests, getSupportRequest, getSupportRequestsByUser, replyToSupportRequest, updateSupportStatus, updateSupportPriority } from '../controllers/supportController';
 
 const router = Router();
 
@@ -12,5 +12,7 @@ router.get('/requests', listSupportRequests);
 router.get('/requests/:id', getSupportRequest);
 router.get('/requests/user/:userId', getSupportRequestsByUser);
 router.post('/requests/:id/reply', replyToSupportRequest);
+router.patch('/requests/:id/status', updateSupportStatus);
+router.patch('/requests/:id/priority', updateSupportPriority);
 
 export default router;

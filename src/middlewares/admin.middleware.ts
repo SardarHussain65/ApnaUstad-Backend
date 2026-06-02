@@ -39,6 +39,10 @@ export const adminAuthMiddleware = async (req: AdminAuthRequest, res: Response, 
             throw new UnauthorizedError('Unauthorized: Admin not found');
         }
 
+        if (admin.status === 'inactive') {
+            throw new UnauthorizedError('Unauthorized: Admin account deactivated');
+        }
+
         // Attach admin object to request
         req.admin = admin;
         next();

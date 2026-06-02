@@ -14,7 +14,10 @@ import {
     updateWorkerLocation,
     checkWorkerExists,
     refreshWorkerAccessToken,
-    logoutAllWorkerSessions
+    logoutAllWorkerSessions,
+    logoutWorker,
+    requestVerification,
+    getVerificationStatus
 } from "../controllers/workerController";
 import validate from "../middlewares/validate.middleware";
 import { loginWorkerSchema, registerWorkerSchema } from "../validations/worker.validation";
@@ -25,6 +28,7 @@ import {
 } from "../middlewares/multer.middleware";
 import { workerAuthMiddleware } from "../middlewares/jwt.middleware";
 import { uploadRateLimiter } from "../middlewares/rateLimiter.middleware";
+import { authLimiter, verificationLimiter } from "../middlewares/rateLimiter";
 
 const router = Router();
 
@@ -56,15 +60,33 @@ router.route("/check-worker").get(checkWorkerExists);
  * @description Register a new worker (pass image URLs from upload endpoints in body)
  * @access Public
  */
-router.route("/register").post(validate(registerWorkerSchema), registerWorker);
+router.route("/register").post(authLimiter, validate(registerWorkerSchema), registerWorker);
 
 
-router.route("/login").post(validate(loginWorkerSchema), loginWorker);
+router.route("/login").post(authLimiter, validate(loginWorkerSchema), loginWorker);
 router.route("/refresh-token").post(refreshWorkerAccessToken);
 
 
 
 router.use(workerAuthMiddleware)
+
+/**
+ * @description Request identity verification
+ * @access Private (Worker)
+ */
+router.route("/verification/request").post(verificationLimiter, requestVerification);
+
+/**
+ * @description Get identity verification status
+ * @access Private (Worker)
+ */
+router.route("/verification/status").get(getVerificationStatus);
+
+/**
+ * @description Logout worker and revoke session
+ * @access Private
+ */
+router.route("/logout").post(logoutWorker);
 
 /**
  * @description Get worker by ID

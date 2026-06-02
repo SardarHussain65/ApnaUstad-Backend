@@ -12,6 +12,7 @@ import {
     sendEmailOTP,
     verifyEmailOTP
 } from "../controllers/otpController";
+import { otpLimiter } from "../middlewares/rateLimiter";
 
 const router = Router();
 
@@ -31,7 +32,7 @@ router.route("/reset-password").post(validate(firebaseResetPasswordSchema), rese
  * @description Generate, store, and dispatch a 6-digit OTP verification code to a user's email address
  * @access Public
  */
-router.route("/send-email-otp").post(validate(sendEmailOtpSchema), sendEmailOTP);
+router.route("/send-email-otp").post(otpLimiter, validate(sendEmailOtpSchema), sendEmailOTP);
 
 /**
  * @description Validate the 6-digit OTP code sent to the user's email address

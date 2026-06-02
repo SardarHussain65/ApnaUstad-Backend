@@ -6,6 +6,7 @@ export interface IAdmin extends Document {
     email: string;
     password?: string;
     role: 'superadmin' | 'admin';
+    status: 'active' | 'inactive';
     lastLogin?: Date;
     isPasswordCorrect(password: string): Promise<boolean>;
 }
@@ -30,6 +31,11 @@ const adminSchema = new Schema<IAdmin>(
             type: String, 
             enum: ['superadmin', 'admin'], 
             default: 'admin' 
+        },
+        status: {
+            type: String,
+            enum: ['active', 'inactive'],
+            default: 'active'
         },
         lastLogin: { type: Date }
     },

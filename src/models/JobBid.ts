@@ -5,6 +5,10 @@ export interface IJobBid extends Document {
     worker: mongoose.Types.ObjectId;
     message: string;
     proposedPrice: number;
+    priceMode: 'accepted_offer' | 'counter_offer';
+    clientOfferSnapshot: number;
+    commissionRateSnapshot: number;
+    estimatedDays?: number;
     status: 'pending' | 'accepted' | 'rejected';
 }
 
@@ -14,6 +18,14 @@ const jobBidSchema = new Schema<IJobBid>(
         worker: { type: Schema.Types.ObjectId, ref: 'Worker', required: true },
         message: { type: String, required: true, trim: true, maxlength: 500 },
         proposedPrice: { type: Number, required: true, min: 0 },
+        priceMode: {
+            type: String,
+            enum: ['accepted_offer', 'counter_offer'],
+            default: 'counter_offer'
+        },
+        clientOfferSnapshot: { type: Number, min: 0, default: 0 },
+        commissionRateSnapshot: { type: Number, min: 0, max: 100, default: 0 },
+        estimatedDays: { type: Number, min: 1 },
         status: {
             type: String,
             enum: ['pending', 'accepted', 'rejected'],

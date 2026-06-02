@@ -4,6 +4,7 @@ import { getIO } from '../sockets/socketManager';
 import { emitBookingEvent } from '../sockets/handlers/booking.handler';
 import logger from '../config/logger';
 import { syncPaymentForBookingStatus } from '../services/paymentLedgerService';
+import { releaseCommissionReservation } from '../services/commissionReservationService';
 
 export const startInstantBookingCleanup = () => {
     // Runs every 1 minute
@@ -24,6 +25,7 @@ export const startInstantBookingCleanup = () => {
                 booking.cancelledBy = 'admin';
                 booking.cancelReason = 'Worker did not respond in time';
                 await booking.save();
+                await releaseCommissionReservation(booking._id);
                 await syncPaymentForBookingStatus(booking);
                 
                 emitBookingEvent(getIO(), booking, 'booking:cancelled');

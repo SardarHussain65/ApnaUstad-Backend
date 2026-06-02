@@ -20,6 +20,7 @@ import http from 'http';
 import { initSocket } from './sockets/socketManager';
 import { startInstantBookingCleanup } from './scripts/instantBookingCleanup';
 import { startInstantJobExpansion } from './scripts/instantJobExpansion';
+import { startNotificationScheduler } from './scripts/notificationScheduler';
 
 // Validate environment variables before starting
 validateEnv();
@@ -44,6 +45,7 @@ const startServer = async () => {
         // Start periodic cleanups
         startInstantBookingCleanup();
         startInstantJobExpansion();
+        startNotificationScheduler();
 
         // Start HTTP server
         const server = httpServer.listen(config.port, () => {
@@ -61,24 +63,48 @@ const startServer = async () => {
             }, 1000 * 60 * 60 * 24);
         });
 
+        const gracefulShutdown = async (signal: string) => {
+            logger.info(`👋 ${signal} RECEIVED. Initiating graceful shutdown...`);
+
+            // Set a failsafe timeout of 10s to force process exit if teardown hangs
+            const forceExitTimeout = setTimeout(() => {
+                logger.error('💥 Teardown hung! Forcefully terminating process.');
+                process.exit(1);
+            }, 10000);
+
+            try {
+                // 1. Close Express HTTP server (stops accepting new connections)
+                server.close(() => {
+                    logger.info('📦 HTTP Server closed.');
+                });
+
+                // 2. Disconnect Mongoose pool cleanly
+                if (mongoose.connection.readyState !== 0) {
+                    await mongoose.connection.close();
+                    logger.info('📴 MongoDB connection safely terminated.');
+                }
+
+                clearTimeout(forceExitTimeout);
+                logger.info('💥 Teardown completed successfully. Goodbye!');
+                process.exit(0);
+            } catch (err: any) {
+                logger.error('❌ Error during graceful shutdown:', err);
+                process.exit(1);
+            }
+        };
+
         // Handle unhandled promise rejections
         process.on('unhandledRejection', (err: any) => {
             logger.error('UNHANDLED REJECTION! 💥 Shutting down...');
-            logger.error(`${err.name}: ${err.message}`);
-            server.close(async () => {
-                await mongoose.connection.close(); // <--- Add this
-                process.exit(1);
-            });
+            logger.error(`${err?.name || 'Error'}: ${err?.message || err}`);
+            gracefulShutdown('UNHANDLED_REJECTION');
         });
 
-        // Handle SIGTERM signal
-        process.on('SIGTERM', async () => {
-            logger.info('👋 SIGTERM RECEIVED. Shutting down gracefully');
-            server.close(async () => {
-                await mongoose.connection.close(); // <--- Add this
-                logger.info('💥 Process terminated!');
-            });
-        });
+        // Handle SIGTERM (sent by PM2, Kubernetes, or Docker)
+        process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+        // Handle SIGINT (Ctrl+C or PM2 reloads)
+        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 
     } catch (error) {

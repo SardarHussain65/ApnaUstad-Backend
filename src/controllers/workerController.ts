@@ -1,9 +1,11 @@
 import Workers from "../models/Workers";
+import VerificationRequest from "../models/VerificationRequest";
+import { requestVerificationSchema } from "../validations/worker.validation";
 import { ConflictError, InternalServerError, BadRequestError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
 import { UploadRequest } from "../middlewares/multer.middleware";
-import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest } from "../middlewares/jwt.middleware";
+import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest, blacklistToken } from "../middlewares/jwt.middleware";
 
 /**
  * Upload worker profile image to ImageKit → /workers/profile-images/
@@ -258,7 +260,8 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     const {
         fullName, phone, email, bio, experience,
         city, address, hourlyRate, skills, category,
-        latitude, longitude, profileImage, fcmToken, isAvailable
+        latitude, longitude, profileImage, fcmToken, isAvailable,
+        isInstantAvailable, isScheduledAvailable
     } = req.body;
 
     const worker = await Workers.findById(id);
@@ -286,12 +289,28 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     if (category !== undefined) worker.category = category;
     if (profileImage !== undefined) worker.profileImage = profileImage;
     if (fcmToken !== undefined) worker.fcmToken = fcmToken;
-    if (isAvailable !== undefined) {
-        // Stamp lastOnlineAt when the worker comes back online
-        if (isAvailable === true && worker.isAvailable === false) {
-            worker.lastOnlineAt = new Date();
+    const wasAvailable = worker.isAvailable !== false;
+    if (isInstantAvailable !== undefined || isScheduledAvailable !== undefined) {
+        worker.isInstantAvailable = isInstantAvailable !== undefined
+            ? Boolean(isInstantAvailable)
+            : worker.isInstantAvailable !== false;
+        worker.isScheduledAvailable = isScheduledAvailable !== undefined
+            ? Boolean(isScheduledAvailable)
+            : worker.isScheduledAvailable !== false;
+        worker.isAvailable = worker.isInstantAvailable || worker.isScheduledAvailable;
+    } else if (isAvailable !== undefined) {
+        // Legacy callers can still use the master switch.
+        worker.isAvailable = Boolean(isAvailable);
+        if (!worker.isAvailable) {
+            worker.isInstantAvailable = false;
+            worker.isScheduledAvailable = false;
+        } else if (worker.isInstantAvailable === false && worker.isScheduledAvailable === false) {
+            worker.isInstantAvailable = true;
+            worker.isScheduledAvailable = true;
         }
-        worker.isAvailable = isAvailable;
+    }
+    if (worker.isAvailable && !wasAvailable) {
+        worker.lastOnlineAt = new Date();
     }
 
     try {
@@ -448,3 +467,94 @@ export const updateWorkerLocation = asyncHandler(async (req: AuthRequest, res) =
     await worker.save();
     return successResponse(res, 200, "Location updated successfully", worker);
 });
+
+/**
+ * Logout Worker
+ * @route POST /api/v1/workers/logout
+ */
+export const logoutWorker = asyncHandler(async (req: AuthRequest, res) => {
+    const token = req.token;
+    if (token) {
+        await blacklistToken(token);
+    }
+    
+    if (req.tokenPayload?.id) {
+        const worker = await Workers.findById(req.tokenPayload.id);
+        if (worker) {
+            worker.refreshToken = "";
+            await worker.save();
+        }
+    }
+    
+    return successResponse(res, 200, "Logged out successfully", {});
+});
+
+/**
+ * Request identity verification
+ * @route POST /api/v1/workers/verification/request
+ */
+export const requestVerification = asyncHandler(async (req: AuthRequest, res) => {
+    const workerId = req.tokenPayload?.id;
+    if (!workerId) {
+        throw new UnauthorizedError("Unauthorized access");
+    }
+
+    const worker = await Workers.findById(workerId);
+    if (!worker) {
+        throw new BadRequestError("Worker not found");
+    }
+
+    if (worker.isVerified) {
+        throw new BadRequestError("Worker is already verified");
+    }
+
+    const validation = requestVerificationSchema.safeParse(req.body);
+    if (!validation.success) {
+        throw new BadRequestError(validation.error?.issues[0]?.message || "Validation failed");
+    }
+
+    const { cnicNumber, cnicFrontImage, cnicBackImage } = validation.data;
+
+    // Check unique verified CNIC in Worker accounts
+    const cnicVerifiedExists = await Workers.findOne({ cnicNumber, _id: { $ne: worker._id }, isVerified: true });
+    if (cnicVerifiedExists) {
+        throw new ConflictError("CNIC number is already registered and verified with another account");
+    }
+
+    // Check if worker already has a pending review
+    const pendingRequest = await VerificationRequest.findOne({ worker: worker._id, status: 'pending' });
+    if (pendingRequest) {
+        throw new BadRequestError("You already have a pending verification request under review");
+    }
+
+    // Check if another account has a pending review with the same CNIC
+    const duplicateCnicPending = await VerificationRequest.findOne({ cnicNumber, status: 'pending', worker: { $ne: worker._id } });
+    if (duplicateCnicPending) {
+        throw new ConflictError("This CNIC number is currently under review for another account");
+    }
+
+    const newRequest = await VerificationRequest.create({
+        worker: worker._id,
+        cnicNumber,
+        cnicFrontImage,
+        cnicBackImage,
+        status: 'pending',
+    });
+
+    return successResponse(res, 201, "Verification request submitted successfully", newRequest);
+});
+
+/**
+ * Get current verification status
+ * @route GET /api/v1/workers/verification/status
+ */
+export const getVerificationStatus = asyncHandler(async (req: AuthRequest, res) => {
+    const workerId = req.tokenPayload?.id;
+    if (!workerId) {
+        throw new UnauthorizedError("Unauthorized access");
+    }
+
+    const request = await VerificationRequest.findOne({ worker: workerId }).sort({ createdAt: -1 });
+    return successResponse(res, 200, "Verification status fetched successfully", request || null);
+});
+
