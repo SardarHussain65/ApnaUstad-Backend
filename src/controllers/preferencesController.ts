@@ -9,11 +9,11 @@ const getActor = (req: AuthRequest) => {
   const userId = req.tokenPayload?.id;
   const userType = req.tokenPayload?.type;
 
-  if (!userId || !['user', 'worker'].includes(userType)) {
+  if (!userId || !userType || !['user', 'worker'].includes(userType)) {
     throw new ForbiddenError('Unauthorized');
   }
 
-  return { userId, userType };
+  return { userId, userType: userType as 'user' | 'worker' };
 };
 
 const applyBooleanPatch = (target: Record<string, any>, source: Record<string, any>, keys: string[]) => {

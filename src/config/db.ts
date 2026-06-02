@@ -10,7 +10,13 @@ const config = getConfig();
  */
 const connectDB = async () => {
     try {
-        const conn = await mongoose.connect(config.mongodbUrl);
+        const conn = await mongoose.connect(config.mongodbUrl, {
+            maxPoolSize: 50,
+            minPoolSize: 10,
+            socketTimeoutMS: 45000,
+            serverSelectionTimeoutMS: 5000,
+            heartbeatFrequencyMS: 10000,
+        });
         logger.info(`✅ MongoDB Connected: ${conn.connection.host}`);
         return conn;
     } catch (error: any) {
@@ -41,12 +47,6 @@ mongoose.connection.on('error', (err) => {
 
 mongoose.connection.on('disconnected', () => {
     logger.info('MongoDB disconnected');
-});
-
-// Handle application termination
-process.on('SIGINT', async () => {
-    await disconnectDB();
-    process.exit(0);
 });
 
 export { connectDB, disconnectDB };

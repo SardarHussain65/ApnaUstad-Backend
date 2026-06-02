@@ -37,7 +37,7 @@ export const getMyPayments = async (req: AuthRequest, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 50;
         const skip = (page - 1) * limit;
 
-        if (!actorId || !['user', 'worker'].includes(actorType)) {
+        if (!actorId || !actorType || !['user', 'worker'].includes(actorType)) {
             return res.status(401).json({ success: false, message: "Unauthorized" });
         }
 

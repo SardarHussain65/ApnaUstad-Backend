@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type PaymentStatus = 'pending' | 'payable' | 'paid' | 'cancelled';
+export type PaymentStatus = 'pending' | 'payable' | 'paid' | 'cancelled' | 'refunded';
 export type PaymentMethod = 'cash';
 export type PaymentConfirmedBy = 'customer' | 'worker' | 'admin' | null;
 
@@ -35,7 +35,7 @@ const paymentSchema = new Schema<IPayment>(
         method: { type: String, enum: ['cash'], default: 'cash', required: true },
         status: {
             type: String,
-            enum: ['pending', 'payable', 'paid', 'cancelled'],
+            enum: ['pending', 'payable', 'paid', 'cancelled', 'refunded'],
             default: 'pending',
             required: true
         },

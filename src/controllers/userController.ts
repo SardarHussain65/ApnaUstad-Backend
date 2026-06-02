@@ -6,7 +6,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
 import { UploadRequest } from "../middlewares/multer.middleware";
-import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest, TokenPayload } from "../middlewares/jwt.middleware";
+import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest, TokenPayload, blacklistToken } from "../middlewares/jwt.middleware";
 import admin from "../config/firebase";
 
 /**
@@ -640,4 +640,25 @@ export const refreshAccessToken = asyncHandler(async (req, res) => {
         token: newAccessToken,
         refreshToken: newRefreshToken
     });
+});
+
+/**
+ * Logout User
+ * @route POST /api/v1/users/logout
+ */
+export const logoutUser = asyncHandler(async (req: AuthRequest, res) => {
+    const token = req.token;
+    if (token) {
+        await blacklistToken(token);
+    }
+    
+    if (req.tokenPayload?.id) {
+        const user = await User.findById(req.tokenPayload.id);
+        if (user) {
+            user.refreshToken = "";
+            await user.save();
+        }
+    }
+    
+    return successResponse(res, 200, "Logged out successfully", {});
 });

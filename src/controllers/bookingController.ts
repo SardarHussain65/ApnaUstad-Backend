@@ -1,5 +1,5 @@
 import { Response } from "express";
-import { Types } from "mongoose";
+import mongoose, { Types } from "mongoose";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import Booking from "../models/Booking";
 import JobPost from "../models/JobPost";
@@ -11,6 +11,8 @@ import { buildInsufficientBalanceMessage, calculateCommissionAmount, getWalletEl
 import { workerAcceptsJobType } from "../services/workerJobAvailabilityService";
 import { releaseCommissionReservation, reserveCommission } from "../services/commissionReservationService";
 import { getWalletSettings } from "../services/walletSettingsService";
+import { getIO } from "../sockets/socketManager";
+import { emitBookingEvent } from "../sockets/handlers/booking.handler";
 
 const toPlainObject = (doc: any) => doc?.toObject ? doc.toObject() : doc;
 
@@ -163,6 +165,7 @@ const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker')
  * @access Private (User)
  */
 export const createBooking = async (req: AuthRequest, res: Response) => {
+    const session = await mongoose.startSession();
     try {
         const customerId = req.tokenPayload?.id;
         if (!customerId) {
@@ -192,85 +195,90 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
             }
         }
 
-        // Fetch authoritative worker data
-        const workerProfile = await Worker.findById(workerId);
-        if (!workerProfile) {
-            res.status(404).json({ success: false, message: "Worker not found" });
-            return;
-        }
+        let booking: any = null;
 
-        if (!workerAcceptsJobType(workerProfile, bookingType)) {
-            res.status(409).json({
-                success: false,
-                message: `This worker is not accepting ${bookingType} bookings right now`
-            });
-            return;
-        }
-
-        if (bookingType === 'instant') {
-            const busy = await Booking.findOne({
-                worker: workerId,
-                status: { $in: ['accepted', 'ongoing'] }
-            });
-            if (busy) {
-                res.status(409).json({ success: false, message: "Worker is currently busy" });
-                return;
+        await session.withTransaction(async () => {
+            // Fetch authoritative worker data
+            const workerProfile = await Worker.findById(workerId).session(session);
+            if (!workerProfile) {
+                const error = new Error("Worker not found");
+                (error as any).statusCode = 404;
+                throw error;
             }
-        }
 
-        const hourlyRate = workerProfile.hourlyRate;
-        const subtotal = estimatedHours * hourlyRate;
-        const platformFee = await calculateCommissionAmount(subtotal);
-        const totalAmount = subtotal;
-        const workerEarning = subtotal - platformFee;
-        const walletSettings = await getWalletSettings();
+            if (!workerAcceptsJobType(workerProfile, bookingType)) {
+                const error = new Error(`This worker is not accepting ${bookingType} bookings right now`);
+                (error as any).statusCode = 409;
+                throw error;
+            }
 
-        const location = (longitude !== undefined && latitude !== undefined) ? {
-            type: "Point",
-            coordinates: [longitude, latitude]
-        } : undefined;
+            if (bookingType === 'instant') {
+                const busy = await Booking.findOne({
+                    worker: workerId,
+                    status: { $in: ['accepted', 'ongoing'] }
+                }).session(session);
+                if (busy) {
+                    const error = new Error("Worker is currently busy");
+                    (error as any).statusCode = 409;
+                    throw error;
+                }
+            }
 
-        const expiresAt = bookingType === 'instant'
-            ? new Date(Date.now() + 2 * 60 * 1000)
-            : new Date(Date.now() + 24 * 60 * 60 * 1000);
+            const hourlyRate = workerProfile.hourlyRate;
+            const subtotal = estimatedHours * hourlyRate;
+            const platformFee = await calculateCommissionAmount(subtotal);
+            const totalAmount = subtotal;
+            const workerEarning = subtotal - platformFee;
+            const walletSettings = await getWalletSettings();
 
-        const booking = await Booking.create({
-            customer: customerId,
-            worker: workerId,
-            category,
-            description,
-            scheduledDate,
-            scheduledTime,
-            estimatedHours,
-            hourlyRate,
-            subtotal,
-            platformFee,
-            totalAmount,
-            workerEarning,
-            agreement: {
-                clientOffer: subtotal,
-                agreedPrice: subtotal,
-                cashDue: subtotal,
-                priceSource: 'direct_rate',
-                commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
-                commissionAmount: platformFee,
-                workerNetIncome: workerEarning,
-                lockedAt: new Date(),
-                pricingVersion: 2
-            },
-            address,
-            bookingType,
-            imageUrls,
-            videoUrls,
-            audioUrls,
-            expiresAt,
-            ...(location && { location })
+            const location = (longitude !== undefined && latitude !== undefined) ? {
+                type: "Point",
+                coordinates: [longitude, latitude]
+            } : undefined;
+
+            const expiresAt = bookingType === 'instant'
+                ? new Date(Date.now() + 2 * 60 * 1000)
+                : new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+            const [createdBooking] = await Booking.create([{
+                customer: customerId,
+                worker: workerId,
+                category,
+                description,
+                scheduledDate,
+                scheduledTime,
+                estimatedHours,
+                hourlyRate,
+                subtotal,
+                platformFee,
+                totalAmount,
+                workerEarning,
+                agreement: {
+                    clientOffer: subtotal,
+                    agreedPrice: subtotal,
+                    cashDue: subtotal,
+                    priceSource: 'direct_rate',
+                    commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
+                    commissionAmount: platformFee,
+                    workerNetIncome: workerEarning,
+                    lockedAt: new Date(),
+                    pricingVersion: 2
+                },
+                address,
+                bookingType,
+                imageUrls,
+                videoUrls,
+                audioUrls,
+                expiresAt,
+                ...(location && { location })
+            }], { session });
+
+            booking = createdBooking;
+            await syncPaymentForBookingStatus(booking, session);
         });
-        await syncPaymentForBookingStatus(booking);
 
         // Emit socket event to the worker
-        const io = require('../sockets/socketManager').getIO();
-        const { emitBookingEvent } = require('../sockets/handlers/booking.handler');
+        const io = getIO();
         const eventPayload = bookingType === 'instant' 
             ? { ...booking.toObject(), urgent: true } 
             : booking;
@@ -292,7 +300,10 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         logger.error("Error in createBooking:", error);
-        res.status(500).json({ success: false, message: "Internal server error" });
+        const statusCode = error.statusCode || 500;
+        res.status(statusCode).json({ success: false, message: error.message || "Internal server error" });
+    } finally {
+        await session.endSession();
     }
 };
 
@@ -540,129 +551,116 @@ export const getWorkerBookings = async (req: AuthRequest, res: Response) => {
  * @access Private (Generic Auth)
  */
 export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
+    const session = await mongoose.startSession();
     try {
         const { id } = req.params;
         const { status: nextStatus, cancelReason } = req.body;
         const userId = req.tokenPayload?.id;
         const userType = req.tokenPayload?.type; // 'user', 'worker', or 'admin'
 
-        const booking = await Booking.findById(id);
+        let booking: any = null;
 
-        if (!booking) {
-            res.status(404).json({ success: false, message: "Booking not found" });
-            return;
-        }
+        await session.withTransaction(async () => {
+            booking = await Booking.findById(id).session(session);
 
-        // Verify ownership (Only the involved customer, worker, or an admin can update it)
-        const isWorker = booking.worker.toString() === userId;
-        const isAdmin = userType === 'admin' || req.tokenPayload?.role === 'admin' || req.tokenPayload?.role === 'superadmin';
-
-        if (!isAuthorizedForBooking(booking, req.tokenPayload)) {
-            res.status(403).json({ success: false, message: "Forbidden: You are not authorized to update this booking" });
-            return;
-        }
-
-        const currentStatus = booking.status;
-
-        // 1. Prevent updates to terminal states
-        if (currentStatus === 'completed' || currentStatus === 'cancelled') {
-            res.status(400).json({ success: false, message: `Cannot update booking from terminal state: ${currentStatus}` });
-            return;
-        }
-
-        // 2. Define allowed transitions and role permissions
-        let isTransitionAllowed = false;
-
-        if (isAdmin) {
-            isTransitionAllowed = true; // Admin can perform any transition for now
-        } else {
-            switch (nextStatus) {
-                case 'accepted':
-                    // Only worker can accept from pending
-                    if (currentStatus === 'pending' && isWorker) isTransitionAllowed = true;
-                    break;
-                case 'ongoing':
-                    // Only worker can start from accepted
-                    if (currentStatus === 'accepted' && isWorker) isTransitionAllowed = true;
-                    break;
-                case 'completed':
-                    // Only worker can complete from ongoing
-                    if (currentStatus === 'ongoing' && isWorker) isTransitionAllowed = true;
-                    break;
-                case 'cancelled':
-                    // Both can cancel if not already completed/cancelled
-                    isTransitionAllowed = true;
-                    break;
-                default:
-                    isTransitionAllowed = false;
+            if (!booking) {
+                const error = new Error("Booking not found");
+                (error as any).statusCode = 404;
+                throw error;
             }
-        }
 
-        if (!isTransitionAllowed) {
-            res.status(400).json({
-                success: false,
-                message: `Invalid transition from ${currentStatus} to ${nextStatus} for role ${userType}`
-            });
-            return;
-        }
-
-        let shouldReleaseReservationOnFailure = false;
-        if (nextStatus === 'accepted' && isWorker) {
-            const walletEligibility = await getWalletEligibility(userId, Number(booking.platformFee || 0));
-            if (!walletEligibility.isEligible) {
-                res.status(402).json({
-                    success: false,
-                    requiredBalance: walletEligibility.requiredBalance,
-                    currentBalance: walletEligibility.availableBalance,
-                    message: buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance)
-                });
-                return;
+            // Verify ownership
+            if (!isAuthorizedForBooking(booking, req.tokenPayload)) {
+                const error = new Error("Forbidden: You are not authorized to update this booking");
+                (error as any).statusCode = 403;
+                throw error;
             }
-            const walletSettings = await getWalletSettings();
-            const reservation = await reserveCommission({
-                workerId: userId,
-                bookingId: booking._id,
-                amount: Number(booking.agreement?.commissionAmount ?? booking.platformFee ?? 0),
-                commissionRateSnapshot: Number(
-                    booking.agreement?.commissionRateSnapshot
-                    ?? (walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0)
-                )
-            });
-            shouldReleaseReservationOnFailure = reservation?.status === 'held'
-                && reservation.$locals?.createdByReserveCall === true;
-        }
 
-        // Apply new values
-        booking.status = nextStatus;
+            const currentStatus = booking.status;
 
-        if (nextStatus === 'accepted' || nextStatus === 'cancelled') {
-            booking.workerRespondedAt = new Date();
-        }
-
-        if (nextStatus === 'cancelled') {
-            booking.cancelledBy = userType === 'user' ? 'customer' : (userType as 'worker' | 'admin');
-            booking.cancelReason = cancelReason || '';
-        }
-
-        try {
-            await booking.save();
-        } catch (error) {
-            if (shouldReleaseReservationOnFailure) {
-                await releaseCommissionReservation(booking._id).catch(releaseError => {
-                    logger.error("Failed to release commission reservation after booking save error:", releaseError);
-                });
+            // 1. Prevent updates to terminal states
+            if (currentStatus === 'completed' || currentStatus === 'cancelled') {
+                const error = new Error(`Cannot update booking from terminal state: ${currentStatus}`);
+                (error as any).statusCode = 400;
+                throw error;
             }
-            throw error;
-        }
-        if (nextStatus === 'cancelled') {
-            await releaseCommissionReservation(booking._id);
-        }
-        await syncPaymentForBookingStatus(booking);
-        await syncLinkedJobPostStatus(booking);
 
-        // Emit socket event
-        const io = require('../sockets/socketManager').getIO();
-        const { emitBookingEvent } = require('../sockets/handlers/booking.handler');
+            // 2. Define allowed transitions and role permissions
+            const isWorker = booking.worker.toString() === userId;
+            const isAdmin = userType === 'admin' || req.tokenPayload?.role === 'admin' || req.tokenPayload?.role === 'superadmin';
+            let isTransitionAllowed = false;
+
+            if (isAdmin) {
+                isTransitionAllowed = true;
+            } else {
+                switch (nextStatus) {
+                    case 'accepted':
+                        if (currentStatus === 'pending' && isWorker) isTransitionAllowed = true;
+                        break;
+                    case 'ongoing':
+                        if (currentStatus === 'accepted' && isWorker) isTransitionAllowed = true;
+                        break;
+                    case 'completed':
+                        if (currentStatus === 'ongoing' && isWorker) isTransitionAllowed = true;
+                        break;
+                    case 'cancelled':
+                        isTransitionAllowed = true;
+                        break;
+                    default:
+                        isTransitionAllowed = false;
+                }
+            }
+
+            if (!isTransitionAllowed) {
+                const error = new Error(`Invalid transition from ${currentStatus} to ${nextStatus} for role ${userType}`);
+                (error as any).statusCode = 400;
+                throw error;
+            }
+
+            if (nextStatus === 'accepted' && isWorker) {
+                const walletEligibility = await getWalletEligibility(userId as string, Number(booking.platformFee || 0), session);
+                if (!walletEligibility.isEligible) {
+                    const error = new Error(buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance));
+                    (error as any).statusCode = 402;
+                    (error as any).requiredBalance = walletEligibility.requiredBalance;
+                    (error as any).currentBalance = walletEligibility.availableBalance;
+                    throw error;
+                }
+                const walletSettings = await getWalletSettings();
+                await reserveCommission({
+                    workerId: userId as string,
+                    bookingId: booking._id,
+                    amount: Number(booking.agreement?.commissionAmount ?? booking.platformFee ?? 0),
+                    commissionRateSnapshot: Number(
+                        booking.agreement?.commissionRateSnapshot
+                        ?? (walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0)
+                    )
+                }, { session });
+            }
+
+            // Apply new values
+            booking.status = nextStatus;
+
+            if (nextStatus === 'accepted' || nextStatus === 'cancelled') {
+                booking.workerRespondedAt = new Date();
+            }
+
+            if (nextStatus === 'cancelled') {
+                booking.cancelledBy = userType === 'user' ? 'customer' : (userType as 'worker' | 'admin');
+                booking.cancelReason = cancelReason || '';
+            }
+
+            await booking.save({ session });
+
+            if (nextStatus === 'cancelled') {
+                await releaseCommissionReservation(booking._id, { session });
+            }
+            await syncPaymentForBookingStatus(booking, session);
+            await syncLinkedJobPostStatus(booking);
+        });
+
+        // Emit socket event (outside transaction)
+        const io = getIO();
         emitBookingEvent(io, booking, nextStatus === 'cancelled' ? 'booking:cancelled' : `booking:${nextStatus}`);
 
         res.status(200).json({
@@ -672,10 +670,22 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         logger.error("Error in updateBookingStatus:", error);
-        res.status(error.statusCode || 500).json({
-            success: false,
-            message: error.message || "Internal server error"
-        });
+        const statusCode = error.statusCode || 500;
+        
+        // Handle specific wallet validation response
+        if (statusCode === 402) {
+            res.status(402).json({
+                success: false,
+                requiredBalance: error.requiredBalance,
+                currentBalance: error.currentBalance,
+                message: error.message
+            });
+            return;
+        }
+        
+        res.status(statusCode).json({ success: false, message: error.message || "Internal server error" });
+    } finally {
+        await session.endSession();
     }
 };
 
@@ -733,8 +743,7 @@ export const payBooking = async (req: AuthRequest, res: Response) => {
         const payment = await confirmCashPaymentForBooking(booking, 'customer', notes);
 
         // Emit socket event to notify worker
-        const io = require('../sockets/socketManager').getIO();
-        const { emitBookingEvent } = require('../sockets/handlers/booking.handler');
+        const io = getIO();
         emitBookingEvent(io, booking, 'booking:paid');
 
         res.status(200).json({

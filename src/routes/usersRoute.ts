@@ -8,13 +8,15 @@ import {
     getWorkers,
     getWorkerById,
     refreshAccessToken,
-    logoutAllSessions
+    logoutAllSessions,
+    logoutUser
 } from "../controllers/userController";
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
 import { registerUserSchema, loginUserSchema } from "../validations/user.validation";
 import { jwtAuthMiddleware, userAuthMiddleware } from "../middlewares/jwt.middleware";
 import { uploadRateLimiter } from "../middlewares/rateLimiter.middleware";
+import { authLimiter } from "../middlewares/rateLimiter";
 
 const router = Router();
 
@@ -28,13 +30,13 @@ router.route("/upload-image").post(uploadRateLimiter, handleProfileImageUpload, 
  * @description Register a new user
  * @access Public
  */
-router.route("/register").post(validate(registerUserSchema), registerUser);
+router.route("/register").post(authLimiter, validate(registerUserSchema), registerUser);
 
 /**
  * @description Login a user
  * @access Public
  */
-router.route("/login").post(validate(loginUserSchema), loginUser);
+router.route("/login").post(authLimiter, validate(loginUserSchema), loginUser);
 
 /**
  * @description Check if user exists by phone
@@ -80,6 +82,12 @@ router.route("/public/:id").get(jwtAuthMiddleware, getPublicUserProfile);
 
 
 router.use(userAuthMiddleware)
+
+/**
+ * @description Logout user and revoke session
+ * @access Private
+ */
+router.route("/logout").post(logoutUser);
 
 /**
  * @description Get user by ID

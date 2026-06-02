@@ -94,23 +94,32 @@ export const rechargeWallet = async (
     amount: number,
     performedBy: { actor: string | mongoose.Types.ObjectId; actorType: ActorType },
     description = 'Wallet Recharge',
-    reference?: IWalletTransaction['reference']
+    reference?: IWalletTransaction['reference'],
+    session?: mongoose.ClientSession
 ): Promise<IWorkerWallet> => {
     if (amount <= 0) {
         throw new Error('Recharge amount must be greater than zero');
     }
 
-    const wallet = await getOrCreateWallet(workerId);
+    const wallet = await getOrCreateWallet(workerId, session);
     const balanceBefore = wallet.balance;
     const balanceAfter = balanceBefore + amount;
 
-    wallet.balance = balanceAfter;
-    wallet.totalRecharged += amount;
-    wallet.lastRechargedAt = new Date();
-    await wallet.save();
+    const updatedWallet = await WorkerWallet.findOneAndUpdate(
+        { worker: workerId },
+        { 
+            $inc: { balance: amount, totalRecharged: amount },
+            $set: { lastRechargedAt: new Date() }
+        },
+        { new: true, ...(session ? { session } : {}) }
+    );
 
-    await WalletTransaction.create({
-        wallet: wallet._id,
+    if (!updatedWallet) {
+        throw new Error('Unable to update worker wallet');
+    }
+
+    await WalletTransaction.create([{
+        wallet: updatedWallet._id,
         worker: workerId,
         type: 'recharge',
         amount,
@@ -122,9 +131,9 @@ export const rechargeWallet = async (
             actor: new mongoose.Types.ObjectId(performedBy.actor),
             actorType: performedBy.actorType
         }
-    });
+    }], session ? { session } : {});
 
-    return wallet;
+    return updatedWallet;
 };
 
 /**
@@ -154,12 +163,20 @@ export const deductCommission = async (
     const balanceBefore = wallet.balance;
     const balanceAfter = balanceBefore - commissionAmount;
 
-    wallet.balance = balanceAfter;
-    wallet.totalCommissionDeducted += commissionAmount;
-    await wallet.save(session ? { session } : {});
+    const updatedWallet = await WorkerWallet.findOneAndUpdate(
+        { worker: workerId },
+        { 
+            $inc: { balance: -commissionAmount, totalCommissionDeducted: commissionAmount }
+        },
+        { new: true, ...(session ? { session } : {}) }
+    );
+
+    if (!updatedWallet) {
+        throw new Error('Unable to update worker wallet');
+    }
 
     await WalletTransaction.create([{
-        wallet: wallet._id,
+        wallet: updatedWallet._id,
         worker: workerId,
         type: 'commission_deduction',
         amount: commissionAmount,
@@ -176,7 +193,7 @@ export const deductCommission = async (
         }
     }], session ? { session } : {});
 
-    return wallet;
+    return updatedWallet;
 };
 
 /**

@@ -23,6 +23,7 @@ import {
 } from "../services/workerJobAvailabilityService";
 import { reserveCommission } from "../services/commissionReservationService";
 import { getWalletSettings } from "../services/walletSettingsService";
+import { getIO } from "../sockets/socketManager";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
@@ -222,64 +223,99 @@ const buildPersonalizedWorkerJobSignalPayload = async (
     };
 };
 
-const buildJobPostCardPayload = async (jobDoc: any) => {
-    const job = toPlainObject(jobDoc);
-    const [bidCount, pendingBidCount, acceptedBid] = await Promise.all([
-        JobBid.countDocuments({ jobPost: job._id }),
-        JobBid.countDocuments({ jobPost: job._id, status: 'pending' }),
-        JobBid.findOne({ jobPost: job._id, status: 'accepted' })
-            .populate('worker', WORKER_BID_PROFILE_SELECT)
-    ]);
-    const acceptedWorker = acceptedBid?.worker as any;
-    const primaryImageUrl = acceptedWorker?.profileImage || job.imageUrls?.[0] || job.imageUrl || '';
-    const media = buildJobMediaMeta(job);
-    const counterParty = acceptedWorker ? {
-        _id: acceptedWorker._id,
-        fullName: acceptedWorker.fullName,
-        phone: acceptedWorker.phone || '',
-        email: acceptedWorker.email || '',
-        profileImage: acceptedWorker.profileImage || '',
-        roleLabel: 'Accepted Ustad',
-        category: acceptedWorker.category || '',
-        rating: acceptedWorker.rating || 0,
-        totalJobs: acceptedWorker.totalJobs || 0,
-    } : {
-        fullName: bidCount > 0 ? `${bidCount} bids received` : 'Open broadcast',
-        profileImage: primaryImageUrl,
-        roleLabel: bidCount > 0 ? 'Bids' : 'Mission',
-    };
 
-    return {
-        ...job,
-        bidCount,
-        pendingBidCount,
-        acceptedBid: acceptedBid ? {
-            _id: acceptedBid._id,
-            proposedPrice: acceptedBid.proposedPrice,
-            message: acceptedBid.message,
-            status: acceptedBid.status,
-            worker: acceptedWorker || null,
-        } : null,
-        cardMeta: {
-            source: 'job_post',
-            title: job.category,
-            description: job.description,
-            missionKind: job.urgency,
-            primaryImageUrl,
-            media,
-            counterParty,
-            financial: {
-                label: acceptedBid ? 'Accepted Bid' : 'Budget',
-                amount: Number(acceptedBid?.proposedPrice || job.amount || 0),
-                currency: 'PKR',
-            },
-            bidSummary: {
-                total: bidCount,
-                pending: pendingBidCount,
-                hasAcceptedBid: Boolean(acceptedBid),
+
+const buildJobPostCardPayloadsBatch = async (jobsDoc: any[]) => {
+    if (jobsDoc.length === 0) return [];
+
+    const jobs = jobsDoc.map(toPlainObject);
+    const jobIds = jobs.map(j => j._id);
+
+    // 1. Batch count all bids and pending bids using aggregation
+    const bidStats = await JobBid.aggregate([
+        { $match: { jobPost: { $in: jobIds } } },
+        {
+            $group: {
+                _id: "$jobPost",
+                totalBids: { $sum: 1 },
+                pendingBids: {
+                    $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] }
+                }
             }
         }
-    };
+    ]);
+
+    // Map stats for easy lookup
+    const statsMap = new Map(bidStats.map(s => [s._id.toString(), s]));
+
+    // 2. Batch fetch accepted bids for these jobs
+    const acceptedBids = await JobBid.find({
+        jobPost: { $in: jobIds },
+        status: 'accepted'
+    }).populate('worker', WORKER_BID_PROFILE_SELECT);
+
+    const acceptedBidsMap = new Map(acceptedBids.map(b => [b.jobPost.toString(), b]));
+
+    // 3. Construct payload for each job matching original structure perfectly
+    return jobs.map(job => {
+        const jobIdStr = job._id.toString();
+        const stats = statsMap.get(jobIdStr) || { totalBids: 0, pendingBids: 0 };
+        const bidCount = stats.totalBids;
+        const pendingBidCount = stats.pendingBids;
+        const acceptedBid = acceptedBidsMap.get(jobIdStr);
+
+        const acceptedWorker = acceptedBid?.worker as any;
+        const primaryImageUrl = acceptedWorker?.profileImage || job.imageUrls?.[0] || job.imageUrl || '';
+        const media = buildJobMediaMeta(job);
+
+        const counterParty = acceptedWorker ? {
+            _id: acceptedWorker._id,
+            fullName: acceptedWorker.fullName,
+            phone: acceptedWorker.phone || '',
+            email: acceptedWorker.email || '',
+            profileImage: acceptedWorker.profileImage || '',
+            roleLabel: 'Accepted Ustad',
+            category: acceptedWorker.category || '',
+            rating: acceptedWorker.rating || 0,
+            totalJobs: acceptedWorker.totalJobs || 0,
+        } : {
+            fullName: bidCount > 0 ? `${bidCount} bids received` : 'Open broadcast',
+            profileImage: primaryImageUrl,
+            roleLabel: bidCount > 0 ? 'Bids' : 'Mission',
+        };
+
+        return {
+            ...job,
+            bidCount,
+            pendingBidCount,
+            acceptedBid: acceptedBid ? {
+                _id: acceptedBid._id,
+                proposedPrice: acceptedBid.proposedPrice,
+                message: acceptedBid.message,
+                status: acceptedBid.status,
+                worker: acceptedWorker || null,
+            } : null,
+            cardMeta: {
+                source: 'job_post',
+                title: job.category,
+                description: job.description,
+                missionKind: job.urgency,
+                primaryImageUrl,
+                media,
+                counterParty,
+                financial: {
+                    label: acceptedBid ? 'Accepted Bid' : 'Budget',
+                    amount: Number(acceptedBid?.proposedPrice || job.amount || 0),
+                    currency: 'PKR',
+                },
+                bidSummary: {
+                    total: bidCount,
+                    pending: pendingBidCount,
+                    hasAcceptedBid: Boolean(acceptedBid),
+                }
+            }
+        };
+    });
 };
 
 const reconcileAssignedJobPost = async (jobDoc: any) => {
@@ -534,7 +570,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         const signalPayload = buildWorkerJobSignalPayload(populatedJobPost || jobPost, customerStats);
 
         // 1. Emit socket event
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
 
         // Broadcast to relevant workers
         logger.info(`📡 Job Broadcast: Finding workers for category: ${category} at [${longitude}, ${latitude}]`);
@@ -658,7 +694,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
             await jobPost.save();
         }
 
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
 
         // Notify Client immediately
         await newBid.populate('worker', WORKER_BID_PROFILE_SELECT);
@@ -872,7 +908,7 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
         });
 
         // Notify winner and losers via sockets and push notifications
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
         io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking });
 
         sendNotificationToRecipient(
@@ -1207,7 +1243,7 @@ export const withdrawBid = async (req: AuthRequest, res: Response) => {
             }
         }
 
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
         if (jobPost?.customer) {
             io.to(`user:${jobPost.customer.toString()}`).emit('bid:withdrawn', {
                 bidId,
@@ -1303,7 +1339,7 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
         // Populate worker details for the client
         await newBid.populate('worker', WORKER_BID_PROFILE_SELECT);
 
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
 
         // Notify client that a worker is interested
         const roomName = `user:${jobPost.customer.toString()}`;
@@ -1342,7 +1378,7 @@ export const getMyJobPosts = async (req: AuthRequest, res: Response) => {
             .limit(limit);
 
         await Promise.all(jobs.map((job) => reconcileAssignedJobPost(job)));
-        const jobsWithCardData = await Promise.all(jobs.map((job) => buildJobPostCardPayload(job)));
+        const jobsWithCardData = await buildJobPostCardPayloadsBatch(jobs);
 
         const total = await JobPost.countDocuments({ customer: customerId });
 
@@ -1427,7 +1463,7 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
             { $set: { status: 'rejected' } }
         );
 
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
 
         // Broadcast cancellation to all workers who had pending bids
         bids.forEach(bid => {

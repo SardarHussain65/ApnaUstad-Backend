@@ -2,9 +2,12 @@ import Reviews from "../models/Reviews";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
-import { NotFoundError } from "../utils/ApiError";
+import { BadRequestError, NotFoundError } from "../utils/ApiError";
 import Worker from "../models/Workers";
+import User from "../models/User";
 import { recordAdminAction } from "../services/adminAuditLog";
+
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Get all reviews
@@ -15,9 +18,45 @@ export const getAllReviews = asyncHandler(async (req: AdminAuthRequest, res) => 
     const parsedLimit = parseInt(req.query.limit as string, 10);
     const page = Number.isNaN(parsedPage) ? 1 : Math.max(parsedPage, 1);
     const limit = Number.isNaN(parsedLimit) ? 10 : Math.min(Math.max(parsedLimit, 1), 100);
+    const { search, rating, category, dateFrom } = req.query;
+
+    const query: any = {};
+    if (rating) {
+        const parsedRating = Number(rating);
+        if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+            throw new BadRequestError("rating must be an integer between 1 and 5");
+        }
+        query.rating = parsedRating;
+    }
+    if (dateFrom) {
+        const createdAfter = new Date(dateFrom as string);
+        if (Number.isNaN(createdAfter.getTime())) {
+            throw new BadRequestError("Invalid dateFrom");
+        }
+        query.createdAt = { $gte: createdAfter };
+    }
+    if (category) {
+        const workers = await Worker.find({ category }).select('_id');
+        query.worker = { $in: workers.map(worker => worker._id) };
+    }
+    if (search) {
+        const searchRegex = new RegExp(escapeRegex(search as string), 'i');
+        const [customers, workers] = await Promise.all([
+            User.find({ $or: [{ fullName: searchRegex }, { phone: searchRegex }] }).select('_id'),
+            Worker.find({
+                ...(category ? { category } : {}),
+                $or: [{ fullName: searchRegex }, { phone: searchRegex }, { category: searchRegex }]
+            }).select('_id')
+        ]);
+        query.$or = [
+            { comment: searchRegex },
+            { customer: { $in: customers.map(customer => customer._id) } },
+            { worker: { $in: workers.map(worker => worker._id) } }
+        ];
+    }
     
-    const total = await Reviews.countDocuments();
-    const reviews = await Reviews.find()
+    const total = await Reviews.countDocuments(query);
+    const reviews = await Reviews.find(query)
         .populate('customer', 'fullName phone profileImage')
         .populate('worker', 'fullName phone profileImage')
         .populate('booking')

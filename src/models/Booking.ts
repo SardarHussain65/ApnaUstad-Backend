@@ -25,7 +25,7 @@ export interface IBooking extends Document {
     bookingType: 'instant' | 'scheduled';
     expiresAt: Date;
     workerRespondedAt?: Date | null;
-    paymentStatus: 'unpaid' | 'paid';
+    paymentStatus: 'unpaid' | 'paid' | 'refunded';
     paymentMethod: 'card' | 'cash' | 'easypaisa';
     stripePaymentId?: string | null;
     cancelledBy?: 'customer' | 'worker' | 'admin' | null;
@@ -85,7 +85,7 @@ const bookingSchema = new Schema<IBooking>(
             enum: ['pending', 'accepted', 'ongoing', 'completed', 'cancelled'],
             default: 'pending'
         },
-        paymentStatus: { type: String, enum: ['unpaid', 'paid'], default: 'unpaid' },
+        paymentStatus: { type: String, enum: ['unpaid', 'paid', 'refunded'], default: 'unpaid' },
         paymentMethod: { type: String, enum: ['card', 'cash', 'easypaisa'], default: 'cash' },
         stripePaymentId: { type: String, default: null },
         cancelledBy: { type: String, enum: ['customer', 'worker', 'admin', null], default: null },

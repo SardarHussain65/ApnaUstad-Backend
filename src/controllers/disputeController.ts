@@ -5,13 +5,20 @@ import User from "../models/User";
 import Worker from "../models/Workers";
 import WorkerWallet from "../models/WorkerWallet";
 import WalletTransaction from "../models/WalletTransaction";
+import Payment from "../models/Payment";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { BadRequestError, NotFoundError, UnauthorizedError } from "../utils/ApiError";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import { recordAdminAction } from "../services/adminAuditLog";
+import { creditUserWallet } from "../services/userWalletService";
+import { sendNotificationToRecipient } from "../services/notificationHelper";
+import { releaseCommissionReservation, settleCommissionReservation } from "../services/commissionReservationService";
+import logger from "../config/logger";
 import mongoose from "mongoose";
+
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Mobile: Raise a dispute for a booking
@@ -89,16 +96,34 @@ export const getMyDisputes = asyncHandler(async (req: AuthRequest, res) => {
  * @route GET /api/v1/admin/disputes
  */
 export const getAllDisputes = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { status, reason, raisedByType, page = '1', limit = '10' } = req.query;
+    const { status, reason, raisedByType, search, page = '1', limit = '10' } = req.query;
 
     const pageNum = parseInt(page as string, 10) || 1;
-    const limitNum = parseInt(limit as string, 10) || 10;
+    const limitNum = Math.min(parseInt(limit as string, 10) || 10, 100);
     const skip = (pageNum - 1) * limitNum;
 
     const query: any = {};
     if (status) query.status = status;
     if (reason) query.reason = reason;
     if (raisedByType) query.raisedByType = raisedByType;
+    if (search) {
+        const searchRegex = new RegExp(escapeRegex(search as string), 'i');
+        const [customers, workers, bookings] = await Promise.all([
+            User.find({ $or: [{ fullName: searchRegex }, { phone: searchRegex }] }).select('_id'),
+            Worker.find({ $or: [{ fullName: searchRegex }, { phone: searchRegex }] }).select('_id'),
+            Booking.find({ category: searchRegex }).select('_id')
+        ]);
+        query.$or = [
+            { customer: { $in: customers.map(customer => customer._id) } },
+            { worker: { $in: workers.map(worker => worker._id) } },
+            { booking: { $in: bookings.map(booking => booking._id) } },
+            { description: searchRegex },
+            { reason: searchRegex }
+        ];
+        if (mongoose.Types.ObjectId.isValid(search as string)) {
+            query.$or.push({ _id: new mongoose.Types.ObjectId(search as string) });
+        }
+    }
 
     const total = await Dispute.countDocuments(query);
     const disputes = await Dispute.find(query)
@@ -143,63 +168,188 @@ export const resolveDispute = asyncHandler(async (req: AdminAuthRequest, res) =>
         throw new BadRequestError("Valid status ('resolved', 'dismissed', 'under_review') is required");
     }
 
-    const dispute = await Dispute.findById(id);
-    if (!dispute) {
-        throw new NotFoundError("Dispute not found");
+    const session = await mongoose.startSession();
+    let dispute: any = null;
+
+    try {
+        await session.withTransaction(async () => {
+            dispute = await Dispute.findById(id).session(session);
+            if (!dispute) {
+                const error = new Error("Dispute not found");
+                (error as any).statusCode = 404;
+                throw error;
+            }
+
+            dispute.status = status;
+            if (adminNotes !== undefined) dispute.adminNotes = adminNotes;
+            if (resolutionDetails !== undefined) dispute.resolutionDetails = resolutionDetails;
+
+            if (status === 'resolved' || status === 'dismissed') {
+                dispute.resolvedBy = adminId ? new mongoose.Types.ObjectId(adminId) : undefined;
+                dispute.resolvedAt = new Date();
+            }
+
+            const booking = await Booking.findById(dispute.booking).session(session);
+            if (booking) {
+                const payment = await Payment.findOne({ booking: booking._id }).session(session);
+
+                if (status === 'resolved') {
+                    // Process refund if specified
+                    if (refundAmount > 0) {
+                        if (refundAmount > dispute.amountDisputed) {
+                            const error = new Error(`Refund amount cannot exceed disputed amount of Rs. ${dispute.amountDisputed}`);
+                            (error as any).statusCode = 400;
+                            throw error;
+                        }
+
+                        // Adjust worker wallet: deduct the refundAmount from worker wallet atomically
+                        const workerWallet = await WorkerWallet.findOneAndUpdate(
+                            { worker: dispute.worker },
+                            { $inc: { balance: -refundAmount, totalCommissionDeducted: refundAmount } },
+                            { new: true, session }
+                        );
+
+                        if (workerWallet) {
+                            const actorId = adminId ? new mongoose.Types.ObjectId(adminId) : new mongoose.Types.ObjectId();
+                            await WalletTransaction.create([{
+                                wallet: workerWallet._id,
+                                worker: dispute.worker,
+                                type: 'adjustment',
+                                amount: refundAmount,
+                                balanceBefore: workerWallet.balance + refundAmount,
+                                balanceAfter: workerWallet.balance,
+                                description: `Dispute Resolution Refund deduction (Dispute ID: ${dispute._id}): ${resolutionDetails || 'Deducted by admin'}`,
+                                performedBy: {
+                                    actor: actorId,
+                                    actorType: 'admin'
+                                },
+                                reference: {
+                                    booking: booking._id
+                                }
+                            }], { session });
+
+                            // Credit the customer's wallet balance atomically
+                            await creditUserWallet(
+                                dispute.customer,
+                                refundAmount,
+                                { actor: actorId, actorType: 'admin' },
+                                `Dispute Resolution Refund credit (Dispute ID: ${dispute._id}): ${resolutionDetails || 'Credited by admin'}`,
+                                { booking: booking._id, dispute: dispute._id },
+                                session
+                            );
+                        }
+                    }
+
+                    // Release platform commission reservation back to the worker
+                    await releaseCommissionReservation(booking._id, { session });
+
+                    // Update payment status to refunded/cancelled
+                    if (payment) {
+                        payment.status = refundAmount >= dispute.amountDisputed ? 'cancelled' : 'refunded';
+                        payment.bookingStatusSnapshot = booking.status;
+                        await payment.save({ session });
+                    }
+
+                    // Update booking payment status
+                    booking.paymentStatus = 'refunded';
+                    await booking.save({ session });
+
+                } else if (status === 'dismissed') {
+                    // Dispute is dismissed: settle platform commission reservation
+                    await settleCommissionReservation(
+                        booking.worker,
+                        booking._id,
+                        payment ? payment._id : new mongoose.Types.ObjectId(),
+                        Number(booking.agreement?.commissionAmount ?? booking.platformFee ?? 0),
+                        { session }
+                    );
+
+                    // Ensure payment is completed / paid
+                    if (payment) {
+                        payment.status = 'paid';
+                        payment.bookingStatusSnapshot = booking.status;
+                        payment.workerLedgerApplied = true;
+                        await payment.save({ session });
+                    }
+
+                    // Settle booking payment status
+                    booking.paymentStatus = 'paid';
+                    await booking.save({ session });
+                }
+            }
+
+            await dispute.save({ session });
+        });
+    } catch (error: any) {
+        logger.error("Error inside resolveDispute transaction:", error);
+        throw new BadRequestError(error.message || "Failed to resolve dispute cleanly");
+    } finally {
+        await session.endSession();
     }
 
-    dispute.status = status;
-    if (adminNotes !== undefined) dispute.adminNotes = adminNotes;
-    if (resolutionDetails !== undefined) dispute.resolutionDetails = resolutionDetails;
-
-    if (status === 'resolved' || status === 'dismissed') {
-        dispute.resolvedBy = adminId ? new mongoose.Types.ObjectId(adminId) : undefined;
-        dispute.resolvedAt = new Date();
-    }
-
-    // Process refund if specified and status is resolved
-    if (status === 'resolved' && refundAmount > 0) {
-        // Adjust worker wallet: deduct the refundAmount from worker wallet
-        const wallet = await WorkerWallet.findOne({ worker: dispute.worker });
-        if (wallet) {
-            const balanceBefore = wallet.balance;
-            wallet.balance = Math.max(0, wallet.balance - refundAmount);
-            wallet.totalCommissionDeducted += refundAmount; // Deduct and log commission deductor
-            await wallet.save();
-
-            const actorId = adminId ? new mongoose.Types.ObjectId(adminId) : new mongoose.Types.ObjectId();
-
-            await WalletTransaction.create({
-                wallet: wallet._id,
-                worker: dispute.worker,
-                type: 'adjustment',
-                amount: refundAmount,
-                balanceBefore,
-                balanceAfter: wallet.balance,
-                description: `Dispute Resolution Refund deduction (Dispute ID: ${dispute._id}): ${resolutionDetails || 'Deducted by admin'}`,
-                performedBy: {
-                    actor: actorId,
-                    actorType: 'admin'
+    // Record system audit log outside transaction
+    if (dispute) {
+        try {
+            await recordAdminAction(req, {
+                action: `dispute.${status}`,
+                entityType: 'dispute',
+                entityId: dispute._id.toString(),
+                reason: adminNotes || `Dispute ${status} by Admin`,
+                metadata: {
+                    booking: dispute.booking?.toString(),
+                    customer: dispute.customer?.toString(),
+                    worker: dispute.worker?.toString(),
+                    refundAmount
                 }
             });
+
+            // Dispatch communications and push notification loops
+            const bIdStr = dispute.booking.toString().slice(-6).toUpperCase();
+            
+            if (status === 'under_review') {
+                await sendNotificationToRecipient(
+                    dispute.customer,
+                    'user',
+                    'Dispute Under Investigation',
+                    `Your dispute raised for booking #${bIdStr} is now under investigation by ApnaUstad moderators.`
+                );
+                await sendNotificationToRecipient(
+                    dispute.worker,
+                    'worker',
+                    'Dispute Under Investigation',
+                    `A dispute raised for your booking #${bIdStr} is now under investigation by ApnaUstad moderators.`
+                );
+            } else if (status === 'resolved') {
+                await sendNotificationToRecipient(
+                    dispute.customer,
+                    'user',
+                    'Dispute Resolved - Refund Credited',
+                    `Congratulations! Your dispute for booking #${bIdStr} has been resolved in your favor. A refund of Rs. ${refundAmount.toLocaleString()} has been credited to your wallet.`
+                );
+                await sendNotificationToRecipient(
+                    dispute.worker,
+                    'worker',
+                    'Dispute Resolved - Wallet Adjusted',
+                    `Moderation completed: Dispute for booking #${bIdStr} has been resolved. A deduction of Rs. ${refundAmount.toLocaleString()} has been made from your worker balance.`
+                );
+            } else if (status === 'dismissed') {
+                await sendNotificationToRecipient(
+                    dispute.customer,
+                    'user',
+                    'Dispute Dismissed',
+                    `Moderation completed: Dispute for booking #${bIdStr} has been dismissed after investigation.`
+                );
+                await sendNotificationToRecipient(
+                    dispute.worker,
+                    'worker',
+                    'Dispute Dismissed - Funds Released',
+                    `Good news! The dispute raised for booking #${bIdStr} has been dismissed by moderators. Platform reservation has been successfully settled.`
+                );
+            }
+        } catch (notifErr: any) {
+            logger.error("Failed to execute notification loops on resolveDispute:", notifErr);
         }
     }
-
-    await dispute.save();
-
-    // Record system audit log
-    await recordAdminAction(req, {
-        action: `dispute.${status}`,
-        entityType: 'dispute',
-        entityId: dispute._id.toString(),
-        reason: adminNotes || `Dispute ${status} by Admin`,
-        metadata: {
-            booking: dispute.booking?.toString(),
-            customer: dispute.customer?.toString(),
-            worker: dispute.worker?.toString(),
-            refundAmount
-        }
-    });
 
     return successResponse(res, 200, `Dispute updated to ${status} successfully`, dispute);
 });

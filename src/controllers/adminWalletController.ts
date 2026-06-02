@@ -20,7 +20,7 @@ export const getAllWorkerWallets = asyncHandler(async (req: AdminAuthRequest, re
     const { search, balanceStatus, page = '1', limit = '10' } = req.query;
 
     const pageNum = parseInt(page as string, 10) || 1;
-    const limitNum = parseInt(limit as string, 10) || 10;
+    const limitNum = Math.min(parseInt(limit as string, 10) || 10, 100);
     const skip = (pageNum - 1) * limitNum;
 
     let query: any = {};

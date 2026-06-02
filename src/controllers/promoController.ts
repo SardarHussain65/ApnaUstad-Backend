@@ -11,6 +11,8 @@ import { AuthRequest } from "../middlewares/jwt.middleware";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import { recordAdminAction } from "../services/adminAuditLog";
 
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 /**
  * Admin: Create a new promo code template
  * @route POST /api/v1/admin/promos
@@ -114,11 +116,17 @@ export const createPromoCode = asyncHandler(async (req: AdminAuthRequest, res) =
  */
 export const getAllPromoCodes = asyncHandler(async (req: AdminAuthRequest, res) => {
     const page = parseInt(req.query.page as string, 10) || 1;
-    const limit = parseInt(req.query.limit as string, 10) || 20;
+    const limit = Math.min(parseInt(req.query.limit as string, 10) || 20, 100);
     const skip = (page - 1) * limit;
+    const { search, status, discountType } = req.query;
 
-    const total = await PromoCode.countDocuments({});
-    const promos = await PromoCode.find({})
+    const query: any = {};
+    if (search) query.code = new RegExp(escapeRegex(search as string), 'i');
+    if (status === 'active' || status === 'inactive') query.isActive = status === 'active';
+    if (discountType === 'percentage' || discountType === 'fixed') query.discountType = discountType;
+
+    const total = await PromoCode.countDocuments(query);
+    const promos = await PromoCode.find(query)
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);

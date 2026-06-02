@@ -32,3 +32,10 @@ export const loginWorkerSchema = z.object({
     message: "Provide either email or phone, not both",
     path: ["email"]
 });
+
+export const requestVerificationSchema = z.object({
+    cnicNumber: z.string({ error: "CNIC number is required" }).min(13, "CNIC number must be at least 13 digits long").max(15, "CNIC number must be at most 15 characters long"),
+    cnicFrontImage: z.string({ error: "CNIC front image is required" }).url("Invalid CNIC front image URL"),
+    cnicBackImage: z.string({ error: "CNIC back image is required" }).url("Invalid CNIC back image URL"),
+});
+

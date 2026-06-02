@@ -56,7 +56,7 @@ const buildTopUpQuery = async (req: AdminAuthRequest) => {
  */
 export const getAllWalletTopUps = asyncHandler(async (req: AdminAuthRequest, res) => {
     const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 25;
+    const limit = Math.min(parseInt(req.query.limit as string) || 25, 100);
     const query = await buildTopUpQuery(req);
 
     const [total, requests] = await Promise.all([

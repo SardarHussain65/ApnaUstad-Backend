@@ -57,11 +57,10 @@ export const paginatedResponse = (res: Response, statusCode: number = 200, messa
         data,
         pagination: {
             currentPage: page,
-            totalPages: Math.ceil(total / limit),
+            totalPages: Math.max(1, Math.ceil(total / limit)),
             totalItems: total,
             itemsPerPage: limit
         }
     });
 };
-
 

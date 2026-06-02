@@ -16,17 +16,19 @@ import * as adminReportController from '../controllers/adminReportController';
 import * as adminAuditController from '../controllers/adminAuditController';
 import * as adminDisputeController from '../controllers/disputeController';
 import * as adminPromoController from '../controllers/promoController';
+import * as adminVerificationController from '../controllers/adminVerificationController';
 import { adminAuthMiddleware, isSuperAdmin } from '../middlewares/admin.middleware';
 import validate from '../middlewares/validate.middleware';
 import { loginAdminSchema } from '../validations/admin.validation';
 import { createCategorySchema, updateCategorySchema } from '../validations/category.validation';
+import { authLimiter } from '../middlewares/rateLimiter';
 
 const router = Router();
 
 /**
  * Public Admin Routes
  */
-router.post('/login', validate(loginAdminSchema), adminController.loginAdmin);
+router.post('/login', authLimiter, validate(loginAdminSchema), adminController.loginAdmin);
 
 /**
  * Protected Admin Routes
@@ -53,6 +55,12 @@ router.get('/workers/:id', adminWorkerController.getWorkerDetails);
 router.patch('/workers/:id/verify', adminWorkerController.verifyWorker);
 router.patch('/workers/:id/status', adminWorkerController.toggleWorkerStatus);
 router.patch('/workers/:id', adminWorkerController.updateWorkerProfile);
+
+/**
+ * Worker Identity Verification Pipeline
+ */
+router.get('/verification/requests', adminVerificationController.getVerificationRequests);
+router.patch('/verification/requests/:id/review', adminVerificationController.reviewVerificationRequest);
 
 /**
  * Category Management

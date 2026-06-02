@@ -4,6 +4,7 @@ import Message from "../models/Message";
 import Booking from "../models/Booking";
 import logger from "../config/logger";
 import { UploadRequest } from "../middlewares/multer.middleware";
+import { getIO } from "../sockets/socketManager";
 
 const isCommunicationLocked = (status: string) => status === "completed" || status === "cancelled";
 const isTrustedAudioUrl = (value: string) => {
@@ -211,7 +212,7 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
         });
 
         // Emit socket event for real-time update
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
         io.to(`user:${booking.customer.toString()}`).emit('chat:receive', newMessage);
         io.to(`worker:${booking.worker.toString()}`).emit('chat:receive', newMessage);
 

@@ -72,5 +72,7 @@ const jobPostSchema = new Schema<IJobPost>(
 jobPostSchema.index({ location: '2dsphere' });
 jobPostSchema.index({ customer: 1, status: 1 });
 jobPostSchema.index({ category: 1, status: 1 });
+jobPostSchema.index({ status: 1, expiresAt: 1, category: 1 });
+jobPostSchema.index({ customer: 1, createdAt: -1 });
 
 export default mongoose.models.JobPost || mongoose.model<IJobPost>('JobPost', jobPostSchema);

@@ -5,6 +5,9 @@ import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import { NotFoundError, BadRequestError } from "../utils/ApiError";
 import { recordAdminAction } from "../services/adminAuditLog";
+import { getIO } from "../sockets/socketManager";
+
+const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Get all job posts for admin with pagination and filtering
@@ -12,18 +15,29 @@ import { recordAdminAction } from "../services/adminAuditLog";
  */
 export const getAllJobs = asyncHandler(async (req: AdminAuthRequest, res) => {
     const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
+    const limit = Math.min(parseInt(req.query.limit as string) || 10, 200);
     const search = req.query.search as string;
     const status = req.query.status as string;
+    const category = req.query.category as string;
+    const urgency = req.query.urgency as string;
 
     const query: any = {};
     if (search) {
+        const searchRegex = new RegExp(escapeRegex(search), 'i');
         query.$or = [
-            { description: { $regex: search, $options: 'i' } }
+            { description: searchRegex },
+            { category: searchRegex },
+            { location: searchRegex }
         ];
     }
     if (status && status !== 'undefined') {
         query.status = status;
+    }
+    if (category && category !== 'undefined') {
+        query.category = category;
+    }
+    if (urgency && urgency !== 'undefined') {
+        query.urgency = urgency;
     }
 
     const total = await JobPost.countDocuments(query);
@@ -121,7 +135,7 @@ export const cancelJob = asyncHandler(async (req: AdminAuthRequest, res) => {
     );
 
     try {
-        const io = require('../sockets/socketManager').getIO();
+        const io = getIO();
         io.emit('job:cancelled', { jobId: job._id, reason });
     } catch (error) {
         // Ignore socket errors
