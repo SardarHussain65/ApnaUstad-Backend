@@ -416,7 +416,16 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
             Booking.countDocuments({ customer: customerId, status: { $in: activeStatuses } }),
             Booking.aggregate([
                 { $match: { customer: customerObjectId, status: 'completed' } },
-                { $group: { _id: null, totalSpent: { $sum: { $ifNull: ['$totalAmount', 0] } } } }
+                {
+                    $group: {
+                        _id: null,
+                        totalSpent: {
+                            $sum: {
+                                $ifNull: ['$agreement.cashDue', { $ifNull: ['$totalAmount', 0] }]
+                            }
+                        }
+                    }
+                }
             ])
         ]);
 
