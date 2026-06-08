@@ -12,7 +12,7 @@ export const registerWorkerSchema = z.object({
     cnicBackImage: z.string({ error: "CNIC back image must be a string" }).url("Invalid CNIC back image URL").optional(),
     category: z.string({ error: "Category is required" }).min(3, "Category must be at least 3 characters long"),
     skills: z.array(z.string({ error: "Skill must be a string" }), { error: "Skills array is required" }).min(1, "At least 1 skill is required"),
-    hourlyRate: z.number({ error: "Hourly rate is required and must be a number" }).min(1, "Hourly rate must be at least 1"),
+    hourlyRate: z.number({ error: "Hourly rate is required and must be a number" }).min(100, "Hourly rate must be at least 100"),
     bio: z.string({ error: "Bio is required" }).min(3, "Bio must be at least 3 characters long"),
     experience: z.number({ error: "Experience is required and must be a number" }).min(0, "Experience must be at least 0"),
     city: z.string({ error: "City is required" }).min(3, "City must be at least 3 characters long"),
@@ -38,4 +38,3 @@ export const requestVerificationSchema = z.object({
     cnicFrontImage: z.string({ error: "CNIC front image is required" }).url("Invalid CNIC front image URL"),
     cnicBackImage: z.string({ error: "CNIC back image is required" }).url("Invalid CNIC back image URL"),
 });
-

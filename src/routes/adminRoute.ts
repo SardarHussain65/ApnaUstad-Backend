@@ -17,6 +17,7 @@ import * as adminAuditController from '../controllers/adminAuditController';
 import * as adminDisputeController from '../controllers/disputeController';
 import * as adminPromoController from '../controllers/promoController';
 import * as adminVerificationController from '../controllers/adminVerificationController';
+import * as workerSpecialtyController from '../controllers/workerSpecialtyController';
 import { adminAuthMiddleware, isSuperAdmin } from '../middlewares/admin.middleware';
 import validate from '../middlewares/validate.middleware';
 import { loginAdminSchema } from '../validations/admin.validation';
@@ -55,6 +56,8 @@ router.get('/workers/:id', adminWorkerController.getWorkerDetails);
 router.patch('/workers/:id/verify', adminWorkerController.verifyWorker);
 router.patch('/workers/:id/status', adminWorkerController.toggleWorkerStatus);
 router.patch('/workers/:id', adminWorkerController.updateWorkerProfile);
+router.get('/specialty-requests', workerSpecialtyController.getPendingSpecialtyRequests);
+router.patch('/workers/:workerId/specialties/:categoryId/review', workerSpecialtyController.reviewSpecialtyRequest);
 
 /**
  * Worker Identity Verification Pipeline

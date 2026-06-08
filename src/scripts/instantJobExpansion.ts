@@ -4,8 +4,7 @@ import Worker from '../models/Workers';
 import { getIO } from '../sockets/socketManager';
 import logger from '../config/logger';
 import { buildAvailableWorkerFilterForJobType } from '../services/workerJobAvailabilityService';
-
-const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+import { buildWorkerSpecialtyCategoryFilter } from '../services/workerSpecialtyService';
 
 /**
  * Script to handle Instant Job expansion and final timeout
@@ -30,9 +29,9 @@ export const startInstantJobExpansion = () => {
 
             for (const job of jobsToExpand) {
                 logger.info(`Expanding radius for instant job: ${job._id}`);
-                
+                const categoryFilter = await buildWorkerSpecialtyCategoryFilter(job.category);
                 const nearbyWorkers = await Worker.find({
-                    category: new RegExp(`^${escapeRegex(job.category)}$`, 'i'),
+                    ...categoryFilter,
                     ...buildAvailableWorkerFilterForJobType('instant'),
                     location: {
                         $near: {

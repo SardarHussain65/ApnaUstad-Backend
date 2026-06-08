@@ -9,6 +9,8 @@ export const createCategorySchema = z.object({
     description: z.string().trim().max(300, "Description cannot exceed 300 characters").optional().default(""),
     sortOrder: z.coerce.number().int().min(0, "Sort order cannot be negative").optional().default(0),
     isActive: z.boolean().optional().default(true),
+    additionalCategoryMonthlyFee: z.coerce.number().min(0, "Monthly fee cannot be negative").optional().default(0),
+    additionalCategoryGraceDays: z.coerce.number().int().min(0).max(30).optional().default(3),
 });
 
 export const updateCategorySchema = createCategorySchema.partial().refine(

@@ -45,7 +45,10 @@ export const getAllCategories = asyncHandler(async (req: AdminAuthRequest, res) 
  * @route POST /api/v1/admin/categories
  */
 export const createCategory = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { name, icon, color, description, sortOrder, isActive } = req.body;
+    const {
+        name, icon, color, description, sortOrder, isActive,
+        additionalCategoryMonthlyFee, additionalCategoryGraceDays
+    } = req.body;
 
     const existingCategory = await Category.findOne({ name: new RegExp(`^${escapeRegex(name)}$`, 'i') });
     if (existingCategory) {
@@ -59,7 +62,9 @@ export const createCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
             color,
             description: description || "",
             sortOrder: sortOrder || 0,
-            isActive: isActive !== undefined ? isActive : true
+            isActive: isActive !== undefined ? isActive : true,
+            additionalCategoryMonthlyFee: additionalCategoryMonthlyFee || 0,
+            additionalCategoryGraceDays: additionalCategoryGraceDays ?? 3
         });
 
         return successResponse(res, 201, "Category created successfully", category);
@@ -77,7 +82,10 @@ export const createCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
  */
 export const updateCategory = asyncHandler(async (req: AdminAuthRequest, res) => {
     const { id } = req.params;
-    const { name, icon, color, description, sortOrder, isActive } = req.body;
+    const {
+        name, icon, color, description, sortOrder, isActive,
+        additionalCategoryMonthlyFee, additionalCategoryGraceDays
+    } = req.body;
 
     const category = await Category.findById(id);
     if (!category) {
@@ -99,6 +107,8 @@ export const updateCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
     if (description !== undefined) category.description = description;
     if (sortOrder !== undefined) category.sortOrder = sortOrder;
     if (isActive !== undefined) category.isActive = isActive;
+    if (additionalCategoryMonthlyFee !== undefined) category.additionalCategoryMonthlyFee = additionalCategoryMonthlyFee;
+    if (additionalCategoryGraceDays !== undefined) category.additionalCategoryGraceDays = additionalCategoryGraceDays;
 
     try {
         await category.save();
@@ -126,7 +136,12 @@ export const deleteCategory = asyncHandler(async (req: AdminAuthRequest, res) =>
     // Check for dependent Worker, Booking, and Job records referencing this category
     const categoryName = category.name;
     const [workerExists, bookingExists, jobExists] = await Promise.all([
-        Worker.exists({ category: categoryName }),
+        Worker.exists({
+            $or: [
+                { category: categoryName },
+                { 'specialties.categoryId': category._id }
+            ]
+        }),
         Booking.exists({ category: categoryName }),
         JobPost.exists({ category: categoryName })
     ]);

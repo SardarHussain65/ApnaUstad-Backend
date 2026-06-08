@@ -24,6 +24,12 @@ import {
 import { reserveCommission } from "../services/commissionReservationService";
 import { getWalletSettings } from "../services/walletSettingsService";
 import { getIO } from "../sockets/socketManager";
+import {
+    buildWorkerSpecialtyCategoryFilter,
+    getWorkerMatchedSpecialtyProfile,
+    getWorkerActiveSpecialtyNames,
+    workerCanPerformCategory
+} from "../services/workerSpecialtyService";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
@@ -199,7 +205,12 @@ const buildPersonalizedWorkerJobSignalPayload = async (
     customerStatsById: Map<string, { totalJobs: number; completedJobs: number }>,
     workerProfile: any
 ) => {
-    const payload = buildWorkerJobSignalPayload(jobDoc, customerStatsById, workerProfile);
+    const job = toPlainObject(jobDoc);
+    const matchedSpecialtyProfile = await getWorkerMatchedSpecialtyProfile(workerProfile, job.category);
+    const workerForPayload = matchedSpecialtyProfile
+        ? { ...(workerProfile?.toObject ? workerProfile.toObject() : workerProfile), hourlyRate: matchedSpecialtyProfile.hourlyRate }
+        : workerProfile;
+    const payload = buildWorkerJobSignalPayload(jobDoc, customerStatsById, workerForPayload);
     const offerAmount = Number(payload.signalMeta.amount || 0);
     const estimatedCommission = await calculateCommissionAmount(offerAmount);
     const walletEligibility = workerProfile?._id
@@ -219,6 +230,7 @@ const buildPersonalizedWorkerJobSignalPayload = async (
             walletTotalBalance: walletEligibility?.balance ?? 0,
             walletReservedBalance: walletEligibility?.reservedBalance ?? 0,
             isWalletEligible: walletEligibility?.isEligible ?? true,
+            matchedSpecialtyProfile,
         }
     };
 };
@@ -575,8 +587,9 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         // Broadcast to relevant workers
         logger.info(`📡 Job Broadcast: Finding workers for category: ${category} at [${longitude}, ${latitude}]`);
 
+        const categoryFilter = await buildWorkerSpecialtyCategoryFilter(category);
         const nearbyWorkers = await Worker.find({
-            category: new RegExp(`^${escapeRegex(category)}$`, 'i'),
+            ...categoryFilter,
             ...buildAvailableWorkerFilterForJobType(urgency),
             location: {
                 $near: {
@@ -584,7 +597,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
                     $maxDistance: DEFAULT_JOB_RADIUS_METERS
                 }
             }
-        }).limit(10).select('_id hourlyRate location');
+        }).limit(10).select('_id category specialties hourlyRate location');
 
         logger.info(`📡 Found ${nearbyWorkers.length} workers to notify: ${nearbyWorkers.map(w => w._id).join(', ')}`);
 
@@ -633,7 +646,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         if (!jobPost) return res.status(404).json({ success: false, message: "Job post not found" });
 
         const workerProfile = await Worker.findById(workerId)
-            .select('isAvailable isActive isInstantAvailable isScheduledAvailable');
+            .select('isAvailable isActive isVerified isInstantAvailable isScheduledAvailable');
         if (!workerAcceptsJobType(workerProfile, jobPost.urgency)) {
             return res.status(403).json({
                 success: false,
@@ -647,6 +660,9 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
 
         if (jobPost.expiresAt < new Date()) {
             return res.status(400).json({ success: false, message: "This job post has expired" });
+        }
+        if (!await workerCanPerformCategory(workerId, jobPost.category)) {
+            return res.status(403).json({ success: false, message: "This job does not match an active approved specialty on your profile." });
         }
 
         if (!Number.isFinite(proposedAmount) || proposedAmount <= 0) {
@@ -972,7 +988,7 @@ export const getJobPostById = async (req: AuthRequest, res: Response) => {
 
         const stats = await buildCustomerStatsById([jobPost]);
         const workerProfile = userType === 'worker'
-            ? await Worker.findById(userId).select('_id hourlyRate location')
+            ? await Worker.findById(userId).select('_id category specialties hourlyRate location')
             : null;
         const detailPayload = await buildJobPostDetailPayload(jobPost, stats);
         const personalizedPayload = userType === 'worker' && workerProfile
@@ -1004,7 +1020,7 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
     try {
         const workerId = req.tokenPayload?.id;
         const worker = await Worker.findById(workerId)
-            .select('category location hourlyRate isActive isAvailable isInstantAvailable isScheduledAvailable');
+            .select('category specialties location hourlyRate isActive isVerified isAvailable isInstantAvailable isScheduledAvailable');
 
         if (!worker) {
             return res.status(404).json({ success: false, message: "Worker not found" });
@@ -1022,7 +1038,14 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "Worker location coordinates are required" });
         }
 
-        const category = (req.query.category as string | undefined) || worker.category;
+        const requestedCategory = req.query.category as string | undefined;
+        const activeWorkerCategories = await getWorkerActiveSpecialtyNames(worker);
+        const workerCategories = requestedCategory
+            ? activeWorkerCategories.filter((category) => category.toLowerCase() === requestedCategory.toLowerCase())
+            : activeWorkerCategories;
+        if (workerCategories.length === 0) {
+            return res.status(200).json({ success: true, data: [] });
+        }
         const enabledJobTypes = getEnabledJobTypesForWorker(worker);
         if (enabledJobTypes.length === 0) {
             return res.status(200).json({ success: true, data: [] });
@@ -1042,7 +1065,7 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
             }
         };
 
-        if (category) query.category = new RegExp(`^${escapeRegex(category)}$`, 'i');
+        if (workerCategories.length) query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
         query.urgency = { $in: enabledJobTypes };
 
         const jobs = await JobPost.find(query)
@@ -1068,7 +1091,7 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
     try {
         const workerId = req.tokenPayload?.id;
         const worker = await Worker.findById(workerId)
-            .select('category location hourlyRate isActive isAvailable isInstantAvailable isScheduledAvailable lastOnlineAt');
+            .select('category specialties location hourlyRate isActive isVerified isAvailable isInstantAvailable isScheduledAvailable lastOnlineAt');
 
         if (!worker) {
             return res.status(404).json({ success: false, message: "Worker not found" });
@@ -1110,9 +1133,11 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
             }
         };
 
-        if (worker.category) {
-            query.category = new RegExp(`^${escapeRegex(worker.category)}$`, 'i');
+        const workerCategories = await getWorkerActiveSpecialtyNames(worker);
+        if (workerCategories.length === 0) {
+            return res.status(200).json({ success: true, data: [] });
         }
+        query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
 
         const jobs = await JobPost.find(query)
             .populate('customer', 'fullName profileImage phone')
@@ -1305,6 +1330,9 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
                 success: false,
                 message: "Instant job availability is turned off. Enable it before accepting this mission."
             });
+        }
+        if (!await workerCanPerformCategory(workerId, jobPost.category)) {
+            return res.status(403).json({ success: false, message: "This job does not match an active approved specialty on your profile." });
         }
         const proposedPrice = Number(jobPost.pricing?.clientOffer || jobPost.amount || 0);
         if (!Number.isFinite(proposedPrice) || proposedPrice <= 0) {

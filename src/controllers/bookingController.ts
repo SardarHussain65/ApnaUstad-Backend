@@ -13,6 +13,7 @@ import { releaseCommissionReservation, reserveCommission } from "../services/com
 import { getWalletSettings } from "../services/walletSettingsService";
 import { getIO } from "../sockets/socketManager";
 import { emitBookingEvent } from "../sockets/handlers/booking.handler";
+import { getWorkerMatchedSpecialtyProfile, workerCanPerformCategory } from "../services/workerSpecialtyService";
 
 const toPlainObject = (doc: any) => doc?.toObject ? doc.toObject() : doc;
 
@@ -211,6 +212,11 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 (error as any).statusCode = 409;
                 throw error;
             }
+            if (!await workerCanPerformCategory(workerId, category)) {
+                const error = new Error("This worker does not offer the selected specialty");
+                (error as any).statusCode = 409;
+                throw error;
+            }
 
             if (bookingType === 'instant') {
                 const busy = await Booking.findOne({
@@ -224,7 +230,8 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
                 }
             }
 
-            const hourlyRate = workerProfile.hourlyRate;
+            const matchedSpecialtyProfile = await getWorkerMatchedSpecialtyProfile(workerProfile, category);
+            const hourlyRate = matchedSpecialtyProfile?.hourlyRate || workerProfile.hourlyRate;
             const subtotal = estimatedHours * hourlyRate;
             const platformFee = await calculateCommissionAmount(subtotal);
             const totalAmount = subtotal;
