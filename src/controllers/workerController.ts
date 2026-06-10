@@ -6,6 +6,11 @@ import { successResponse } from "../utils/ApiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
 import { UploadRequest } from "../middlewares/multer.middleware";
 import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest, blacklistToken } from "../middlewares/jwt.middleware";
+import {
+    createPrimarySpecialtyFromLegacyCategory,
+    normalizeSpecialtyProfileInput,
+    setWorkerPrimarySpecialtyFromLegacyCategory
+} from "../services/workerSpecialtyService";
 
 /**
  * Upload worker profile image to ImageKit → /workers/profile-images/
@@ -103,6 +108,7 @@ export const registerWorker = asyncHandler(async (req, res) => {
     if (existingWorkerCnic) {
         throw new ConflictError("Worker with this CNIC number already exists");
     }
+    const primaryProfile = normalizeSpecialtyProfileInput({ skills, hourlyRate, experience, bio });
 
     const worker = await Workers.create({
         fullName,
@@ -113,10 +119,14 @@ export const registerWorker = asyncHandler(async (req, res) => {
         cnicFrontImage: cnicFrontImageUrl,
         cnicBackImage: cnicBackImageUrl,
         category,
-        skills,
-        hourlyRate,
-        bio,
-        experience,
+        specialties: await createPrimarySpecialtyFromLegacyCategory({
+            categoryName: category,
+            profile: primaryProfile
+        }),
+        skills: primaryProfile.skills,
+        hourlyRate: primaryProfile.hourlyRate,
+        bio: primaryProfile.bio,
+        experience: primaryProfile.experience,
         city,
         address,
         location: {
@@ -249,6 +259,28 @@ export const getWorkerById = asyncHandler(async (req: AuthRequest, res) => {
     return successResponse(res, 200, "Worker fetched successfully", worker);
 });
 
+/**
+ * Get the authenticated worker's account moderation status.
+ * @route GET /api/v1/workers/me/status
+ */
+export const getMyWorkerAccountStatus = asyncHandler(async (req: AuthRequest, res) => {
+    const workerId = req.tokenPayload?.id;
+    if (!workerId) {
+        throw new UnauthorizedError("Unauthorized access");
+    }
+
+    const worker = await Workers.findById(workerId).select("isActive deactivationReason deactivatedAt");
+    if (!worker) {
+        throw new BadRequestError("Worker not found");
+    }
+
+    return successResponse(res, 200, "Account status fetched successfully", {
+        isActive: worker.isActive,
+        deactivationReason: worker.deactivationReason || '',
+        deactivatedAt: worker.deactivatedAt || null,
+    });
+});
+
 export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
 
@@ -280,13 +312,16 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
         if (existingWorkerPhone) throw new ConflictError("Phone number already in use by another worker");
         worker.phone = phone;
     }
+    const primaryProfileChanged = bio !== undefined || experience !== undefined || hourlyRate !== undefined || skills !== undefined;
     if (bio !== undefined) worker.bio = bio;
     if (experience !== undefined) worker.experience = experience;
     if (city !== undefined) worker.city = city;
     if (address !== undefined) worker.address = address;
     if (hourlyRate !== undefined) worker.hourlyRate = hourlyRate;
     if (skills !== undefined) worker.skills = skills;
-    if (category !== undefined) worker.category = category;
+    if (category !== undefined || primaryProfileChanged) {
+        await setWorkerPrimarySpecialtyFromLegacyCategory({ worker, categoryName: category || worker.category });
+    }
     if (profileImage !== undefined) worker.profileImage = profileImage;
     if (fcmToken !== undefined) worker.fcmToken = fcmToken;
     const wasAvailable = worker.isAvailable !== false;
@@ -557,4 +592,3 @@ export const getVerificationStatus = asyncHandler(async (req: AuthRequest, res) 
     const request = await VerificationRequest.findOne({ worker: workerId }).sort({ createdAt: -1 });
     return successResponse(res, 200, "Verification status fetched successfully", request || null);
 });
-

@@ -16,6 +16,11 @@ export interface IUser extends Document {
     fcmToken?: string;
     refreshToken?: string;
     isActive: boolean;
+    deactivationReason?: string;
+    deactivatedAt?: Date | null;
+    deactivatedBy?: mongoose.Types.ObjectId | null;
+    reactivatedAt?: Date | null;
+    reactivatedBy?: mongoose.Types.ObjectId | null;
     isPasswordCorrect(password: string): Promise<boolean>;
 }
 
@@ -35,6 +40,11 @@ const userSchema = new Schema<IUser>(
         fcmToken: { type: String, default: '' },
         refreshToken: { type: String, default: '' },
         isActive: { type: Boolean, default: true },
+        deactivationReason: { type: String, trim: true, maxlength: 500, default: '' },
+        deactivatedAt: { type: Date, default: null },
+        deactivatedBy: { type: Schema.Types.ObjectId, ref: 'Admin', default: null },
+        reactivatedAt: { type: Date, default: null },
+        reactivatedBy: { type: Schema.Types.ObjectId, ref: 'Admin', default: null },
     },
     { timestamps: true }
 );

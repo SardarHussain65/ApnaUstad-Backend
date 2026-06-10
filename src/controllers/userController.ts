@@ -8,6 +8,10 @@ import { successResponse } from "../utils/ApiResponse";
 import { UploadRequest } from "../middlewares/multer.middleware";
 import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest, TokenPayload, blacklistToken } from "../middlewares/jwt.middleware";
 import admin from "../config/firebase";
+import {
+    applyMatchedSpecialtyProfileToWorkerPayload,
+    buildWorkerSpecialtyCategoryFilter
+} from "../services/workerSpecialtyService";
 
 /**
  * Handle direct image upload returning the ImageKit URL
@@ -69,10 +73,9 @@ export const getWorkers = asyncHandler(async (req, res) => {
     // Build filter object
     const filter: any = {};
 
-    // Filter by isActive
-    if (req.query.isActive !== undefined) {
-        filter.isActive = req.query.isActive === 'true';
-    }
+    // Public discovery only returns trusted active workers.
+    filter.isActive = true;
+    filter.isVerified = true;
 
     // Filter by isAvailable
     if (req.query.isAvailable !== undefined) {
@@ -81,7 +84,10 @@ export const getWorkers = asyncHandler(async (req, res) => {
 
     // Filter by category
     if (req.query.category) {
-        filter.category = req.query.category as string;
+        Object.assign(filter, await buildWorkerSpecialtyCategoryFilter(
+            req.query.category as string,
+            req.query.categoryId as string | undefined
+        ));
     }
 
     // Filter by city
@@ -99,17 +105,24 @@ export const getWorkers = asyncHandler(async (req, res) => {
 
     // Fetch workers with filters
     const workers = await Workers.find(filter)
-        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -hourlyRate -location -address -city -experience -rating -reviews -phone -email")
+        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -location -address -phone -email")
         .skip(skip)
         .limit(limit)
         .lean();
+    const data = req.query.category
+        ? await Promise.all(workers.map(worker => applyMatchedSpecialtyProfileToWorkerPayload(
+            worker,
+            req.query.category as string,
+            req.query.categoryId as string | undefined
+        )))
+        : workers;
 
     // Get total count for pagination metadata
     const totalWorkers = await Workers.countDocuments(filter);
     const totalPages = Math.ceil(totalWorkers / limit);
 
     return successResponse(res, 200, "Workers fetched successfully", {
-        data: workers,
+        data,
         pagination: {
             page,
             limit,
@@ -130,11 +143,17 @@ export const getWorkers = asyncHandler(async (req, res) => {
 export const getWorkerById = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
-    const worker = await Workers.findById(id).select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -phone -email");
+    const worker = await Workers.findOne({ _id: id, isActive: true, isVerified: true })
+        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -phone -email");
     if (!worker) {
         throw new BadRequestError("Worker not found");
     }
-    return successResponse(res, 200, "Worker fetched successfully", worker);
+    const payload = await applyMatchedSpecialtyProfileToWorkerPayload(
+        worker,
+        req.query.category as string | undefined,
+        req.query.categoryId as string | undefined
+    );
+    return successResponse(res, 200, "Worker fetched successfully", payload);
 });
 
 
@@ -277,6 +296,28 @@ export const getUserById = asyncHandler(async (req: AuthRequest, res) => {
         throw new BadRequestError("User not found");
     }
     return successResponse(res, 200, "User fetched successfully", user);
+});
+
+/**
+ * Get the authenticated user's account moderation status.
+ * @route GET /api/v1/users/me/status
+ */
+export const getMyAccountStatus = asyncHandler(async (req: AuthRequest, res) => {
+    const userId = req.tokenPayload?.id;
+    if (!userId) {
+        throw new UnauthorizedError("Unauthorized access");
+    }
+
+    const user = await User.findById(userId).select("isActive deactivationReason deactivatedAt");
+    if (!user) {
+        throw new BadRequestError("User not found");
+    }
+
+    return successResponse(res, 200, "Account status fetched successfully", {
+        isActive: user.isActive,
+        deactivationReason: user.deactivationReason || '',
+        deactivatedAt: user.deactivatedAt || null,
+    });
 });
 
 /**

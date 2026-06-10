@@ -19,6 +19,7 @@ export const getOrCreateWallet = async (
                 reservedBalance: 0,
                 totalRecharged: 0,
                 totalCommissionDeducted: 0,
+                totalSubscriptionDeducted: 0,
                 isActive: true
             }], session ? { session } : {});
             wallet = createdWallet || null;
@@ -202,6 +203,101 @@ export const deductCommission = async (
     }], session ? { session } : {});
 
     return updatedWallet;
+};
+
+export const deductSpecialtySubscription = async ({
+    workerId,
+    categoryId,
+    specialtyId,
+    amount,
+    billingPeriodStart,
+    billingPeriodEnd,
+    idempotencyKey,
+}: {
+    workerId: string | mongoose.Types.ObjectId;
+    categoryId: string | mongoose.Types.ObjectId;
+    specialtyId: string | mongoose.Types.ObjectId;
+    amount: number;
+    billingPeriodStart: Date;
+    billingPeriodEnd: Date;
+    idempotencyKey: string;
+}): Promise<IWalletTransaction> => {
+    const normalizedAmount = Number(amount || 0);
+    if (normalizedAmount <= 0) {
+        throw new Error('Specialty subscription amount must be greater than zero');
+    }
+
+    const existingTransaction = await WalletTransaction.findOne({ idempotencyKey });
+    if (existingTransaction) return existingTransaction;
+
+    const wallet = await getOrCreateWallet(workerId);
+    const updatedWallet = await WorkerWallet.findOneAndUpdate(
+        {
+            _id: wallet._id,
+            isActive: true,
+            $expr: {
+                $gte: [
+                    { $subtract: ['$balance', { $ifNull: ['$reservedBalance', 0] }] },
+                    normalizedAmount
+                ]
+            }
+        },
+        {
+            $inc: {
+                balance: -normalizedAmount,
+                totalSubscriptionDeducted: normalizedAmount
+            }
+        },
+        { new: true }
+    );
+
+    if (!updatedWallet) {
+        const availableBalance = Math.max(0, Number(wallet.balance || 0) - Number(wallet.reservedBalance || 0));
+        const error = new Error(`Insufficient available wallet balance for specialty subscription. Required balance: Rs. ${normalizedAmount.toLocaleString('en-PK')}. Current balance: Rs. ${availableBalance.toLocaleString('en-PK')}.`);
+        (error as any).statusCode = 402;
+        (error as any).requiredBalance = normalizedAmount;
+        (error as any).currentBalance = availableBalance;
+        throw error;
+    }
+
+    const balanceAfter = Number(updatedWallet.balance || 0);
+    try {
+        return await WalletTransaction.create({
+            wallet: updatedWallet._id,
+            worker: workerId,
+            type: 'specialty_subscription',
+            amount: normalizedAmount,
+            balanceBefore: balanceAfter + normalizedAmount,
+            balanceAfter,
+            description: 'Monthly additional specialty subscription',
+            reference: {
+                category: new mongoose.Types.ObjectId(categoryId),
+                specialty: new mongoose.Types.ObjectId(specialtyId),
+                billingPeriodStart,
+                billingPeriodEnd
+            },
+            idempotencyKey,
+            performedBy: {
+                actor: new mongoose.Types.ObjectId(workerId),
+                actorType: 'system'
+            }
+        });
+    } catch (error: any) {
+        if (error?.code === 11000) {
+            await WorkerWallet.updateOne(
+                { _id: updatedWallet._id },
+                {
+                    $inc: {
+                        balance: normalizedAmount,
+                        totalSubscriptionDeducted: -normalizedAmount
+                    }
+                }
+            );
+            const concurrentTransaction = await WalletTransaction.findOne({ idempotencyKey });
+            if (concurrentTransaction) return concurrentTransaction;
+        }
+        throw error;
+    }
 };
 
 /**

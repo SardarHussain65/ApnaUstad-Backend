@@ -38,6 +38,7 @@ export const getMyWallet = async (req: AuthRequest, res: Response) => {
                 availableBalance,
                 requiredBalance,
                 platformFeePercentage: walletSettings.platformFeePercentage,
+                additionalCategoryMonthlyFee: walletSettings.additionalCategoryMonthlyFee,
                 commissionEnabled: walletSettings.commissionEnabled,
                 isEligibleForNewJobs: wallet.isActive && availableBalance >= requiredBalance
             }

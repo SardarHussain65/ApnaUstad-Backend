@@ -82,10 +82,25 @@ export const toggleUserStatus = asyncHandler(async (req: AdminAuthRequest, res) 
     if (isActive === undefined) {
         throw new BadRequestError("isActive field is required");
     }
+    if (isActive === false && !reason) {
+        throw new BadRequestError("Deactivation reason is required");
+    }
 
     const user = await User.findByIdAndUpdate(
         id,
-        { isActive },
+        isActive
+            ? {
+                isActive: true,
+                deactivationReason: '',
+                reactivatedAt: new Date(),
+                reactivatedBy: req.admin?._id || null,
+            }
+            : {
+                isActive: false,
+                deactivationReason: reason,
+                deactivatedAt: new Date(),
+                deactivatedBy: req.admin?._id || null,
+            },
         { new: true, runValidators: true }
     );
 
@@ -101,7 +116,9 @@ export const toggleUserStatus = asyncHandler(async (req: AdminAuthRequest, res) 
         metadata: {
             fullName: user.fullName,
             phone: user.phone,
-            email: user.email
+            email: user.email,
+            isActive: user.isActive,
+            deactivationReason: user.deactivationReason || ''
         }
     });
 

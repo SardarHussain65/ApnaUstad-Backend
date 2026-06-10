@@ -6,6 +6,7 @@ export interface IWorkerWallet extends Document {
     reservedBalance: number;
     totalRecharged: number;
     totalCommissionDeducted: number;
+    totalSubscriptionDeducted: number;
     isActive: boolean;
     lastRechargedAt?: Date | null;
     createdAt: Date;
@@ -19,6 +20,7 @@ const workerWalletSchema = new Schema<IWorkerWallet>(
         reservedBalance: { type: Number, required: true, default: 0, min: 0 },
         totalRecharged: { type: Number, required: true, default: 0 },
         totalCommissionDeducted: { type: Number, required: true, default: 0 },
+        totalSubscriptionDeducted: { type: Number, required: true, default: 0 },
         isActive: { type: Boolean, required: true, default: true },
         lastRechargedAt: { type: Date, default: null }
     },

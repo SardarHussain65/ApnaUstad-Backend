@@ -4,6 +4,12 @@ import { BadRequestError, NotFoundError } from "../utils/ApiError";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import { recordAdminAction } from "../services/adminAuditLog";
+import {
+    applyMatchedSpecialtyProfileToWorkerPayload,
+    approveFreeSpecialtiesForVerifiedWorker,
+    buildWorkerSpecialtyCategoryFilter,
+    setWorkerPrimarySpecialtyFromLegacyCategory
+} from "../services/workerSpecialtyService";
 
 /**
  * Get all workers for admin management
@@ -30,7 +36,7 @@ export const getAllWorkers = asyncHandler(async (req: AdminAuthRequest, res) => 
     if (['inactive', 'false'].includes(statusValue)) query.isActive = false;
 
     if (city && city !== 'undefined') query.city = new RegExp(`^${escapeRegex(city as string)}$`, 'i');
-    if (category && category !== 'undefined') query.category = new RegExp(`^${escapeRegex(category as string)}$`, 'i');
+    if (category && category !== 'undefined') query.$and = [await buildWorkerSpecialtyCategoryFilter(category as string)];
     if (search && search !== 'undefined') {
         const searchRegex = new RegExp(escapeRegex(search as string), 'i');
         query.$or = [
@@ -48,8 +54,11 @@ export const getAllWorkers = asyncHandler(async (req: AdminAuthRequest, res) => 
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum);
+    const data = category && category !== 'undefined'
+        ? await Promise.all(workers.map(worker => applyMatchedSpecialtyProfileToWorkerPayload(worker, category as string)))
+        : workers;
 
-    return paginatedResponse(res, 200, "Workers fetched successfully", workers, pageNum, limitNum, total);
+    return paginatedResponse(res, 200, "Workers fetched successfully", data, pageNum, limitNum, total);
 });
 
 /**
@@ -77,6 +86,9 @@ export const verifyWorker = asyncHandler(async (req: AdminAuthRequest, res) => {
 
     if (!worker) {
         throw new NotFoundError("Worker not found");
+    }
+    if (isVerified) {
+        await approveFreeSpecialtiesForVerifiedWorker(worker);
     }
 
     await recordAdminAction(req, {
@@ -112,10 +124,28 @@ export const toggleWorkerStatus = asyncHandler(async (req: AdminAuthRequest, res
     if (isActive === undefined) {
         throw new BadRequestError("isActive field is required");
     }
+    if (isActive === false && !reason) {
+        throw new BadRequestError("Deactivation reason is required");
+    }
 
     const worker = await Worker.findByIdAndUpdate(
         id,
-        { isActive },
+        isActive
+            ? {
+                isActive: true,
+                deactivationReason: '',
+                reactivatedAt: new Date(),
+                reactivatedBy: req.admin?._id || null,
+            }
+            : {
+                isActive: false,
+                isAvailable: false,
+                isInstantAvailable: false,
+                isScheduledAvailable: false,
+                deactivationReason: reason,
+                deactivatedAt: new Date(),
+                deactivatedBy: req.admin?._id || null,
+            },
         { new: true, runValidators: true }
     );
 
@@ -132,7 +162,9 @@ export const toggleWorkerStatus = asyncHandler(async (req: AdminAuthRequest, res
             fullName: worker.fullName,
             phone: worker.phone,
             email: worker.email,
-            category: worker.category
+            category: worker.category,
+            isActive: worker.isActive,
+            deactivationReason: worker.deactivationReason || ''
         }
     });
 
@@ -145,7 +177,8 @@ export const toggleWorkerStatus = asyncHandler(async (req: AdminAuthRequest, res
  * @route GET /api/v1/admin/workers/:id
  */
 export const getWorkerDetails = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const worker = await Worker.findById(req.params.id);
+    const worker = await Worker.findById(req.params.id)
+        .populate('specialties.categoryId', 'name icon color isActive additionalCategoryMonthlyFee additionalCategoryGraceDays');
     if (!worker) {
         throw new NotFoundError("Worker not found");
     }
@@ -168,7 +201,14 @@ export const updateWorkerProfile = asyncHandler(async (req: AdminAuthRequest, re
     if (fullName) worker.fullName = fullName;
     if (phone) worker.phone = phone;
     if (email !== undefined) worker.email = email;
-    if (category) worker.category = category;
+    if (category) {
+        await setWorkerPrimarySpecialtyFromLegacyCategory({
+            worker,
+            categoryName: category,
+            approveImmediately: true,
+            ...(req.admin?._id ? { adminId: req.admin._id } : {})
+        });
+    }
     if (hourlyRate !== undefined) worker.hourlyRate = Number(hourlyRate);
     if (bio !== undefined) worker.bio = bio;
     if (experience !== undefined) worker.experience = Number(experience);

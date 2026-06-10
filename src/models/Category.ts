@@ -8,6 +8,8 @@ export interface ICategory extends Document {
   description: string;
   sortOrder: number;
   isActive: boolean;
+  additionalCategoryMonthlyFee: number;
+  additionalCategoryGraceDays: number;
 }
 
 const categorySchema = new Schema<ICategory>(
@@ -17,7 +19,9 @@ const categorySchema = new Schema<ICategory>(
     color: { type: String, required: true },
     description: { type: String, default: '' },
     sortOrder: { type: Number, default: 0 },
-    isActive: { type: Boolean, default: true }
+    isActive: { type: Boolean, default: true },
+    additionalCategoryMonthlyFee: { type: Number, min: 0, default: 0 },
+    additionalCategoryGraceDays: { type: Number, min: 0, max: 30, default: 3 }
   },
   { timestamps: true }
 );

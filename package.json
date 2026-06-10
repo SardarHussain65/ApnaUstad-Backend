@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "migrate:worker-specialties": "tsx src/scripts/migrateWorkerSpecialties.ts",
+    "migrate:deactivation-reasons": "tsx src/scripts/backfillDeactivationReasons.ts"
   },
   "keywords": [],
   "author": "",

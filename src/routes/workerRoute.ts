@@ -17,7 +17,8 @@ import {
     logoutAllWorkerSessions,
     logoutWorker,
     requestVerification,
-    getVerificationStatus
+    getVerificationStatus,
+    getMyWorkerAccountStatus
 } from "../controllers/workerController";
 import validate from "../middlewares/validate.middleware";
 import { loginWorkerSchema, registerWorkerSchema } from "../validations/worker.validation";
@@ -29,6 +30,14 @@ import {
 import { workerAuthMiddleware } from "../middlewares/jwt.middleware";
 import { uploadRateLimiter } from "../middlewares/rateLimiter.middleware";
 import { authLimiter, verificationLimiter } from "../middlewares/rateLimiter";
+import {
+    activateSpecialty,
+    deleteSpecialty,
+    getMySpecialties,
+    reorderSpecialties,
+    requestSpecialty,
+    updateSpecialtyAutoRenew
+} from "../controllers/workerSpecialtyController";
 
 const router = Router();
 
@@ -66,6 +75,12 @@ router.route("/register").post(authLimiter, validate(registerWorkerSchema), regi
 router.route("/login").post(authLimiter, validate(loginWorkerSchema), loginWorker);
 router.route("/refresh-token").post(refreshWorkerAccessToken);
 
+/**
+ * @description Get authenticated worker account status
+ * @access Private
+ */
+router.route("/me/status").get(workerAuthMiddleware, getMyWorkerAccountStatus);
+
 
 
 router.use(workerAuthMiddleware)
@@ -81,6 +96,17 @@ router.route("/verification/request").post(verificationLimiter, requestVerificat
  * @access Private (Worker)
  */
 router.route("/verification/status").get(getVerificationStatus);
+
+/**
+ * @description Manage worker specialties and paid additional-category subscriptions
+ * @access Private (Worker)
+ */
+router.route("/specialties").get(getMySpecialties);
+router.route("/specialties/requests").post(requestSpecialty);
+router.route("/specialties/priorities").patch(reorderSpecialties);
+router.route("/specialties/:categoryId/activate").patch(activateSpecialty);
+router.route("/specialties/:categoryId/auto-renew").patch(updateSpecialtyAutoRenew);
+router.route("/specialties/:categoryId").delete(deleteSpecialty);
 
 /**
  * @description Logout worker and revoke session

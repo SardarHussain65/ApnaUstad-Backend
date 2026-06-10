@@ -17,12 +17,12 @@ import { getConfig } from '../config/env';
 const config = getConfig();
 
 const sampleCategories = [
-    { name: 'AC & Appliances', icon: 'Tv', color: '#00F5FF', description: 'Expert repair and servicing for AC, refrigerators, washing machines and ovens.', sortOrder: 1 },
-    { name: 'Plumbing', icon: 'Droplet', color: '#BF5AF2', description: 'Leaking pipe repairs, geyser installs, toilet fittings and full plumbing solutions.', sortOrder: 2 },
-    { name: 'Electrical Work', icon: 'Zap', color: '#FF9500', description: 'Short circuit repairs, switch replacements, ceiling fans and smart home wiring.', sortOrder: 3 },
-    { name: 'Home Cleaning', icon: 'Sparkles', color: '#34C759', description: 'Deep sofa cleaning, carpet sanitization, kitchen and full house scrubbing.', sortOrder: 4 },
-    { name: 'Painting & Renovation', icon: 'Brush', color: '#FF3B30', description: 'Interior/exterior wall painting, waterproofing and modern home renovations.', sortOrder: 5 },
-    { name: 'Geyser Service', icon: 'Flame', color: '#FFCC00', description: 'Instant and storage geyser installation, thermostat replacements and gas leak checks.', sortOrder: 6 }
+    { name: 'AC & Appliances', icon: 'Tv', color: '#00F5FF', description: 'Expert repair and servicing for AC, refrigerators, washing machines and ovens.', sortOrder: 1, additionalCategoryMonthlyFee: 300, additionalCategoryGraceDays: 3 },
+    { name: 'Plumbing', icon: 'Droplet', color: '#BF5AF2', description: 'Leaking pipe repairs, geyser installs, toilet fittings and full plumbing solutions.', sortOrder: 2, additionalCategoryMonthlyFee: 250, additionalCategoryGraceDays: 3 },
+    { name: 'Electrical Work', icon: 'Zap', color: '#FF9500', description: 'Short circuit repairs, switch replacements, ceiling fans and smart home wiring.', sortOrder: 3, additionalCategoryMonthlyFee: 300, additionalCategoryGraceDays: 3 },
+    { name: 'Home Cleaning', icon: 'Sparkles', color: '#34C759', description: 'Deep sofa cleaning, carpet sanitization, kitchen and full house scrubbing.', sortOrder: 4, additionalCategoryMonthlyFee: 200, additionalCategoryGraceDays: 3 },
+    { name: 'Painting & Renovation', icon: 'Brush', color: '#FF3B30', description: 'Interior/exterior wall painting, waterproofing and modern home renovations.', sortOrder: 5, additionalCategoryMonthlyFee: 350, additionalCategoryGraceDays: 3 },
+    { name: 'Geyser Service', icon: 'Flame', color: '#FFCC00', description: 'Instant and storage geyser installation, thermostat replacements and gas leak checks.', sortOrder: 6, additionalCategoryMonthlyFee: 250, additionalCategoryGraceDays: 3 }
 ];
 
 const sampleCustomers = [
@@ -70,7 +70,7 @@ const seedFullDemo = async () => {
         console.log('Cleaning up existing demo collections to ensure clean seed...');
         await Category.deleteMany({});
         await User.deleteMany({ phone: { $in: sampleCustomers.map(c => c.phone) } });
-        
+
         // Remove workers and all related wallets, transactions, requests
         const existingWorkers = await Worker.find({ phone: { $in: sampleWorkers.map(w => w.phone) } });
         const workerIds = existingWorkers.map(w => w._id);
@@ -107,8 +107,33 @@ const seedFullDemo = async () => {
         // 3. Seed Workers
         console.log('Seeding workers...');
         const workers = [];
+        const categoryByName = new Map(insertedCategories.map(category => [category.name, category]));
         for (const workerData of sampleWorkers) {
-            const worker = new Worker(workerData);
+            const primaryCategory = categoryByName.get(workerData.category);
+            const seedSkills = 'skills' in workerData && Array.isArray(workerData.skills)
+                ? workerData.skills
+                : [workerData.category, 'Repair', 'Maintenance'];
+            const seedBio = 'bio' in workerData && typeof workerData.bio === 'string'
+                ? workerData.bio
+                : `Experienced ${workerData.category} professional available for reliable home service.`;
+            const worker = new Worker({
+                ...workerData,
+                skills: seedSkills,
+                bio: seedBio,
+                specialties: primaryCategory ? [{
+                    categoryId: primaryCategory._id,
+                    priority: 1,
+                    skills: seedSkills,
+                    hourlyRate: workerData.hourlyRate || 0,
+                    experience: workerData.experience || 0,
+                    bio: seedBio,
+                    isActive: workerData.isVerified,
+                    approvalStatus: workerData.isVerified ? 'approved' : 'pending',
+                    subscriptionStatus: 'free',
+                    monthlyFeeSnapshot: 0,
+                    autoRenew: true
+                }] : []
+            });
             await worker.save();
             workers.push(worker);
 
@@ -327,7 +352,7 @@ const seedFullDemo = async () => {
 
         // 5. Seed Bookings in diverse states
         console.log('Seeding bookings...');
-        
+
         // 1. Pending Direct Hire booking (Scheduled)
         const bookingPending = new Booking({
             customer: customers[0]!._id,

@@ -7,6 +7,7 @@ import {
     updateEmail, googleAuthUser, getCategories, 
     getWorkers,
     getWorkerById,
+    getMyAccountStatus,
     refreshAccessToken,
     logoutAllSessions,
     logoutUser
@@ -78,6 +79,12 @@ router.route("/refresh-token").post(refreshAccessToken);
  * @access Private
  */
 router.route("/public/:id").get(jwtAuthMiddleware, getPublicUserProfile);
+
+/**
+ * @description Get authenticated user account status
+ * @access Private
+ */
+router.route("/me/status").get(userAuthMiddleware, getMyAccountStatus);
 
 
 

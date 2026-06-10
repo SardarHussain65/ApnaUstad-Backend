@@ -21,6 +21,7 @@ import { initSocket } from './sockets/socketManager';
 import { startInstantBookingCleanup } from './scripts/instantBookingCleanup';
 import { startInstantJobExpansion } from './scripts/instantJobExpansion';
 import { startNotificationScheduler } from './scripts/notificationScheduler';
+import { startSpecialtySubscriptionScheduler } from './scripts/specialtySubscriptionScheduler';
 
 // Validate environment variables before starting
 validateEnv();
@@ -46,6 +47,7 @@ const startServer = async () => {
         startInstantBookingCleanup();
         startInstantJobExpansion();
         startNotificationScheduler();
+        startSpecialtySubscriptionScheduler();
 
         // Start HTTP server
         const server = httpServer.listen(config.port, () => {

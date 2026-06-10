@@ -2,6 +2,8 @@ import * as jwt from "jsonwebtoken";
 import { Request, Response, NextFunction } from "express";
 import { getConfig } from "../config/env";
 import { BlacklistedToken } from "../models/BlacklistedToken";
+import User from "../models/User";
+import Worker from "../models/Workers";
 
 const config = getConfig();
 
@@ -16,6 +18,64 @@ export interface AuthRequest extends Request {
     tokenPayload?: TokenPayload;
     token?: string;
 }
+
+const ACCOUNT_DEACTIVATED_MESSAGE = "Your account has been deactivated by admin.";
+
+const isAccountStatusExempt = (req: Request) => {
+    const path = req.originalUrl.split("?")[0] || req.path;
+    return [
+        "/api/v1/users/me/status",
+        "/api/v1/workers/me/status",
+        "/api/v1/users/logout",
+        "/api/v1/workers/logout",
+        "/api/v1/notifications/remove-token",
+    ].includes(path);
+};
+
+const sendAccountDeactivated = (res: Response, account: { isActive?: boolean; deactivationReason?: string; deactivatedAt?: Date | null }) => {
+    return res.status(423).json({
+        success: false,
+        code: "ACCOUNT_DEACTIVATED",
+        message: ACCOUNT_DEACTIVATED_MESSAGE,
+        data: {
+            isActive: false,
+            deactivationReason: account.deactivationReason || "Account deactivated by admin. Please contact support for details.",
+            deactivatedAt: account.deactivatedAt || null,
+        }
+    });
+};
+
+const ensureTokenAccountActive = async (req: AuthRequest, res: Response) => {
+    if (isAccountStatusExempt(req)) return true;
+    const payload = req.tokenPayload;
+    if (!payload || payload.type === "admin") return true;
+
+    if (payload.type === "user") {
+        const user = await User.findById(payload.id).select("isActive deactivationReason deactivatedAt");
+        if (!user) {
+            res.status(401).json({ message: "Account not found" });
+            return false;
+        }
+        if (!user.isActive) {
+            sendAccountDeactivated(res, user);
+            return false;
+        }
+    }
+
+    if (payload.type === "worker") {
+        const worker = await Worker.findById(payload.id).select("isActive deactivationReason deactivatedAt");
+        if (!worker) {
+            res.status(401).json({ message: "Account not found" });
+            return false;
+        }
+        if (!worker.isActive) {
+            sendAccountDeactivated(res, worker);
+            return false;
+        }
+    }
+
+    return true;
+};
 
 const jwtAuthMiddleware = async (req: AuthRequest, res: Response, next: NextFunction) => {
     if (!config.jwtSecret) {
@@ -51,6 +111,8 @@ const jwtAuthMiddleware = async (req: AuthRequest, res: Response, next: NextFunc
         const decodedToken = jwt.verify(token, secret) as TokenPayload;
         req.tokenPayload = decodedToken;
         req.token = token;
+        const canContinue = await ensureTokenAccountActive(req, res);
+        if (!canContinue) return;
         next();
     } catch (error) {
         console.error("JWT verification failed:", error);
