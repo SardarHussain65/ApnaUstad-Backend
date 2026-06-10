@@ -625,14 +625,47 @@ export const googleAuthUser = asyncHandler(async (req, res) => {
             refreshToken: refreshToken
         });
     } else {
-        // User does NOT exist -> Return data for registration completion
-        return successResponse(res, 200, "Google verification successful, please complete profile", {
-            exists: false,
-            googleData: {
-                email,
-                fullName: name || "",
-                profileImage: picture || ""
+        // User does NOT exist -> Automatically register them
+        const placeholderPhone = `G-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const randomPassword = Math.random().toString(36).slice(-10);
+
+        const newUser = await User.create({
+            fullName: name || "Google User",
+            email: email,
+            phone: placeholderPhone,
+            password: randomPassword,
+            profileImage: picture || "",
+            location: {
+                type: "Point",
+                coordinates: [0, 0]
             }
+        });
+
+        const accessToken = generateToken({
+            id: newUser._id.toString(),
+            username: newUser.fullName,
+            type: 'user'
+        });
+
+        const refreshToken = generateRefreshToken({
+            id: newUser._id.toString(),
+            username: newUser.fullName,
+            type: 'user'
+        });
+
+        newUser.refreshToken = refreshToken;
+        await newUser.save();
+
+        const userResponse = newUser.toObject();
+        delete userResponse.password;
+        delete userResponse.fcmToken;
+        delete userResponse.refreshToken;
+
+        return successResponse(res, 200, "User registered and logged in successfully via Google", {
+            exists: true,
+            user: userResponse,
+            token: accessToken,
+            refreshToken: refreshToken
         });
     }
 });
