@@ -13,7 +13,8 @@ import {
     getWorkerBids,
     withdrawBid,
     uploadJobImages,
-    cancelJobPost
+    cancelJobPost,
+    getUrgentPriceEstimate
 } from "../controllers/jobPostController";
 import { handleJobImagesUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
@@ -29,6 +30,9 @@ router.get("/nearby", workerAuthMiddleware, getNearbyJobs);
 
 // Get jobs posted while the worker was offline
 router.get("/missed", workerAuthMiddleware, getMissedJobs);
+
+// Get estimate fixed price for urgent job
+router.get("/urgent-price-estimate", userAuthMiddleware, getUrgentPriceEstimate);
 
 // Create a new job post (for users)
 router.post("/", userAuthMiddleware, validate(createJobPostSchema), createJobPost);

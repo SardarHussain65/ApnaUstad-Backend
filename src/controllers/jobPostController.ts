@@ -30,6 +30,7 @@ import {
     getWorkerActiveSpecialtyNames,
     workerCanPerformCategory
 } from "../services/workerSpecialtyService";
+import { calculateUrgentPrice, scheduleEscalation } from "../services/urgentPricingService";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
@@ -524,19 +525,25 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
 
         let { scheduledDate, scheduledTime } = req.body;
         const clientOffer = Number(amount);
+        const isInstant = urgency === 'instant';
 
-        if (!Number.isFinite(clientOffer) || clientOffer <= 0) {
-            return res.status(400).json({
-                success: false,
-                message: "A positive client offer is required so workers can make an informed decision."
-            });
-        }
+        let finalAmount = clientOffer;
+        let finalEstimatedHours = Number(req.body.estimatedHours) || 2;
 
-        if (urgency === 'instant') {
+        if (isInstant) {
+            const urgentPrice = calculateUrgentPrice(category, finalEstimatedHours);
+            finalAmount = urgentPrice.fixedPrice;
+            
             const now = new Date();
             scheduledDate = now;
             scheduledTime = now.toTimeString().split(' ')[0]?.substring(0, 5) || "00:00";
         } else {
+            if (!Number.isFinite(clientOffer) || clientOffer <= 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: "A positive client offer is required so workers can make an informed decision."
+                });
+            }
             if (!scheduledDate || !scheduledTime) {
                 return res.status(400).json({ success: false, message: "Scheduled date and time are required for scheduled jobs" });
             }
@@ -546,7 +553,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "Location coordinates (longitude, latitude) are required" });
         }
 
-        const expiresAt = urgency === 'instant'
+        const expiresAt = isInstant
             ? new Date(Date.now() + 10 * 60 * 1000) // 10 minutes for instant
             : new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours for scheduled
 
@@ -567,14 +574,21 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             videoUrl,
             videoUrls,
             audioUrls,
-            amount: clientOffer,
+            amount: finalAmount,
+            isFixedPrice: isInstant,
+            estimatedHours: isInstant ? finalEstimatedHours : undefined,
+            urgencyPricingVersion: isInstant ? 1 : undefined,
             pricing: {
-                clientOffer,
+                clientOffer: finalAmount,
                 currency: 'PKR',
                 pricingVersion: 2
             },
             expiresAt
         });
+
+        if (isInstant) {
+            scheduleEscalation(jobPost._id.toString(), 10 * 60 * 1000);
+        }
 
         const populatedJobPost = await JobPost.findById(jobPost._id)
             .populate('customer', 'fullName profileImage phone');
@@ -667,6 +681,14 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
 
         if (!Number.isFinite(proposedAmount) || proposedAmount <= 0) {
             return res.status(400).json({ success: false, message: "Proposed price must be a positive number" });
+        }
+        if (jobPost.isFixedPrice && jobPost.urgency === 'instant') {
+            if (proposedAmount !== jobPost.amount) {
+                return res.status(400).json({
+                    success: false,
+                    message: "This is a fixed-price urgent job. Counter-offers are not allowed."
+                });
+            }
         }
         if (!String(message || '').trim()) {
             return res.status(400).json({ success: false, message: "A short proposal message is required" });
@@ -1317,13 +1339,186 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "This job post has expired" });
         }
 
+        if (jobPost.isFixedPrice) {
+            const session = await mongoose.startSession();
+            let booking: any = null;
+            try {
+                await session.withTransaction(async () => {
+                    // Re-fetch job post with session
+                    const job = await JobPost.findOne({ _id: jobId, status: 'open' }).session(session);
+                    if (!job) {
+                        const error = new Error("Job is no longer available for assignment");
+                        (error as any).statusCode = 409;
+                        throw error;
+                    }
+
+                    // Check if worker already has bid (just to be safe)
+                    const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId }).session(session);
+                    if (existingBid) {
+                        const error = new Error("You have already accepted this mission.");
+                        (error as any).statusCode = 400;
+                        throw error;
+                    }
+
+                    const workerProfile = await Worker.findById(workerId).session(session);
+                    if (!workerProfile) {
+                        const error = new Error("Worker profile not found");
+                        (error as any).statusCode = 404;
+                        throw error;
+                    }
+
+                    if (!workerAcceptsJobType(workerProfile, 'instant')) {
+                        const error = new Error("Instant job availability is turned off. Enable it before accepting this mission.");
+                        (error as any).statusCode = 403;
+                        throw error;
+                    }
+                    if (!await workerCanPerformCategory(workerId, job.category)) {
+                        const error = new Error("This job does not match an active approved specialty on your profile.");
+                        (error as any).statusCode = 403;
+                        throw error;
+                    }
+
+                    const proposedPrice = Number(job.amount || 0);
+                    if (!Number.isFinite(proposedPrice) || proposedPrice <= 0) {
+                        const error = new Error("This job does not have a valid fixed price.");
+                        (error as any).statusCode = 400;
+                        throw error;
+                    }
+
+                    const commissionAmount = await calculateCommissionAmount(proposedPrice);
+                    const walletSettings = await getWalletSettings();
+                    const walletEligibility = await getWalletEligibility(workerId, commissionAmount, session);
+                    if (!walletEligibility.isEligible) {
+                        const error = new Error(buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance));
+                        (error as any).statusCode = 402;
+                        (error as any).requiredBalance = walletEligibility.requiredBalance;
+                        (error as any).currentBalance = walletEligibility.availableBalance;
+                        throw error;
+                    }
+
+                    const workerNetIncome = Math.max(0, proposedPrice - commissionAmount);
+
+                    // Create Bid immediately as accepted
+                    const [newBid] = await JobBid.create([{
+                        jobPost: jobId,
+                        worker: workerId,
+                        message: "Instant Fixed Price Mission Acceptance",
+                        proposedPrice,
+                        priceMode: 'accepted_offer',
+                        clientOfferSnapshot: proposedPrice,
+                        commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
+                        status: 'accepted'
+                    }], { session });
+
+                    // Create Booking
+                    const [createdBooking] = await Booking.create([{
+                        jobPost: job._id,
+                        acceptedBid: newBid._id,
+                        customer: job.customer,
+                        worker: workerId,
+                        category: job.category,
+                        description: job.description,
+                        scheduledDate: job.scheduledDate,
+                        scheduledTime: job.scheduledTime,
+                        estimatedHours: job.estimatedHours || 2,
+                        hourlyRate: workerProfile.hourlyRate || 0,
+                        subtotal: proposedPrice,
+                        platformFee: commissionAmount,
+                        totalAmount: proposedPrice,
+                        workerEarning: workerNetIncome,
+                        agreement: {
+                            clientOffer: proposedPrice,
+                            agreedPrice: proposedPrice,
+                            cashDue: proposedPrice,
+                            priceSource: 'accepted_offer',
+                            commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
+                            commissionAmount,
+                            workerNetIncome,
+                            lockedAt: new Date(),
+                            pricingVersion: job.urgencyPricingVersion || 1
+                        },
+                        address: job.address,
+                        location: job.location,
+                        imageUrls: job.imageUrls || [],
+                        videoUrls: job.videoUrls || [],
+                        audioUrls: job.audioUrls || [],
+                        bookingType: job.urgency,
+                        status: 'accepted',
+                        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+                    }], { session });
+
+                    if (!createdBooking) throw new Error("Unable to create booking");
+                    booking = createdBooking;
+
+                    // Reserve commission
+                    await reserveCommission({
+                        workerId,
+                        bookingId: booking._id,
+                        jobPostId: job._id,
+                        bidId: newBid._id,
+                        amount: commissionAmount,
+                        commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0
+                    }, { session });
+
+                    // Update JobPost status to assigned
+                    job.status = 'assigned';
+                    await job.save({ session });
+
+                    await syncPaymentForBookingStatus(booking, session);
+                });
+
+                // Populate booking details for response
+                const populatedBooking = await Booking.findById(booking._id)
+                    .populate('worker', WORKER_BID_PROFILE_SELECT)
+                    .populate('customer', 'fullName profileImage phone');
+
+                // Sockets and Push Notifications
+                const io = getIO();
+                
+                // 1. Emit job:auto_assigned to Customer
+                const clientRoomName = `user:${jobPost.customer.toString()}`;
+                logger.info(`📡 [Urgent Auto-Assign] Emitting job:auto_assigned to room ${clientRoomName} for booking ${booking._id}`);
+                io.to(clientRoomName).emit('job:auto_assigned', populatedBooking);
+
+                // 2. Emit bid:won to Worker
+                io.to(`worker:${workerId.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
+
+                // 3. Send Push Notifications
+                sendNotificationToRecipient(
+                    jobPost.customer,
+                    'user',
+                    'Ustad Assigned! ⚡',
+                    `An Ustad has accepted your urgent request! They are on their way.`,
+                    { bookingId: booking._id.toString(), type: 'bid_accepted' }
+                ).catch(err => logger.error(`Failed to send customer auto-assign notification:`, err));
+
+                return res.status(200).json({
+                    success: true,
+                    data: populatedBooking,
+                    message: "Job accepted and assigned instantly."
+                });
+
+            } catch (error: any) {
+                logger.error("Error in acceptInstantJob transaction:", error);
+                const statusCode = error.statusCode || 500;
+                return res.status(statusCode).json({
+                    success: false,
+                    message: error.message || "Failed to auto-assign job.",
+                    requiredBalance: error.requiredBalance,
+                    currentBalance: error.currentBalance
+                });
+            } finally {
+                session.endSession();
+            }
+        }
+
         // Check if worker already bid
         const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId });
         if (existingBid) {
             return res.status(400).json({ success: false, message: "You have already accepted this mission." });
         }
 
-        // Create a Bid instead of assigning immediately
+        // Create a Bid instead of assigning immediately (legacy flow)
         const workerProfile = await Worker.findById(workerId);
         if (!workerAcceptsJobType(workerProfile, 'instant')) {
             return res.status(403).json({
@@ -1510,5 +1705,23 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
     } catch (error: any) {
         logger.error("Error in cancelJobPost:", error);
         res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+export const getUrgentPriceEstimate = async (req: AuthRequest, res: Response) => {
+    try {
+        const { category, estimatedHours } = req.query;
+        if (!category) {
+            return res.status(400).json({ success: false, message: "Category is required" });
+        }
+        const hours = Number(estimatedHours) || 2;
+        const estimate = calculateUrgentPrice(String(category), hours);
+        return res.status(200).json({
+            success: true,
+            data: estimate
+        });
+    } catch (error: any) {
+        logger.error("Error in getUrgentPriceEstimate:", error);
+        return res.status(500).json({ success: false, message: "Internal server error" });
     }
 };
