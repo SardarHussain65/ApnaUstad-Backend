@@ -37,7 +37,7 @@ const validateNotificationInput = (title: string, body: string, type: string) =>
   const validTypes = [
     'booking_accepted', 'booking_cancelled', 'job_started', 
     'job_completed', 'payment_received', 'new_review', 
-    'worker_verified', 'general'
+    'worker_verified', 'wallet_topup', 'weekly_earnings', 'general'
   ];
   if (type && !validTypes.includes(type)) {
     errors.push(`Invalid notification type: ${type}`);

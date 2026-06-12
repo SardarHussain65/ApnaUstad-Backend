@@ -24,6 +24,7 @@ export const startInstantJobExpansion = () => {
                 urgency: 'instant',
                 status: 'open',
                 radiusExpanded: false,
+                isFixedPrice: { $ne: true },
                 createdAt: { $lt: fiveMinutesAgo, $gt: tenMinutesAgo }
             });
 

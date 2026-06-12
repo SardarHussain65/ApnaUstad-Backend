@@ -24,6 +24,9 @@ export interface IJobPost extends Document {
         currency: 'PKR';
         pricingVersion: number;
     };
+    estimatedHours?: number;
+    isFixedPrice?: boolean;
+    urgencyPricingVersion?: number;
     radiusExpanded?: boolean;
     expiresAt: Date;
     cancelledBy?: 'customer' | 'admin' | null;
@@ -60,6 +63,9 @@ const jobPostSchema = new Schema<IJobPost>(
             currency: { type: String, enum: ['PKR'], default: 'PKR' },
             pricingVersion: { type: Number, default: 2 }
         },
+        estimatedHours: { type: Number, default: 0 },
+        isFixedPrice: { type: Boolean, default: false },
+        urgencyPricingVersion: { type: Number, default: 1 },
         radiusExpanded: { type: Boolean, default: false },
         expiresAt: { type: Date, required: true },
         cancelledBy: { type: String, enum: ['customer', 'admin', null], default: null },

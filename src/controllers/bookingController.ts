@@ -14,6 +14,18 @@ import { getWalletSettings } from "../services/walletSettingsService";
 import { getIO } from "../sockets/socketManager";
 import { emitBookingEvent } from "../sockets/handlers/booking.handler";
 import { getWorkerMatchedSpecialtyProfile, workerCanPerformCategory } from "../services/workerSpecialtyService";
+import {
+    addPakistanDays,
+    addPakistanMonths,
+    formatPakistanDayKey,
+    formatPakistanDayLabel,
+    formatPakistanMonthKey,
+    formatPakistanMonthLabel,
+    formatPakistanShortDateLabel,
+    startOfPakistanDay,
+    startOfPakistanMonth,
+    startOfPakistanWeek,
+} from "../utils/pakistanTime";
 
 const toPlainObject = (doc: any) => doc?.toObject ? doc.toObject() : doc;
 
@@ -518,6 +530,208 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
 };
 
 /**
+ * @description Worker earnings analytics — daily/weekly/monthly aggregation
+ * @route GET /api/v1/bookings/worker-earnings-analytics (Workers)
+ * @access Private (Worker)
+ */
+export const getWorkerEarningsAnalytics = async (req: AuthRequest, res: Response) => {
+    try {
+        const workerId = req.tokenPayload?.id;
+        if (!workerId) {
+            res.status(401).json({ success: false, message: "Unauthorized" });
+            return;
+        }
+
+        const workerObjectId = new Types.ObjectId(workerId);
+        const now = new Date();
+        const completedAtExpression = { $ifNull: ['$completedAt', '$updatedAt'] };
+        const todayStart = startOfPakistanDay(now);
+        const sevenDaysAgo = addPakistanDays(todayStart, -6);
+        const currentWeekStart = startOfPakistanWeek(now);
+        const fourWeeksAgo = addPakistanDays(currentWeekStart, -21);
+        const currentMonthStart = startOfPakistanMonth(now);
+        const sixMonthsAgo = addPakistanMonths(currentMonthStart, -5);
+
+        const dailyAgg = await Booking.aggregate([
+            {
+                $match: {
+                    worker: workerObjectId,
+                    status: 'completed',
+                    $expr: { $gte: [completedAtExpression, sevenDaysAgo] },
+                },
+            },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: {
+                            format: '%Y-%m-%d',
+                            date: completedAtExpression,
+                            timezone: 'Asia/Karachi',
+                        },
+                    },
+                    earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
+                    jobs: { $sum: 1 },
+                },
+            },
+            { $sort: { _id: 1 } },
+        ]);
+
+        const dailyMap = new Map(dailyAgg.map((d: any) => [d._id, d]));
+        const daily: any[] = [];
+        for (let i = 0; i < 7; i++) {
+            const d = addPakistanDays(sevenDaysAgo, i);
+            const key = formatPakistanDayKey(d);
+            const existing = dailyMap.get(key);
+            daily.push({
+                label: formatPakistanDayLabel(d),
+                date: key,
+                earnings: existing ? Number(existing.earnings) : 0,
+                jobs: existing ? Number(existing.jobs) : 0,
+            });
+        }
+
+        const weeklyDailyAgg = await Booking.aggregate([
+            {
+                $match: {
+                    worker: workerObjectId,
+                    status: 'completed',
+                    $expr: { $gte: [completedAtExpression, fourWeeksAgo] },
+                },
+            },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: {
+                            format: '%Y-%m-%d',
+                            date: completedAtExpression,
+                            timezone: 'Asia/Karachi',
+                        },
+                    },
+                    earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
+                    jobs: { $sum: 1 },
+                },
+            },
+            { $sort: { _id: 1 } },
+        ]);
+
+        const weeklyDayMap = new Map(weeklyDailyAgg.map((d: any) => [d._id, d]));
+        const weekly = Array.from({ length: 4 }, (_, weekIndex) => {
+            const weekStart = addPakistanDays(fourWeeksAgo, weekIndex * 7);
+            let earnings = 0;
+            let jobs = 0;
+            for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+                const key = formatPakistanDayKey(addPakistanDays(weekStart, dayIndex));
+                const existing = weeklyDayMap.get(key);
+                if (existing) {
+                    earnings += Number(existing.earnings || 0);
+                    jobs += Number(existing.jobs || 0);
+                }
+            }
+            return {
+                label: formatPakistanShortDateLabel(weekStart),
+                week: weekIndex + 1,
+                startDate: formatPakistanDayKey(weekStart),
+                earnings,
+                jobs,
+            };
+        });
+
+        const monthlyAgg = await Booking.aggregate([
+            {
+                $match: {
+                    worker: workerObjectId,
+                    status: 'completed',
+                    $expr: { $gte: [completedAtExpression, sixMonthsAgo] },
+                },
+            },
+            {
+                $group: {
+                    _id: {
+                        $dateToString: {
+                            format: '%Y-%m',
+                            date: completedAtExpression,
+                            timezone: 'Asia/Karachi',
+                        },
+                    },
+                    earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
+                    jobs: { $sum: 1 },
+                },
+            },
+            { $sort: { _id: 1 } },
+        ]);
+
+        const monthlyMap = new Map(monthlyAgg.map((m: any) => [m._id, m]));
+        const monthly: any[] = [];
+        for (let i = 0; i < 6; i++) {
+            const d = addPakistanMonths(sixMonthsAgo, i);
+            const key = formatPakistanMonthKey(d);
+            const existing = monthlyMap.get(key);
+            monthly.push({
+                label: formatPakistanMonthLabel(d),
+                month: Number(key.split('-')[1]),
+                year: Number(key.split('-')[0]),
+                earnings: existing ? Number(existing.earnings) : 0,
+                jobs: existing ? Number(existing.jobs) : 0,
+            });
+        }
+
+        const todayStr = formatPakistanDayKey(todayStart);
+        const todayData = daily.find((d) => d.date === todayStr);
+        const todayEarnings = todayData ? todayData.earnings : 0;
+        const todayJobs = todayData ? todayData.jobs : 0;
+
+        const currentWeekData = weekly[weekly.length - 1];
+        const thisWeekEarnings = currentWeekData ? currentWeekData.earnings : 0;
+        const thisWeekJobs = currentWeekData ? currentWeekData.jobs : 0;
+        const currentMonthData = monthly[monthly.length - 1];
+        const thisMonthEarnings = currentMonthData ? currentMonthData.earnings : 0;
+        const thisMonthJobs = currentMonthData ? currentMonthData.jobs : 0;
+
+        const bestDay = daily.reduce(
+            (best, d) => (d.earnings > best.earnings ? d : best),
+            { label: '-', earnings: 0 }
+        );
+
+        let streak = 0;
+        for (let i = daily.length - 1; i >= 0; i--) {
+            if (daily[i].jobs > 0) streak++;
+            else break;
+        }
+
+        const prevWeekEarnings = weekly.length >= 2 ? Number(weekly[weekly.length - 2]?.earnings || 0) : 0;
+        const trendPercent =
+            prevWeekEarnings > 0
+                ? Math.round(((thisWeekEarnings - prevWeekEarnings) / prevWeekEarnings) * 100)
+                : thisWeekEarnings > 0
+                    ? 100
+                    : 0;
+
+        res.status(200).json({
+            success: true,
+            data: {
+                daily,
+                weekly,
+                monthly,
+                summary: {
+                    todayEarnings,
+                    thisWeekEarnings,
+                    thisMonthEarnings,
+                    todayJobs,
+                    thisWeekJobs,
+                    thisMonthJobs,
+                    bestDay: { label: bestDay.label, earnings: bestDay.earnings },
+                    streak,
+                    trendPercent,
+                },
+            },
+        });
+    } catch (error: any) {
+        logger.error('Error in getWorkerEarningsAnalytics:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+};
+
+/**
  * @description Get all bookings for the authenticated worker
  * @route GET /api/v1/bookings/worker-bookings (Workers)
  * @access Private (Worker)
@@ -659,6 +873,10 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
 
             if (nextStatus === 'accepted' || nextStatus === 'cancelled') {
                 booking.workerRespondedAt = new Date();
+            }
+
+            if (nextStatus === 'completed') {
+                booking.completedAt = new Date();
             }
 
             if (nextStatus === 'cancelled') {

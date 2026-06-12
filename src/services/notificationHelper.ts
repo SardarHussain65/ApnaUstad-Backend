@@ -6,6 +6,26 @@ import User from '../models/User';
 import { sendMultiplePushNotifications } from './fcmService';
 import logger from '../config/logger';
 
+type NotificationKind =
+  | 'booking_accepted'
+  | 'booking_cancelled'
+  | 'job_started'
+  | 'job_completed'
+  | 'payment_received'
+  | 'new_review'
+  | 'worker_verified'
+  | 'wallet_topup'
+  | 'weekly_earnings'
+  | 'general';
+
+type NotificationOptions = {
+  type?: NotificationKind;
+  icon?: string;
+  color?: string;
+  idempotencyKey?: string;
+  scheduledAt?: Date;
+};
+
 /**
  * Sends a push notification and saves a database notification record for a recipient user or worker.
  * Combines both the direct fcmToken on their document and any active registered devices in PushToken.
@@ -21,10 +41,17 @@ export const sendNotificationToRecipient = async (
   recipientType: 'user' | 'worker',
   title: string,
   body: string,
-  data?: Record<string, string>
+  data?: Record<string, string>,
+  options?: NotificationOptions
 ) => {
   try {
     const recipientStr = recipientId.toString();
+    if (options?.idempotencyKey) {
+      const existing = await Notification.findOne({ idempotencyKey: options.idempotencyKey }).select('_id').lean();
+      if (existing) {
+        return { success: true, notificationId: existing._id, skipped: true, fcmResult: null };
+      }
+    }
 
     // 1. Fetch direct fcmToken from their document
     let directFcmToken: string | undefined = undefined;
@@ -99,10 +126,14 @@ export const sendNotificationToRecipient = async (
       recipientType,
       title,
       message: body,
-      type: 'general',
+      type: options?.type || 'general',
+      icon: options?.icon,
+      color: options?.color,
       isRead: false,
       deliveryStatus,
       sentAt: deliveryStatus === NotificationDeliveryStatus.SENT ? new Date() : undefined,
+      scheduledAt: options?.scheduledAt,
+      idempotencyKey: options?.idempotencyKey,
       retryCount: 0,
       error: (fcmResult?.error as any)?.message || undefined
     });

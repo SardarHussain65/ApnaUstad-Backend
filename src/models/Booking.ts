@@ -25,6 +25,7 @@ export interface IBooking extends Document {
     bookingType: 'instant' | 'scheduled';
     expiresAt: Date;
     workerRespondedAt?: Date | null;
+    completedAt?: Date | null;
     paymentStatus: 'unpaid' | 'paid' | 'refunded';
     paymentMethod: 'card' | 'cash' | 'easypaisa';
     stripePaymentId?: string | null;
@@ -80,6 +81,7 @@ const bookingSchema = new Schema<IBooking>(
             required: true
         },
         workerRespondedAt: { type: Date, default: null },
+        completedAt: { type: Date, default: null },
         status: {
             type: String,
             enum: ['pending', 'accepted', 'ongoing', 'completed', 'cancelled'],
@@ -120,6 +122,7 @@ bookingSchema.index({ jobPost: 1 }, { unique: true, sparse: true });
 bookingSchema.index({ customer: 1, createdAt: -1 });
 bookingSchema.index({ worker: 1, createdAt: -1 });
 bookingSchema.index({ worker: 1, status: 1, updatedAt: -1 });
+bookingSchema.index({ worker: 1, status: 1, completedAt: -1 });
 bookingSchema.index({ scheduledDate: 1 });
 
 export default mongoose.models.Booking || mongoose.model<IBooking>('Booking', bookingSchema);
