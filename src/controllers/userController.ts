@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import User from "../models/User";
 import Workers from "../models/Workers";
 import Category from "../models/Category";
@@ -735,4 +736,77 @@ export const logoutUser = asyncHandler(async (req: AuthRequest, res) => {
     }
     
     return successResponse(res, 200, "Logged out successfully", {});
+});
+
+/**
+ * Get all favorite workers for a user
+ * @route GET /api/v1/users/:id/favorites
+ */
+export const getUserFavorites = asyncHandler(async (req: AuthRequest, res) => {
+    const { id } = req.params;
+
+    // Authorization Check: User can only see their own favorites, or Admin can see any
+    if (req.tokenPayload?.id !== id && req.tokenPayload?.role !== 'admin' && req.tokenPayload?.role !== 'superadmin') {
+        throw new ForbiddenError("You are not authorized to view these favorites");
+    }
+
+    const user = await User.findById(id).populate({
+        path: "favorites",
+        select: "-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -location -address -phone -email"
+    });
+
+    if (!user) {
+        throw new BadRequestError("User not found");
+    }
+
+    return successResponse(res, 200, "Favorite workers fetched successfully", user.favorites || []);
+});
+
+/**
+ * Toggle a worker in a user's favorites list
+ * @route POST /api/v1/users/:id/favorites/toggle
+ */
+export const toggleUserFavorite = asyncHandler(async (req: AuthRequest, res) => {
+    const { id } = req.params;
+    const { workerId } = req.body;
+
+    // Authorization Check: User can only update their own favorites
+    if (req.tokenPayload?.id !== id) {
+        throw new ForbiddenError("You are not authorized to edit these favorites");
+    }
+
+    if (!workerId || !mongoose.Types.ObjectId.isValid(workerId)) {
+        throw new BadRequestError("Valid workerId is required");
+    }
+
+    // Verify worker exists and is active
+    const worker = await Workers.findOne({ _id: workerId, isActive: true });
+    if (!worker) {
+        throw new BadRequestError("Worker not found or inactive");
+    }
+
+    const user = await User.findById(id);
+    if (!user) {
+        throw new BadRequestError("User not found");
+    }
+
+    const favorites = user.favorites || [];
+    const index = favorites.indexOf(workerId as any);
+
+    let isFavorite = false;
+    if (index > -1) {
+        favorites.splice(index, 1);
+        isFavorite = false;
+    } else {
+        favorites.push(workerId as any);
+        isFavorite = true;
+    }
+
+    user.favorites = favorites;
+    await user.save();
+
+    return successResponse(res, 200, isFavorite ? "Worker added to favorites" : "Worker removed from favorites", {
+        isFavorite,
+        favorites
+    });
 });

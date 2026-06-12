@@ -10,7 +10,9 @@ import {
     getMyAccountStatus,
     refreshAccessToken,
     logoutAllSessions,
-    logoutUser
+    logoutUser,
+    getUserFavorites,
+    toggleUserFavorite
 } from "../controllers/userController";
 import { handleProfileImageUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
@@ -89,6 +91,18 @@ router.route("/me/status").get(userAuthMiddleware, getMyAccountStatus);
 
 
 router.use(userAuthMiddleware)
+
+/**
+ * @description Get user favorite workers
+ * @access Private
+ */
+router.route("/:id/favorites").get(getUserFavorites);
+
+/**
+ * @description Toggle user favorite worker
+ * @access Private
+ */
+router.route("/:id/favorites/toggle").post(toggleUserFavorite);
 
 /**
  * @description Logout user and revoke session

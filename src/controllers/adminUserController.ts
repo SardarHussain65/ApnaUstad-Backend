@@ -59,7 +59,7 @@ export const getAllUsers = asyncHandler(async (req: AdminAuthRequest, res) => {
  * @route GET /api/v1/admin/users/:id
  */
 export const getUserDetails = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const user = await User.findById(req.params.id);
+    const user = await User.findById(req.params.id).populate("favorites", "-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -location -address -phone -email");
     if (!user) {
         throw new NotFoundError("User not found");
     }

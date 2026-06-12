@@ -5,6 +5,7 @@ import {
     getClientHomeSummary,
     getUserBookings,
     getWorkerHomeSummary,
+    getWorkerEarningsAnalytics,
     getWorkerBookings,
     updateBookingStatus,
     payBooking
@@ -38,6 +39,12 @@ router.route("/home-summary").get(userAuthMiddleware, getClientHomeSummary);
  * @access Private (Worker)
  */
 router.route("/worker-home-summary").get(workerAuthMiddleware, getWorkerHomeSummary);
+
+/**
+ * @description Get worker earnings analytics (daily/weekly/monthly)
+ * @access Private (Worker)
+ */
+router.route("/worker-earnings-analytics").get(workerAuthMiddleware, getWorkerEarningsAnalytics);
 
 /**
  * @description Get all bookings for the authenticated worker

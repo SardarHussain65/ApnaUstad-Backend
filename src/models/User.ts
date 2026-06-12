@@ -21,6 +21,7 @@ export interface IUser extends Document {
     deactivatedBy?: mongoose.Types.ObjectId | null;
     reactivatedAt?: Date | null;
     reactivatedBy?: mongoose.Types.ObjectId | null;
+    favorites?: mongoose.Types.ObjectId[];
     isPasswordCorrect(password: string): Promise<boolean>;
 }
 
@@ -45,6 +46,7 @@ const userSchema = new Schema<IUser>(
         deactivatedBy: { type: Schema.Types.ObjectId, ref: 'Admin', default: null },
         reactivatedAt: { type: Date, default: null },
         reactivatedBy: { type: Schema.Types.ObjectId, ref: 'Admin', default: null },
+        favorites: { type: [{ type: Schema.Types.ObjectId, ref: 'Worker' }], default: [] },
     },
     { timestamps: true }
 );
