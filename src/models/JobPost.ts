@@ -28,6 +28,7 @@ export interface IJobPost extends Document {
     isFixedPrice?: boolean;
     urgencyPricingVersion?: number;
     radiusExpanded?: boolean;
+    notifiedWorkersCount?: number;
     expiresAt: Date;
     cancelledBy?: 'customer' | 'admin' | null;
     cancelReason?: string;
@@ -67,6 +68,7 @@ const jobPostSchema = new Schema<IJobPost>(
         isFixedPrice: { type: Boolean, default: false },
         urgencyPricingVersion: { type: Number, default: 1 },
         radiusExpanded: { type: Boolean, default: false },
+        notifiedWorkersCount: { type: Number, default: 0 },
         expiresAt: { type: Date, required: true },
         cancelledBy: { type: String, enum: ['customer', 'admin', null], default: null },
         cancelReason: { type: String, trim: true, default: '' },

@@ -30,7 +30,7 @@ import {
     getWorkerActiveSpecialtyNames,
     workerCanPerformCategory
 } from "../services/workerSpecialtyService";
-import { calculateUrgentPrice, scheduleEscalation } from "../services/urgentPricingService";
+import { calculateUrgentPrice, scheduleEscalation, manuallyEscalateJobPrice } from "../services/urgentPricingService";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
@@ -613,6 +613,10 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             }
         }).limit(10).select('_id category specialties hourlyRate location');
 
+        // Save notified workers count
+        jobPost.notifiedWorkersCount = nearbyWorkers.length;
+        await jobPost.save();
+
         logger.info(`📡 Found ${nearbyWorkers.length} workers to notify: ${nearbyWorkers.map(w => w._id).join(', ')}`);
 
         // Broadcast to relevant workers via sockets and push notifications
@@ -682,15 +686,11 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         if (!Number.isFinite(proposedAmount) || proposedAmount <= 0) {
             return res.status(400).json({ success: false, message: "Proposed price must be a positive number" });
         }
-        if (jobPost.isFixedPrice && jobPost.urgency === 'instant') {
-            if (proposedAmount !== jobPost.amount) {
-                return res.status(400).json({
-                    success: false,
-                    message: "This is a fixed-price urgent job. Counter-offers are not allowed."
-                });
-            }
+        let finalMessage = String(message || '').trim();
+        if (jobPost.urgency === 'instant' && !finalMessage) {
+            finalMessage = "Urgent Counter-Offer";
         }
-        if (!String(message || '').trim()) {
+        if (!finalMessage) {
             return res.status(400).json({ success: false, message: "A short proposal message is required" });
         }
 
@@ -707,6 +707,37 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
             });
         }
 
+        // Check if bid already exists
+        const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId });
+        if (existingBid) {
+            if (jobPost.urgency === 'instant') {
+                const parsedEstimatedDays = estimatedDays ? Number(estimatedDays) : undefined;
+                existingBid.proposedPrice = proposedAmount;
+                existingBid.priceMode = proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer';
+                existingBid.clientOfferSnapshot = clientOffer;
+                existingBid.message = finalMessage;
+                existingBid.commissionRateSnapshot = walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0;
+                existingBid.status = 'pending';
+                if (Number.isFinite(parsedEstimatedDays) && parsedEstimatedDays! > 0) {
+                    existingBid.estimatedDays = parsedEstimatedDays;
+                }
+                await existingBid.save();
+
+                const io = getIO();
+                await existingBid.populate('worker', WORKER_BID_PROFILE_SELECT);
+                io.to(`user:${jobPost.customer.toString()}`).emit('bid:new', existingBid);
+                io.to(`worker:${workerId.toString()}`).emit('bid:submitted', { bidId: existingBid._id, jobId: jobPost._id });
+
+                return res.status(200).json({
+                    success: true,
+                    data: existingBid,
+                    message: "Bid updated successfully"
+                });
+            } else {
+                return res.status(400).json({ success: false, message: "You have already placed a bid on this job." });
+            }
+        }
+
         // Check Max Bids
         const bidCount = await JobBid.countDocuments({ jobPost: jobId });
         if (bidCount >= MAX_BIDS && jobPost.urgency !== 'instant') {
@@ -718,7 +749,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         const newBid = await JobBid.create({
             jobPost: jobId,
             worker: workerId,
-            message: String(message).trim(),
+            message: finalMessage,
             proposedPrice: proposedAmount,
             priceMode: proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer',
             clientOfferSnapshot: clientOffer,
@@ -1723,5 +1754,38 @@ export const getUrgentPriceEstimate = async (req: AuthRequest, res: Response) =>
     } catch (error: any) {
         logger.error("Error in getUrgentPriceEstimate:", error);
         return res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+/**
+ * @description Manually escalate the pricing of an urgent job post by 15% and expand radius
+ * @route POST /api/v1/jobs/:jobId/escalate
+ * @access Private (User)
+ */
+export const escalateJobPostManually = async (req: AuthRequest, res: Response) => {
+    try {
+        const customerId = req.tokenPayload?.id;
+        if (!customerId) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+        const { jobId } = req.params;
+        if (!jobId || typeof jobId !== 'string') {
+            return res.status(400).json({ success: false, message: "Invalid Job ID" });
+        }
+        const jobPost = await JobPost.findById(jobId);
+        if (!jobPost) return res.status(404).json({ success: false, message: "Job post not found" });
+
+        if (jobPost.customer.toString() !== customerId) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not the owner of this job post." });
+        }
+
+        const result = await manuallyEscalateJobPrice(jobId);
+        return res.status(200).json({
+            success: true,
+            data: result,
+            message: "Job pricing escalated successfully."
+        });
+    } catch (error: any) {
+        logger.error("Error in escalateJobPostManually:", error);
+        return res.status(500).json({ success: false, message: error.message || "Internal server error" });
     }
 };
