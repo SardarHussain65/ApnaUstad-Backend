@@ -6,6 +6,7 @@ import JobPost from "../models/JobPost";
 import Worker from "../models/Workers";
 import logger from "../config/logger";
 import { confirmCashPaymentForBooking, syncPaymentForBookingStatus } from "../services/paymentLedgerService";
+import { evaluateDisputeEligibility, assertNoActiveDisputeForBooking } from "../services/disputeService";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
 import { buildInsufficientBalanceMessage, calculateCommissionAmount, getWalletEligibility } from "../services/workerWalletService";
 import { workerAcceptsJobType } from "../services/workerJobAvailabilityService";
@@ -362,9 +363,18 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
             userType === 'worker' ? 'worker' : 'user'
         );
 
+        const disputeMeta = await evaluateDisputeEligibility({
+            booking,
+            userId: userId!,
+            userType,
+        });
+
         res.status(200).json({
             success: true,
-            data: responseBooking
+            data: {
+                ...responseBooking,
+                disputeMeta,
+            }
         });
     } catch (error: any) {
         logger.error("Error in getBookingById:", error);
@@ -968,6 +978,15 @@ export const payBooking = async (req: AuthRequest, res: Response) => {
 
         if (booking.paymentStatus === 'paid') {
             return res.status(400).json({ success: false, message: "Booking is already paid" });
+        }
+
+        try {
+            await assertNoActiveDisputeForBooking(booking._id);
+        } catch (disputeError: any) {
+            return res.status(disputeError.statusCode || 409).json({
+                success: false,
+                message: disputeError.message || 'Payment blocked while dispute is active',
+            });
         }
 
         if (paymentMethod !== 'cash') {

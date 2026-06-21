@@ -1,9 +1,12 @@
 import Worker from "../models/Workers";
+import WorkerWallet from "../models/WorkerWallet";
+import VerificationRequest from "../models/VerificationRequest";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, NotFoundError } from "../utils/ApiError";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import { recordAdminAction } from "../services/adminAuditLog";
+import { getWalletSettings } from "../services/walletSettingsService";
 import {
     applyMatchedSpecialtyProfileToWorkerPayload,
     approveFreeSpecialtiesForVerifiedWorker,
@@ -231,4 +234,91 @@ export const updateWorkerProfile = asyncHandler(async (req: AdminAuthRequest, re
     });
 
     return successResponse(res, 200, "Worker profile updated successfully", worker);
+});
+
+const buildOnboardingStatus = (worker: any, walletBalance: number, minBalance: number, pendingVerification: boolean) => {
+    const pendingSpecialty = (worker.specialties || []).some(
+        (specialty: any) => specialty.approvalStatus === 'pending'
+    );
+    const cnicStatus = worker.isVerified ? 'complete' : pendingVerification ? 'pending' : 'missing';
+    const specialtyStatus = pendingSpecialty ? 'pending' : 'complete';
+    const walletStatus = walletBalance >= minBalance ? 'complete' : 'blocked';
+    const blockers: string[] = [];
+    if (cnicStatus !== 'complete') blockers.push('CNIC verification');
+    if (specialtyStatus === 'pending') blockers.push('Specialty approval');
+    if (walletStatus === 'blocked') blockers.push('Minimum wallet balance');
+
+    return {
+        cnic: cnicStatus,
+        specialty: specialtyStatus,
+        wallet: walletStatus,
+        isReady: blockers.length === 0,
+        blockers,
+        walletBalance,
+        minimumWalletBalance: minBalance,
+    };
+};
+
+/**
+ * Worker onboarding pipeline queue
+ * @route GET /api/v1/admin/workers/onboarding
+ */
+export const getWorkerOnboardingQueue = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const walletSettings = await getWalletSettings();
+
+    const query: any = {
+        $or: [
+            { isVerified: false },
+            { specialties: { $elemMatch: { approvalStatus: 'pending' } } },
+        ],
+    };
+
+    if (search) {
+        const searchRegex = new RegExp(escapeRegex(search), 'i');
+        query.$and = [{
+            $or: [
+                { fullName: searchRegex },
+                { phone: searchRegex },
+                { email: searchRegex },
+                { city: searchRegex },
+            ],
+        }];
+    }
+
+    const [workers, total] = await Promise.all([
+        Worker.find(query)
+            .sort({ updatedAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .populate('specialties.categoryId', 'name icon color'),
+        Worker.countDocuments(query),
+    ]);
+
+    const workerIds = workers.map((worker) => worker._id);
+    const [wallets, pendingVerifications] = await Promise.all([
+        WorkerWallet.find({ worker: { $in: workerIds } }).lean(),
+        VerificationRequest.find({ worker: { $in: workerIds }, status: 'pending' }).select('worker').lean(),
+    ]);
+
+    const walletByWorker = new Map(wallets.map((wallet) => [wallet.worker.toString(), Number(wallet.balance || 0)]));
+    const pendingVerificationWorkers = new Set(pendingVerifications.map((request) => request.worker.toString()));
+
+    const rows = workers.map((worker) => {
+        const walletBalance = walletByWorker.get(worker._id.toString()) || 0;
+        const onboarding = buildOnboardingStatus(
+            worker,
+            walletBalance,
+            walletSettings.minimumWalletBalance,
+            pendingVerificationWorkers.has(worker._id.toString())
+        );
+        return {
+            ...worker.toObject(),
+            onboarding,
+        };
+    }).filter((worker) => !worker.onboarding.isReady || walletByWorker.get(worker._id.toString())! < walletSettings.minimumWalletBalance);
+
+    return paginatedResponse(res, 200, 'Worker onboarding queue fetched successfully', rows, page, limit, total);
 });

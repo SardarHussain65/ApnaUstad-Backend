@@ -16,12 +16,14 @@ type NotificationKind =
   | 'worker_verified'
   | 'wallet_topup'
   | 'weekly_earnings'
+  | 'dispute'
   | 'general';
 
 type NotificationOptions = {
   type?: NotificationKind;
   icon?: string;
   color?: string;
+  bookingId?: string;
   idempotencyKey?: string;
   scheduledAt?: Date;
 };
@@ -129,6 +131,7 @@ export const sendNotificationToRecipient = async (
       type: options?.type || 'general',
       icon: options?.icon,
       color: options?.color,
+      booking: options?.bookingId ? new mongoose.Types.ObjectId(options.bookingId) : undefined,
       isRead: false,
       deliveryStatus,
       sentAt: deliveryStatus === NotificationDeliveryStatus.SENT ? new Date() : undefined,

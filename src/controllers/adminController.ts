@@ -207,7 +207,7 @@ export const createAdmin = asyncHandler(async (req: AdminAuthRequest, res: Respo
         throw new BadRequestError("All fields (fullName, email, password, role) are required");
     }
 
-    if (role !== 'admin' && role !== 'superadmin') {
+    if (role !== 'admin' && role !== 'superadmin' && role !== 'support' && role !== 'verifier' && role !== 'finance') {
         throw new BadRequestError("Invalid role specified");
     }
 
@@ -282,4 +282,22 @@ export const deleteAdmin = asyncHandler(async (req: AdminAuthRequest, res: Respo
     await Admin.findByIdAndDelete(id);
 
     return successResponse(res, 200, "Admin account deleted successfully", null);
+});
+
+/**
+ * Distinct cities from customers and workers for admin filters
+ * @route GET /api/v1/admin/meta/cities
+ */
+export const getAdminMetaCities = asyncHandler(async (_req: AdminAuthRequest, res: Response) => {
+    const [userCities, workerCities] = await Promise.all([
+        User.distinct('city', { city: { $exists: true, $nin: [null, ''] } }),
+        Worker.distinct('city', { city: { $exists: true, $nin: [null, ''] } }),
+    ]);
+
+    const cities = [...new Set([...userCities, ...workerCities])]
+        .map((city) => String(city).trim())
+        .filter((city) => city.length > 0)
+        .sort((a, b) => a.localeCompare(b));
+
+    return successResponse(res, 200, "Cities fetched successfully", cities);
 });

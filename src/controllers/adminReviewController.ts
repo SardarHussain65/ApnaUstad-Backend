@@ -18,9 +18,12 @@ export const getAllReviews = asyncHandler(async (req: AdminAuthRequest, res) => 
     const parsedLimit = parseInt(req.query.limit as string, 10);
     const page = Number.isNaN(parsedPage) ? 1 : Math.max(parsedPage, 1);
     const limit = Number.isNaN(parsedLimit) ? 10 : Math.min(Math.max(parsedLimit, 1), 100);
-    const { search, rating, category, dateFrom } = req.query;
+    const { search, rating, category, dateFrom, workerId } = req.query;
 
     const query: any = {};
+    if (workerId) {
+        query.worker = workerId;
+    }
     if (rating) {
         const parsedRating = Number(rating);
         if (!Number.isInteger(parsedRating) || parsedRating < 1 || parsedRating > 5) {

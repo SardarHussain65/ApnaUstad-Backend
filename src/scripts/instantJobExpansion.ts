@@ -5,6 +5,7 @@ import { getIO } from '../sockets/socketManager';
 import logger from '../config/logger';
 import { buildAvailableWorkerFilterForJobType } from '../services/workerJobAvailabilityService';
 import { buildWorkerSpecialtyCategoryFilter } from '../services/workerSpecialtyService';
+import { getPlatformSettings } from '../services/platformSettingsService';
 
 /**
  * Script to handle Instant Job expansion and final timeout
@@ -15,17 +16,20 @@ export const startInstantJobExpansion = () => {
     // Runs every minute
     cron.schedule('* * * * *', async () => {
         try {
+            const platformSettings = await getPlatformSettings();
+            const expansionMs = platformSettings.instantJobExpansionMinutes * 60 * 1000;
+            const timeoutMs = platformSettings.instantJobTimeoutMinutes * 60 * 1000;
+            const expandedRadiusMeters = platformSettings.instantJobExpandedRadiusKm * 1000;
             const now = new Date();
-            const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
-            const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+            const expansionThreshold = new Date(now.getTime() - expansionMs);
+            const timeoutThreshold = new Date(now.getTime() - timeoutMs);
 
-            // 1. Expand Radius for jobs older than 5 mins, not yet expanded, and still open
             const jobsToExpand = await JobPost.find({
                 urgency: 'instant',
                 status: 'open',
                 radiusExpanded: false,
                 isFixedPrice: { $ne: true },
-                createdAt: { $lt: fiveMinutesAgo, $gt: tenMinutesAgo }
+                createdAt: { $lt: expansionThreshold, $gt: timeoutThreshold }
             });
 
             for (const job of jobsToExpand) {
@@ -37,7 +41,7 @@ export const startInstantJobExpansion = () => {
                     location: {
                         $near: {
                             $geometry: job.location,
-                            $maxDistance: 25000 // 25km
+                            $maxDistance: expandedRadiusMeters
                         }
                     }
                 }).limit(20).select('_id');

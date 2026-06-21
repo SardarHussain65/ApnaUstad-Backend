@@ -531,7 +531,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         let finalEstimatedHours = Number(req.body.estimatedHours) || 2;
 
         if (isInstant) {
-            const urgentPrice = calculateUrgentPrice(category, finalEstimatedHours);
+            const urgentPrice = await calculateUrgentPrice(category, finalEstimatedHours);
             finalAmount = urgentPrice.fixedPrice;
             
             const now = new Date();
@@ -1746,7 +1746,7 @@ export const getUrgentPriceEstimate = async (req: AuthRequest, res: Response) =>
             return res.status(400).json({ success: false, message: "Category is required" });
         }
         const hours = Number(estimatedHours) || 2;
-        const estimate = calculateUrgentPrice(String(category), hours);
+        const estimate = await calculateUrgentPrice(String(category), hours);
         return res.status(200).json({
             success: true,
             data: estimate

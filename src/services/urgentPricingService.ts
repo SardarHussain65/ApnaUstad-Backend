@@ -1,6 +1,6 @@
 import JobPost from '../models/JobPost';
 import Worker from '../models/Workers';
-import { getRateForCategory } from '../data/urgentPricingRates';
+import { getUrgentRateForCategory } from './platformSettingsService';
 import { getIO } from '../sockets/socketManager';
 import logger from '../config/logger';
 import { buildWorkerSpecialtyCategoryFilter } from './workerSpecialtyService';
@@ -16,8 +16,8 @@ export interface PriceEstimate {
     breakdown: string;
 }
 
-export function calculateUrgentPrice(category: string, estimatedHours: number): PriceEstimate {
-    const rateInfo = getRateForCategory(category);
+export async function calculateUrgentPrice(category: string, estimatedHours: number): Promise<PriceEstimate> {
+    const rateInfo = await getUrgentRateForCategory(category);
     const baseRate = rateInfo.baseRatePerHour;
     const minPrice = rateInfo.minimumPrice;
     
