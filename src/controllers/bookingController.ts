@@ -4,9 +4,10 @@ import { AuthRequest } from "../middlewares/jwt.middleware";
 import Booking from "../models/Booking";
 import JobPost from "../models/JobPost";
 import Worker from "../models/Workers";
+import Dispute from "../models/Dispute";
 import logger from "../config/logger";
 import { confirmCashPaymentForBooking, syncPaymentForBookingStatus } from "../services/paymentLedgerService";
-import { evaluateDisputeEligibility, assertNoActiveDisputeForBooking } from "../services/disputeService";
+import { evaluateDisputeEligibility, assertNoActiveDisputeForBooking, buildDisputeMeta } from "../services/disputeService";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
 import { buildInsufficientBalanceMessage, calculateCommissionAmount, getWalletEligibility } from "../services/workerWalletService";
 import { workerAcceptsJobType } from "../services/workerJobAvailabilityService";
@@ -76,7 +77,7 @@ const formatDisplayDate = (date?: Date | string) => {
     };
 };
 
-const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker') => {
+const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker', disputeDoc?: any, userId?: string) => {
     const booking = toPlainObject(bookingDoc);
     const person = viewerRole === 'worker' ? booking.customer : booking.worker;
     const isCommunicationLocked = booking.status === 'completed' || booking.status === 'cancelled';
@@ -99,10 +100,13 @@ const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker')
     const mediaVideos = Array.isArray(booking.videoUrls) ? booking.videoUrls : [];
     const mediaAudios = Array.isArray(booking.audioUrls) ? booking.audioUrls : [];
 
+    const disputeMeta = buildDisputeMeta(booking, disputeDoc, userId || '', viewerRole);
+
     return {
         ...booking,
         customer: sanitizePerson(booking.customer),
         worker: sanitizePerson(booking.worker),
+        disputeMeta,
         cardMeta: {
             source: 'booking',
             title: booking.category,
@@ -358,23 +362,19 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
             { path: 'worker', select: 'fullName email phone profileImage category rating totalJobs totalReviews hourlyRate experience city address isVerified isAvailable' }
         ]);
 
+        const dispute = await Dispute.findOne({ booking: booking._id }).lean();
+        const disputeMeta = buildDisputeMeta(booking, dispute, userId!, userType);
+
         const responseBooking = buildBookingCardPayload(
             booking,
-            userType === 'worker' ? 'worker' : 'user'
+            userType === 'worker' ? 'worker' : 'user',
+            dispute,
+            userId
         );
-
-        const disputeMeta = await evaluateDisputeEligibility({
-            booking,
-            userId: userId!,
-            userType,
-        });
 
         res.status(200).json({
             success: true,
-            data: {
-                ...responseBooking,
-                disputeMeta,
-            }
+            data: responseBooking
         });
     } catch (error: any) {
         logger.error("Error in getBookingById:", error);
@@ -399,7 +399,14 @@ export const getUserBookings = async (req: AuthRequest, res: Response) => {
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(limit);
-        const responseBookings = bookings.map((booking) => buildBookingCardPayload(booking, 'user'));
+
+        const bookingIds = bookings.map(b => b._id);
+        const disputes = await Dispute.find({ booking: { $in: bookingIds } }).lean();
+        const disputeMap = new Map(disputes.map(d => [d.booking.toString(), d]));
+
+        const responseBookings = bookings.map((booking) =>
+            buildBookingCardPayload(booking, 'user', disputeMap.get(booking._id.toString()), customerId)
+        );
 
         const total = await Booking.countDocuments({ customer: customerId });
 
@@ -461,6 +468,14 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
         const successRate = total > 0 ? completed / total : 0;
         const totalSpent = Number(spentSummary[0]?.totalSpent || 0);
 
+        const bookingIds = recentBookings.map(b => b._id);
+        const disputes = await Dispute.find({ booking: { $in: bookingIds } }).lean();
+        const disputeMap = new Map(disputes.map(d => [d.booking.toString(), d]));
+
+        const responseRecent = recentBookings.map((booking) =>
+            buildBookingCardPayload(booking, 'user', disputeMap.get(booking._id.toString()), customerId)
+        );
+
         res.status(200).json({
             success: true,
             data: {
@@ -472,7 +487,7 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
                     successRateLabel: total > 0 ? `${Math.round(successRate * 100)}%` : '100%',
                     totalSpent
                 },
-                recentBookings: recentBookings.map((booking) => buildBookingCardPayload(booking, 'user'))
+                recentBookings: responseRecent
             }
         });
     } catch (error: any) {
@@ -517,6 +532,14 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
         const calculatedRevenue = Number(earningSummary[0]?.revenue || 0);
         const profileRevenue = Number((workerProfile as any)?.totalEarnings || 0);
 
+        const bookingIds = recentBookings.map(b => b._id);
+        const disputes = await Dispute.find({ booking: { $in: bookingIds } }).lean();
+        const disputeMap = new Map(disputes.map(d => [d.booking.toString(), d]));
+
+        const responseRecent = recentBookings.map((booking) =>
+            buildBookingCardPayload(booking, 'worker', disputeMap.get(booking._id.toString()), workerId)
+        );
+
         res.status(200).json({
             success: true,
             data: {
@@ -530,7 +553,7 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
                     successRateLabel: total > 0 ? `${Math.round(successRate * 100)}%` : '100%',
                     activeCount: active,
                 },
-                recentBookings: recentBookings.map((booking) => buildBookingCardPayload(booking, 'worker')),
+                recentBookings: responseRecent,
             }
         });
     } catch (error: any) {
@@ -766,7 +789,14 @@ export const getWorkerBookings = async (req: AuthRequest, res: Response) => {
             .sort({ createdAt: -1 }) // Newest first — ensures cancelled/recent bookings are always visible
             .skip(skip)
             .limit(limit);
-        const responseBookings = bookings.map((booking) => buildBookingCardPayload(booking, 'worker'));
+
+        const bookingIds = bookings.map(b => b._id);
+        const disputes = await Dispute.find({ booking: { $in: bookingIds } }).lean();
+        const disputeMap = new Map(disputes.map(d => [d.booking.toString(), d]));
+
+        const responseBookings = bookings.map((booking) =>
+            buildBookingCardPayload(booking, 'worker', disputeMap.get(booking._id.toString()), workerId)
+        );
 
         const total = await Booking.countDocuments(query);
 

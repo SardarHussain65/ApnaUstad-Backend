@@ -33,7 +33,7 @@ export const getDisputeStatusLabel = (status: IDispute['status'] | null) => {
     }
 };
 
-const getDisputeNextStep = (status: IDispute['status'] | null) => {
+export const getDisputeNextStep = (status: IDispute['status'] | null) => {
     switch (status) {
         case 'open':
             return 'ApnaUstad team will review your report and may contact both parties.';
@@ -87,30 +87,26 @@ const getDisputeWindowStart = (booking: any) => {
     return null;
 };
 
-export const evaluateDisputeEligibility = async ({
-    booking,
-    userId,
-    userType,
-}: {
-    booking: any;
-    userId: string;
-    userType?: string | undefined;
-}): Promise<BookingDisputeMeta> => {
+export const buildDisputeMeta = (
+    booking: any,
+    dispute: any,
+    userId: string,
+    userType?: string
+): BookingDisputeMeta => {
     const bookingAmount = getBookingJobAmount(booking);
-    const existing = await Dispute.findOne({ booking: booking._id }).lean();
 
-    if (existing) {
+    if (dispute) {
         return {
             hasDispute: true,
-            disputeId: String(existing._id),
-            disputeStatus: existing.status,
+            disputeId: String(dispute._id),
+            disputeStatus: dispute.status,
             canRaiseDispute: false,
             canRaiseDisputeReason: 'A complaint is already open on this booking.',
             bookingAmount,
-            amountDisputed: existing.amountDisputed,
-            raisedByType: existing.raisedByType,
-            statusLabel: getDisputeStatusLabel(existing.status),
-            nextStep: getDisputeNextStep(existing.status),
+            amountDisputed: dispute.amountDisputed,
+            raisedByType: dispute.raisedByType,
+            statusLabel: getDisputeStatusLabel(dispute.status),
+            nextStep: getDisputeNextStep(dispute.status),
         };
     }
 
@@ -171,6 +167,19 @@ export const evaluateDisputeEligibility = async ({
         canRaiseDispute: true,
         bookingAmount,
     };
+};
+
+export const evaluateDisputeEligibility = async ({
+    booking,
+    userId,
+    userType,
+}: {
+    booking: any;
+    userId: string;
+    userType?: string | undefined;
+}): Promise<BookingDisputeMeta> => {
+    const existing = await Dispute.findOne({ booking: booking._id }).lean();
+    return buildDisputeMeta(booking, existing, userId, userType);
 };
 
 export const notifyPartiesAboutNewDispute = async (dispute: IDispute, booking: any) => {
