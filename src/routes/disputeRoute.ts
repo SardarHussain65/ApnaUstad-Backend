@@ -1,6 +1,6 @@
 // src/routes/disputeRoute.ts
 import { Router } from "express";
-import { raiseDispute, getMyDisputes } from "../controllers/disputeController";
+import { raiseDispute, getMyDisputes, getDisputeByBooking } from "../controllers/disputeController";
 import { jwtAuthMiddleware } from "../middlewares/jwt.middleware";
 
 const router = Router();
@@ -15,6 +15,12 @@ router.use(jwtAuthMiddleware);
  * @access Private (User or Worker)
  */
 router.post("/", raiseDispute);
+
+/**
+ * @description Get dispute context for a booking
+ * @access Private (User or Worker on that booking)
+ */
+router.get("/booking/:bookingId", getDisputeByBooking);
 
 /**
  * @description Get disputes involving the logged-in client or worker

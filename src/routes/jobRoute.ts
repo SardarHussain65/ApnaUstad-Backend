@@ -14,7 +14,8 @@ import {
     withdrawBid,
     uploadJobImages,
     cancelJobPost,
-    getUrgentPriceEstimate
+    getUrgentPriceEstimate,
+    escalateJobPostManually
 } from "../controllers/jobPostController";
 import { handleJobImagesUpload } from "../middlewares/multer.middleware";
 import validate from "../middlewares/validate.middleware";
@@ -60,6 +61,9 @@ router.post("/:jobId/accept-instant", workerAuthMiddleware, acceptInstantJob);
 
 // Cancel a job post (for users)
 router.post("/:jobId/cancel", userAuthMiddleware, cancelJobPost);
+
+// Manually escalate/boost an urgent job's price (for users)
+router.post("/:jobId/escalate", userAuthMiddleware, escalateJobPostManually);
 
 // Get a single job post
 router.get("/:jobId", jwtAuthMiddleware, getJobPostById);

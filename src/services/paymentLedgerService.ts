@@ -2,6 +2,7 @@ import Payment from "../models/Payment";
 import Worker from "../models/Workers";
 import mongoose from "mongoose";
 import { settleCommissionReservation } from "./commissionReservationService";
+import { assertNoActiveDisputeForBooking } from "./disputeService";
 
 const buildReceiptNumber = (bookingId: string) => {
     const suffix = bookingId.slice(-6).toUpperCase();
@@ -70,6 +71,8 @@ export const confirmCashPaymentForBooking = async (
     confirmedBy: 'customer' | 'worker' | 'admin' = 'customer',
     notes = ''
 ) => {
+    await assertNoActiveDisputeForBooking(booking._id);
+
     const session = await mongoose.startSession();
     let confirmedPayment: any = null;
 

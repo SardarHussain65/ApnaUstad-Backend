@@ -16,7 +16,7 @@ export interface INotification extends Document {
   title: string;
   message: string;
   type: 'booking_accepted' | 'booking_cancelled' | 'job_started' | 'job_completed' | 
-        'payment_received' | 'new_review' | 'worker_verified' | 'wallet_topup' | 'weekly_earnings' | 'general';
+        'payment_received' | 'new_review' | 'worker_verified' | 'wallet_topup' | 'weekly_earnings' | 'dispute' | 'general';
   icon: string;
   color: string;
   booking?: mongoose.Types.ObjectId | null;
@@ -79,7 +79,7 @@ const notificationSchema = new Schema<INotification>(
       type: String,
       enum: ['booking_accepted', 'booking_cancelled', 'job_started', 
              'job_completed', 'payment_received', 'new_review', 
-             'worker_verified', 'wallet_topup', 'weekly_earnings', 'general'],
+             'worker_verified', 'wallet_topup', 'weekly_earnings', 'dispute', 'general'],
       default: 'general',
       index: true
     },

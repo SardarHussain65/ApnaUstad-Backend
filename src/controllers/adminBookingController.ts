@@ -3,6 +3,7 @@ import Payment from "../models/Payment";
 import JobPost from "../models/JobPost";
 import User from "../models/User";
 import Worker from "../models/Workers";
+import Message from "../models/Message";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
@@ -223,4 +224,20 @@ export const cancelBooking = asyncHandler(async (req: AdminAuthRequest, res) => 
     } catch (err) {}
 
     return successResponse(res, 200, "Booking cancelled successfully by Admin override", booking);
+});
+
+/**
+ * Read-only booking chat for admin investigations
+ * @route GET /api/v1/admin/bookings/:id/messages
+ */
+export const getAdminBookingMessages = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const booking = await Booking.findById(req.params.id).select('_id');
+    if (!booking) throw new NotFoundError("Booking not found");
+
+    const messages = await Message.find({ booking: booking._id })
+        .sort({ createdAt: 1 })
+        .limit(200)
+        .lean();
+
+    return successResponse(res, 200, "Booking messages fetched successfully", messages);
 });

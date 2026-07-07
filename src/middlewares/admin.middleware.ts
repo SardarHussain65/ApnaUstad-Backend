@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import Admin, { IAdmin } from '../models/Admin';
 import { getConfig } from '../config/env';
 import { UnauthorizedError, ForbiddenError } from '../utils/ApiError';
+import { AdminPermission, hasAdminPermission } from '../config/adminPermissions';
 
 const config = getConfig();
 
@@ -65,4 +66,15 @@ export const isSuperAdmin = (req: AdminAuthRequest, res: Response, next: NextFun
         return next(new ForbiddenError('Forbidden: Super Admin access required'));
     }
     next();
+};
+
+export const requirePermission = (...permissions: AdminPermission[]) => {
+    return (req: AdminAuthRequest, _res: Response, next: NextFunction) => {
+        const role = req.admin?.role || '';
+        const allowed = permissions.some((permission) => hasAdminPermission(role, permission));
+        if (!allowed) {
+            return next(new ForbiddenError('Forbidden: insufficient permissions for this action'));
+        }
+        next();
+    };
 };

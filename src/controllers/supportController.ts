@@ -1,6 +1,6 @@
 import { Response, Request } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
-import { successResponse } from '../utils/ApiResponse';
+import { successResponse, paginatedResponse } from '../utils/ApiResponse';
 import { helpTopics, helpArticles, supportChannels } from '../data/helpCenter';
 import { SupportRequest } from '../models/SupportRequest';
 import PushToken from '../models/PushToken';
@@ -72,6 +72,8 @@ export const createSupportRequest = asyncHandler(async (req: Request, res: Respo
 
 export const listSupportRequests = asyncHandler(async (req: Request, res: Response) => {
   const { status, search, priority } = req.query;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 20));
   const filter: any = {};
 
   if (status) {
@@ -92,8 +94,11 @@ export const listSupportRequests = asyncHandler(async (req: Request, res: Respon
     ];
   }
 
-  const docs = await SupportRequest.find(filter).sort({ createdAt: -1 }).limit(200);
-  return successResponse(res, 200, 'Support requests fetched', docs);
+  const [docs, total] = await Promise.all([
+    SupportRequest.find(filter).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
+    SupportRequest.countDocuments(filter),
+  ]);
+  return paginatedResponse(res, 200, 'Support requests fetched', docs, page, limit, total);
 });
 
 export const getSupportRequest = asyncHandler(async (req: Request, res: Response) => {

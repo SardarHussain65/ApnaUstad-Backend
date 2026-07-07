@@ -30,7 +30,7 @@ import {
     getWorkerActiveSpecialtyNames,
     workerCanPerformCategory
 } from "../services/workerSpecialtyService";
-import { calculateUrgentPrice, scheduleEscalation } from "../services/urgentPricingService";
+import { calculateUrgentPrice, scheduleEscalation, manuallyEscalateJobPrice } from "../services/urgentPricingService";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
@@ -393,10 +393,13 @@ const buildJobPostDetailPayload = async (
     const customerStats = customerStatsById.get(customerId) || { totalJobs: 0, completedJobs: 0 };
     const media = buildJobMediaMeta(job);
     const schedule = formatJobDate(job.scheduledDate || job.createdAt);
-    const [bidCount, pendingBidCount, acceptedBidCount] = await Promise.all([
+    const [bidCount, pendingBidCount, acceptedBidCount, booking] = await Promise.all([
         JobBid.countDocuments({ jobPost: job._id }),
         JobBid.countDocuments({ jobPost: job._id, status: 'pending' }),
         JobBid.countDocuments({ jobPost: job._id, status: 'accepted' }),
+        job.status === 'assigned' || job.status === 'ongoing' || job.status === 'completed'
+            ? mongoose.model('Booking').findOne({ jobPost: job._id }).populate('worker', WORKER_BID_PROFILE_SELECT)
+            : Promise.resolve(null),
     ]);
     const statusInfo = job.status === 'cancelled'
         ? { value: job.status, label: 'Cancelled', tone: 'danger', accentColor: '#FF3B30' }
@@ -413,6 +416,8 @@ const buildJobPostDetailPayload = async (
         ...job,
         bidCount,
         pendingBidCount,
+        bookingId: booking ? booking._id.toString() : null,
+        assignedWorker: booking ? booking.worker : null,
         media,
         clientMeta: {
             _id: customer?._id || customerId,
@@ -531,7 +536,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         let finalEstimatedHours = Number(req.body.estimatedHours) || 2;
 
         if (isInstant) {
-            const urgentPrice = calculateUrgentPrice(category, finalEstimatedHours);
+            const urgentPrice = await calculateUrgentPrice(category, finalEstimatedHours);
             finalAmount = urgentPrice.fixedPrice;
             
             const now = new Date();
@@ -613,6 +618,10 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             }
         }).limit(10).select('_id category specialties hourlyRate location');
 
+        // Save notified workers count
+        jobPost.notifiedWorkersCount = nearbyWorkers.length;
+        await jobPost.save();
+
         logger.info(`📡 Found ${nearbyWorkers.length} workers to notify: ${nearbyWorkers.map(w => w._id).join(', ')}`);
 
         // Broadcast to relevant workers via sockets and push notifications
@@ -682,15 +691,11 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         if (!Number.isFinite(proposedAmount) || proposedAmount <= 0) {
             return res.status(400).json({ success: false, message: "Proposed price must be a positive number" });
         }
-        if (jobPost.isFixedPrice && jobPost.urgency === 'instant') {
-            if (proposedAmount !== jobPost.amount) {
-                return res.status(400).json({
-                    success: false,
-                    message: "This is a fixed-price urgent job. Counter-offers are not allowed."
-                });
-            }
+        let finalMessage = String(message || '').trim();
+        if (jobPost.urgency === 'instant' && !finalMessage) {
+            finalMessage = "Urgent Counter-Offer";
         }
-        if (!String(message || '').trim()) {
+        if (!finalMessage) {
             return res.status(400).json({ success: false, message: "A short proposal message is required" });
         }
 
@@ -707,6 +712,37 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
             });
         }
 
+        // Check if bid already exists
+        const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId });
+        if (existingBid) {
+            if (jobPost.urgency === 'instant') {
+                const parsedEstimatedDays = estimatedDays ? Number(estimatedDays) : undefined;
+                existingBid.proposedPrice = proposedAmount;
+                existingBid.priceMode = proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer';
+                existingBid.clientOfferSnapshot = clientOffer;
+                existingBid.message = finalMessage;
+                existingBid.commissionRateSnapshot = walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0;
+                existingBid.status = 'pending';
+                if (Number.isFinite(parsedEstimatedDays) && parsedEstimatedDays! > 0) {
+                    existingBid.estimatedDays = parsedEstimatedDays;
+                }
+                await existingBid.save();
+
+                const io = getIO();
+                await existingBid.populate('worker', WORKER_BID_PROFILE_SELECT);
+                io.to(`user:${jobPost.customer.toString()}`).emit('bid:new', existingBid);
+                io.to(`worker:${workerId.toString()}`).emit('bid:submitted', { bidId: existingBid._id, jobId: jobPost._id });
+
+                return res.status(200).json({
+                    success: true,
+                    data: existingBid,
+                    message: "Bid updated successfully"
+                });
+            } else {
+                return res.status(400).json({ success: false, message: "You have already placed a bid on this job." });
+            }
+        }
+
         // Check Max Bids
         const bidCount = await JobBid.countDocuments({ jobPost: jobId });
         if (bidCount >= MAX_BIDS && jobPost.urgency !== 'instant') {
@@ -718,7 +754,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         const newBid = await JobBid.create({
             jobPost: jobId,
             worker: workerId,
-            message: String(message).trim(),
+            message: finalMessage,
             proposedPrice: proposedAmount,
             priceMode: proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer',
             clientOfferSnapshot: clientOffer,
@@ -945,9 +981,13 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             await syncPaymentForBookingStatus(booking, session);
         });
 
+        // Populate customer details for the worker notification
+        const populatedBooking = await Booking.findById(booking._id)
+            .populate('customer', 'fullName profileImage phone');
+
         // Notify winner and losers via sockets and push notifications
         const io = getIO();
-        io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking });
+        io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking || booking });
 
         sendNotificationToRecipient(
             bid.worker,
@@ -1339,242 +1379,176 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "This job post has expired" });
         }
 
-        if (jobPost.isFixedPrice) {
-            const session = await mongoose.startSession();
-            let booking: any = null;
-            try {
-                await session.withTransaction(async () => {
-                    // Re-fetch job post with session
-                    const job = await JobPost.findOne({ _id: jobId, status: 'open' }).session(session);
-                    if (!job) {
-                        const error = new Error("Job is no longer available for assignment");
-                        (error as any).statusCode = 409;
-                        throw error;
-                    }
+        const session = await mongoose.startSession();
+        let booking: any = null;
+        try {
+            await session.withTransaction(async () => {
+                // Re-fetch job post with session
+                const job = await JobPost.findOne({ _id: jobId, status: 'open' }).session(session);
+                if (!job) {
+                    const error = new Error("Job is no longer available for assignment");
+                    (error as any).statusCode = 409;
+                    throw error;
+                }
 
-                    // Check if worker already has bid (just to be safe)
-                    const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId }).session(session);
-                    if (existingBid) {
-                        const error = new Error("You have already accepted this mission.");
-                        (error as any).statusCode = 400;
-                        throw error;
-                    }
+                // Check if worker already has bid (just to be safe)
+                const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId }).session(session);
+                if (existingBid) {
+                    const error = new Error("You have already accepted this mission.");
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
 
-                    const workerProfile = await Worker.findById(workerId).session(session);
-                    if (!workerProfile) {
-                        const error = new Error("Worker profile not found");
-                        (error as any).statusCode = 404;
-                        throw error;
-                    }
+                const workerProfile = await Worker.findById(workerId).session(session);
+                if (!workerProfile) {
+                    const error = new Error("Worker profile not found");
+                    (error as any).statusCode = 404;
+                    throw error;
+                }
 
-                    if (!workerAcceptsJobType(workerProfile, 'instant')) {
-                        const error = new Error("Instant job availability is turned off. Enable it before accepting this mission.");
-                        (error as any).statusCode = 403;
-                        throw error;
-                    }
-                    if (!await workerCanPerformCategory(workerId, job.category)) {
-                        const error = new Error("This job does not match an active approved specialty on your profile.");
-                        (error as any).statusCode = 403;
-                        throw error;
-                    }
+                if (!workerAcceptsJobType(workerProfile, 'instant')) {
+                    const error = new Error("Instant job availability is turned off. Enable it before accepting this mission.");
+                    (error as any).statusCode = 403;
+                    throw error;
+                }
+                if (!await workerCanPerformCategory(workerId, job.category)) {
+                    const error = new Error("This job does not match an active approved specialty on your profile.");
+                    (error as any).statusCode = 403;
+                    throw error;
+                }
 
-                    const proposedPrice = Number(job.amount || 0);
-                    if (!Number.isFinite(proposedPrice) || proposedPrice <= 0) {
-                        const error = new Error("This job does not have a valid fixed price.");
-                        (error as any).statusCode = 400;
-                        throw error;
-                    }
+                const proposedPrice = Number(job.amount || job.pricing?.clientOffer || 0);
+                if (!Number.isFinite(proposedPrice) || proposedPrice <= 0) {
+                    const error = new Error("This job does not have a valid fixed price.");
+                    (error as any).statusCode = 400;
+                    throw error;
+                }
 
-                    const commissionAmount = await calculateCommissionAmount(proposedPrice);
-                    const walletSettings = await getWalletSettings();
-                    const walletEligibility = await getWalletEligibility(workerId, commissionAmount, session);
-                    if (!walletEligibility.isEligible) {
-                        const error = new Error(buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance));
-                        (error as any).statusCode = 402;
-                        (error as any).requiredBalance = walletEligibility.requiredBalance;
-                        (error as any).currentBalance = walletEligibility.availableBalance;
-                        throw error;
-                    }
+                const commissionAmount = await calculateCommissionAmount(proposedPrice);
+                const walletSettings = await getWalletSettings();
+                const walletEligibility = await getWalletEligibility(workerId, commissionAmount, session);
+                if (!walletEligibility.isEligible) {
+                    const error = new Error(buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance));
+                    (error as any).statusCode = 402;
+                    (error as any).requiredBalance = walletEligibility.requiredBalance;
+                    (error as any).currentBalance = walletEligibility.availableBalance;
+                    throw error;
+                }
 
-                    const workerNetIncome = Math.max(0, proposedPrice - commissionAmount);
+                const workerNetIncome = Math.max(0, proposedPrice - commissionAmount);
 
-                    // Create Bid immediately as accepted
-                    const [newBid] = await JobBid.create([{
-                        jobPost: jobId,
-                        worker: workerId,
-                        message: "Instant Fixed Price Mission Acceptance",
-                        proposedPrice,
-                        priceMode: 'accepted_offer',
-                        clientOfferSnapshot: proposedPrice,
+                // Create Bid immediately as accepted
+                const [newBid] = await JobBid.create([{
+                    jobPost: jobId,
+                    worker: workerId,
+                    message: "Instant Fixed Price Mission Acceptance",
+                    proposedPrice,
+                    priceMode: 'accepted_offer',
+                    clientOfferSnapshot: proposedPrice,
+                    commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
+                    status: 'accepted'
+                }], { session });
+
+                // Create Booking
+                const [createdBooking] = await Booking.create([{
+                    jobPost: job._id,
+                    acceptedBid: newBid._id,
+                    customer: job.customer,
+                    worker: workerId,
+                    category: job.category,
+                    description: job.description,
+                    scheduledDate: job.scheduledDate,
+                    scheduledTime: job.scheduledTime,
+                    estimatedHours: job.estimatedHours || 2,
+                    hourlyRate: workerProfile.hourlyRate || 0,
+                    subtotal: proposedPrice,
+                    platformFee: commissionAmount,
+                    totalAmount: proposedPrice,
+                    workerEarning: workerNetIncome,
+                    agreement: {
+                        clientOffer: proposedPrice,
+                        agreedPrice: proposedPrice,
+                        cashDue: proposedPrice,
+                        priceSource: 'accepted_offer',
                         commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
-                        status: 'accepted'
-                    }], { session });
+                        commissionAmount,
+                        workerNetIncome,
+                        lockedAt: new Date(),
+                        pricingVersion: job.urgencyPricingVersion || 1
+                    },
+                    address: job.address,
+                    location: job.location,
+                    imageUrls: job.imageUrls || [],
+                    videoUrls: job.videoUrls || [],
+                    audioUrls: job.audioUrls || [],
+                    bookingType: job.urgency,
+                    status: 'accepted',
+                    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+                }], { session });
 
-                    // Create Booking
-                    const [createdBooking] = await Booking.create([{
-                        jobPost: job._id,
-                        acceptedBid: newBid._id,
-                        customer: job.customer,
-                        worker: workerId,
-                        category: job.category,
-                        description: job.description,
-                        scheduledDate: job.scheduledDate,
-                        scheduledTime: job.scheduledTime,
-                        estimatedHours: job.estimatedHours || 2,
-                        hourlyRate: workerProfile.hourlyRate || 0,
-                        subtotal: proposedPrice,
-                        platformFee: commissionAmount,
-                        totalAmount: proposedPrice,
-                        workerEarning: workerNetIncome,
-                        agreement: {
-                            clientOffer: proposedPrice,
-                            agreedPrice: proposedPrice,
-                            cashDue: proposedPrice,
-                            priceSource: 'accepted_offer',
-                            commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
-                            commissionAmount,
-                            workerNetIncome,
-                            lockedAt: new Date(),
-                            pricingVersion: job.urgencyPricingVersion || 1
-                        },
-                        address: job.address,
-                        location: job.location,
-                        imageUrls: job.imageUrls || [],
-                        videoUrls: job.videoUrls || [],
-                        audioUrls: job.audioUrls || [],
-                        bookingType: job.urgency,
-                        status: 'accepted',
-                        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-                    }], { session });
+                if (!createdBooking) throw new Error("Unable to create booking");
+                booking = createdBooking;
 
-                    if (!createdBooking) throw new Error("Unable to create booking");
-                    booking = createdBooking;
+                // Reserve commission
+                await reserveCommission({
+                    workerId,
+                    bookingId: booking._id,
+                    jobPostId: job._id,
+                    bidId: newBid._id,
+                    amount: commissionAmount,
+                    commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0
+                }, { session });
 
-                    // Reserve commission
-                    await reserveCommission({
-                        workerId,
-                        bookingId: booking._id,
-                        jobPostId: job._id,
-                        bidId: newBid._id,
-                        amount: commissionAmount,
-                        commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0
-                    }, { session });
+                // Update JobPost status to assigned
+                job.status = 'assigned';
+                await job.save({ session });
 
-                    // Update JobPost status to assigned
-                    job.status = 'assigned';
-                    await job.save({ session });
-
-                    await syncPaymentForBookingStatus(booking, session);
-                });
-
-                // Populate booking details for response
-                const populatedBooking = await Booking.findById(booking._id)
-                    .populate('worker', WORKER_BID_PROFILE_SELECT)
-                    .populate('customer', 'fullName profileImage phone');
-
-                // Sockets and Push Notifications
-                const io = getIO();
-                
-                // 1. Emit job:auto_assigned to Customer
-                const clientRoomName = `user:${jobPost.customer.toString()}`;
-                logger.info(`📡 [Urgent Auto-Assign] Emitting job:auto_assigned to room ${clientRoomName} for booking ${booking._id}`);
-                io.to(clientRoomName).emit('job:auto_assigned', populatedBooking);
-
-                // 2. Emit bid:won to Worker
-                io.to(`worker:${workerId.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
-
-                // 3. Send Push Notifications
-                sendNotificationToRecipient(
-                    jobPost.customer,
-                    'user',
-                    'Ustad Assigned! ⚡',
-                    `An Ustad has accepted your urgent request! They are on their way.`,
-                    { bookingId: booking._id.toString(), type: 'bid_accepted' }
-                ).catch(err => logger.error(`Failed to send customer auto-assign notification:`, err));
-
-                return res.status(200).json({
-                    success: true,
-                    data: populatedBooking,
-                    message: "Job accepted and assigned instantly."
-                });
-
-            } catch (error: any) {
-                logger.error("Error in acceptInstantJob transaction:", error);
-                const statusCode = error.statusCode || 500;
-                return res.status(statusCode).json({
-                    success: false,
-                    message: error.message || "Failed to auto-assign job.",
-                    requiredBalance: error.requiredBalance,
-                    currentBalance: error.currentBalance
-                });
-            } finally {
-                session.endSession();
-            }
-        }
-
-        // Check if worker already bid
-        const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId });
-        if (existingBid) {
-            return res.status(400).json({ success: false, message: "You have already accepted this mission." });
-        }
-
-        // Create a Bid instead of assigning immediately (legacy flow)
-        const workerProfile = await Worker.findById(workerId);
-        if (!workerAcceptsJobType(workerProfile, 'instant')) {
-            return res.status(403).json({
-                success: false,
-                message: "Instant job availability is turned off. Enable it before accepting this mission."
+                await syncPaymentForBookingStatus(booking, session);
             });
-        }
-        if (!await workerCanPerformCategory(workerId, jobPost.category)) {
-            return res.status(403).json({ success: false, message: "This job does not match an active approved specialty on your profile." });
-        }
-        const proposedPrice = Number(jobPost.pricing?.clientOffer || jobPost.amount || 0);
-        if (!Number.isFinite(proposedPrice) || proposedPrice <= 0) {
-            return res.status(409).json({
-                success: false,
-                message: "This legacy job does not have a valid client offer. Ask the client to post a new request."
+
+            // Populate booking details for response
+            const populatedBooking = await Booking.findById(booking._id)
+                .populate('worker', WORKER_BID_PROFILE_SELECT)
+                .populate('customer', 'fullName profileImage phone');
+
+            // Sockets and Push Notifications
+            const io = getIO();
+            
+            // 1. Emit job:auto_assigned to Customer
+            const clientRoomName = `user:${jobPost.customer.toString()}`;
+            logger.info(`📡 [Urgent Auto-Assign] Emitting job:auto_assigned to room ${clientRoomName} for booking ${booking._id}`);
+            io.to(clientRoomName).emit('job:auto_assigned', populatedBooking);
+
+            // 2. Emit bid:won to Worker
+            io.to(`worker:${workerId.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
+
+            // 3. Send Push Notifications
+            sendNotificationToRecipient(
+                jobPost.customer,
+                'user',
+                'Ustad Assigned! ⚡',
+                `An Ustad has accepted your urgent request! They are on their way.`,
+                { bookingId: booking._id.toString(), type: 'bid_accepted' }
+            ).catch(err => logger.error(`Failed to send customer auto-assign notification:`, err));
+
+            return res.status(200).json({
+                success: true,
+                data: populatedBooking,
+                message: "Job accepted and assigned instantly."
             });
-        }
-        const estimatedCommission = await calculateCommissionAmount(proposedPrice);
-        const walletSettings = await getWalletSettings();
-        const walletEligibility = await getWalletEligibility(workerId, estimatedCommission);
-        if (!walletEligibility.isEligible) {
-            return res.status(402).json({
+
+        } catch (error: any) {
+            logger.error("Error in acceptInstantJob transaction:", error);
+            const statusCode = error.statusCode || 500;
+            return res.status(statusCode).json({
                 success: false,
-                requiredBalance: walletEligibility.requiredBalance,
-                currentBalance: walletEligibility.availableBalance,
-                message: buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance)
+                message: error.message || "Failed to auto-assign job.",
+                requiredBalance: error.requiredBalance,
+                currentBalance: error.currentBalance
             });
+        } finally {
+            session.endSession();
         }
-
-        const newBid = await JobBid.create({
-            jobPost: jobId,
-            worker: workerId,
-            message: "Instant Mission Acceptance",
-            proposedPrice,
-            priceMode: 'accepted_offer',
-            clientOfferSnapshot: proposedPrice,
-            commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
-            status: 'pending'
-        });
-
-        // Populate worker details for the client
-        await newBid.populate('worker', WORKER_BID_PROFILE_SELECT);
-
-        const io = getIO();
-
-        // Notify client that a worker is interested
-        const roomName = `user:${jobPost.customer.toString()}`;
-        logger.info(`📡 Emitting bid:new to room ${roomName} for worker ${workerProfile?.fullName}`);
-        io.to(roomName).emit('bid:new', newBid);
-        io.to(`worker:${workerId.toString()}`).emit('bid:submitted', { bidId: newBid._id, jobId: jobPost._id });
-
-        res.status(200).json({
-            success: true,
-            data: newBid,
-            message: "Mission interest registered. Waiting for client confirmation."
-        });
 
     } catch (error: any) {
         logger.error("Error in acceptInstantJob:", error);
@@ -1715,7 +1689,7 @@ export const getUrgentPriceEstimate = async (req: AuthRequest, res: Response) =>
             return res.status(400).json({ success: false, message: "Category is required" });
         }
         const hours = Number(estimatedHours) || 2;
-        const estimate = calculateUrgentPrice(String(category), hours);
+        const estimate = await calculateUrgentPrice(String(category), hours);
         return res.status(200).json({
             success: true,
             data: estimate
@@ -1723,5 +1697,38 @@ export const getUrgentPriceEstimate = async (req: AuthRequest, res: Response) =>
     } catch (error: any) {
         logger.error("Error in getUrgentPriceEstimate:", error);
         return res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+/**
+ * @description Manually escalate the pricing of an urgent job post by 15% and expand radius
+ * @route POST /api/v1/jobs/:jobId/escalate
+ * @access Private (User)
+ */
+export const escalateJobPostManually = async (req: AuthRequest, res: Response) => {
+    try {
+        const customerId = req.tokenPayload?.id;
+        if (!customerId) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+        const { jobId } = req.params;
+        if (!jobId || typeof jobId !== 'string') {
+            return res.status(400).json({ success: false, message: "Invalid Job ID" });
+        }
+        const jobPost = await JobPost.findById(jobId);
+        if (!jobPost) return res.status(404).json({ success: false, message: "Job post not found" });
+
+        if (jobPost.customer.toString() !== customerId) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not the owner of this job post." });
+        }
+
+        const result = await manuallyEscalateJobPrice(jobId);
+        return res.status(200).json({
+            success: true,
+            data: result,
+            message: "Job pricing escalated successfully."
+        });
+    } catch (error: any) {
+        logger.error("Error in escalateJobPostManually:", error);
+        return res.status(500).json({ success: false, message: error.message || "Internal server error" });
     }
 };

@@ -16,6 +16,14 @@ export interface IDispute extends Document {
   resolutionDetails?: string;
   resolvedBy?: mongoose.Types.ObjectId;
   resolvedAt?: Date;
+  moderationApplied?: {
+    warnedCustomer?: boolean;
+    warnedWorker?: boolean;
+    workerPenalty?: number;
+    customerRefund?: number;
+    customerBlocked?: boolean;
+    workerBlocked?: boolean;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,7 +53,15 @@ const disputeSchema = new Schema<IDispute>(
     adminNotes: { type: String, trim: true, default: '' },
     resolutionDetails: { type: String, trim: true, default: '' },
     resolvedBy: { type: Schema.Types.ObjectId, ref: 'Admin', default: null },
-    resolvedAt: { type: Date, default: null }
+    resolvedAt: { type: Date, default: null },
+    moderationApplied: {
+      warnedCustomer: { type: Boolean, default: false },
+      warnedWorker: { type: Boolean, default: false },
+      workerPenalty: { type: Number, default: 0, min: 0 },
+      customerRefund: { type: Number, default: 0, min: 0 },
+      customerBlocked: { type: Boolean, default: false },
+      workerBlocked: { type: Boolean, default: false },
+    },
   },
   { timestamps: true }
 );
