@@ -19,7 +19,10 @@ import * as adminPromoController from '../controllers/promoController';
 import * as adminVerificationController from '../controllers/adminVerificationController';
 import * as adminPlatformController from '../controllers/adminPlatformController';
 import * as workerSpecialtyController from '../controllers/workerSpecialtyController';
-import { adminAuthMiddleware, isSuperAdmin, requirePermission } from '../middlewares/admin.middleware';
+import * as adminProfessionRequestController from '../controllers/adminProfessionRequestController';
+import * as adminInsightsController from '../controllers/adminInsightsController';
+import * as adminExportController from '../controllers/adminExportController';
+import { adminAuthMiddleware, adminGuardMiddleware, isSuperAdmin, requirePermission, requireAction } from '../middlewares/admin.middleware';
 import validate from '../middlewares/validate.middleware';
 import { loginAdminSchema } from '../validations/admin.validation';
 import { createCategorySchema, updateCategorySchema } from '../validations/category.validation';
@@ -30,12 +33,18 @@ const router = Router();
 router.post('/login', authLimiter, validate(loginAdminSchema), adminController.loginAdmin);
 
 router.use(adminAuthMiddleware);
+router.use(adminGuardMiddleware);
 
 router.get('/me', adminController.getAdminProfile);
 router.patch('/me', adminController.updateAdminProfile);
 router.post('/change-password', adminController.changeAdminPassword);
+router.get('/search', adminInsightsController.globalSearch);
 router.get('/meta/cities', requirePermission('users', 'workers', 'jobs', 'bookings'), adminController.getAdminMetaCities);
 router.get('/dashboard/stats', requirePermission('dashboard'), adminController.getDashboardStats);
+router.get('/dashboard/summary', requirePermission('dashboard'), adminInsightsController.getSummary);
+router.get('/analytics/timeseries', requirePermission('dashboard', 'reports'), adminInsightsController.getTimeseriesHandler);
+router.get('/dashboard/action-counts', adminInsightsController.getActionCountsHandler);
+router.get('/export/:entity', requirePermission('reports'), adminExportController.streamExport);
 
 router.get('/users', requirePermission('users'), adminUserController.getAllUsers);
 router.get('/users/:id', requirePermission('users'), adminUserController.getUserDetails);
@@ -47,11 +56,16 @@ router.get('/workers/:id', requirePermission('workers'), adminWorkerController.g
 router.patch('/workers/:id/verify', requirePermission('verification', 'workers'), adminWorkerController.verifyWorker);
 router.patch('/workers/:id/status', requirePermission('workers'), adminWorkerController.toggleWorkerStatus);
 router.patch('/workers/:id', requirePermission('workers'), adminWorkerController.updateWorkerProfile);
+router.post('/workers/:id/reveal-cnic', requirePermission('workers', 'verification'), adminInsightsController.revealWorkerCnic);
+router.patch('/workers/:id/certificates/:certId/review', requirePermission('verification', 'workers'), adminWorkerController.reviewWorkerCertificate);
 router.get('/specialty-requests', requirePermission('specialty-requests', 'workers'), workerSpecialtyController.getPendingSpecialtyRequests);
 router.patch('/workers/:workerId/specialties/:categoryId/review', requirePermission('specialty-requests', 'workers'), workerSpecialtyController.reviewSpecialtyRequest);
 
 router.get('/verification/requests', requirePermission('verification'), adminVerificationController.getVerificationRequests);
 router.patch('/verification/requests/:id/review', requirePermission('verification'), adminVerificationController.reviewVerificationRequest);
+
+router.get('/profession-requests', requirePermission('categories', 'workers'), adminProfessionRequestController.getAllProfessionRequests);
+router.patch('/profession-requests/:id/review', requirePermission('categories', 'workers'), adminProfessionRequestController.reviewProfessionRequest);
 
 router.get('/categories', requirePermission('categories'), adminCategoryController.getAllCategories);
 router.post('/categories', requirePermission('categories'), validate(createCategorySchema), adminCategoryController.createCategory);

@@ -626,14 +626,13 @@ export const googleAuthUser = asyncHandler(async (req, res) => {
             refreshToken: refreshToken
         });
     } else {
-        // User does NOT exist -> Automatically register them
-        const placeholderPhone = `G-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        // User does NOT exist -> Automatically register them without dummy phone
         const randomPassword = Math.random().toString(36).slice(-10);
 
         const newUser = await User.create({
             fullName: name || "Google User",
             email: email,
-            phone: placeholderPhone,
+            phone: null,
             password: randomPassword,
             profileImage: picture || "",
             location: {

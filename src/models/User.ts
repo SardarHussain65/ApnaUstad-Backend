@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 
 export interface IUser extends Document {
     fullName: string;
-    phone: string;
+    phone?: string | null;
     email?: string | null;
     password?: string;
     profileImage?: string;
@@ -22,13 +22,15 @@ export interface IUser extends Document {
     reactivatedAt?: Date | null;
     reactivatedBy?: mongoose.Types.ObjectId | null;
     favorites?: mongoose.Types.ObjectId[];
+    createdAt?: Date;
+    updatedAt?: Date;
     isPasswordCorrect(password: string): Promise<boolean>;
 }
 
 const userSchema = new Schema<IUser>(
     {
         fullName: { type: String, trim: true, default: '' },
-        phone: { type: String, required: [true, 'Phone is required'], unique: true, trim: true },
+        phone: { type: String, trim: true, sparse: true, default: null },
         email: { type: String, trim: true, lowercase: true, sparse: true, default: null },
         password: { type: String, required: [true, 'Password is required'], trim: true, select: false },
         profileImage: { type: String, default: '' },

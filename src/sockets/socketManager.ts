@@ -10,6 +10,7 @@ import { registerNotificationHandlers } from './handlers/notification.handler';
 import { registerLocationHandlers } from './handlers/location.handler';
 import { registerPresenceHandlers } from './handlers/presence.handler';
 import { registerChatHandlers } from './handlers/chat.handler';
+import { getActionCounts, setAdminSocketEmitter } from '../services/adminAnalytics';
 
 let io: SocketIOServer;
 
@@ -28,6 +29,10 @@ export const initSocket = (httpServer: HttpServer) => {
             methods: ["GET", "POST"],
             credentials: true,
         },
+    });
+
+    setAdminSocketEmitter((event: string, data: any) => {
+        io.to('admin').emit(event, data);
     });
 
     // Authentication Middleware
@@ -70,6 +75,9 @@ export const initSocket = (httpServer: HttpServer) => {
         } else if (user.type === 'admin' || user.role === 'admin' || user.role === 'superadmin') {
             socket.join(`admin`);
             logger.info(`Joined room: admin`);
+            getActionCounts()
+                .then((counts: any) => socket.emit('admin:counts', counts))
+                .catch(() => {});
         }
 
         // Register handlers
