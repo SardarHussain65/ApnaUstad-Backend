@@ -42,11 +42,13 @@ router.get('/search', adminInsightsController.globalSearch);
 router.get('/meta/cities', requirePermission('users', 'workers', 'jobs', 'bookings'), adminController.getAdminMetaCities);
 router.get('/dashboard/stats', requirePermission('dashboard'), adminController.getDashboardStats);
 router.get('/dashboard/summary', requirePermission('dashboard'), adminInsightsController.getSummary);
+router.get('/dashboard/operations-radar', requirePermission('dashboard', 'bookings', 'workers', 'users'), adminInsightsController.getOperationsRadar);
 router.get('/analytics/timeseries', requirePermission('dashboard', 'reports'), adminInsightsController.getTimeseriesHandler);
 router.get('/dashboard/action-counts', adminInsightsController.getActionCountsHandler);
 router.get('/export/:entity', requirePermission('reports'), adminExportController.streamExport);
 
 router.get('/users', requirePermission('users'), adminUserController.getAllUsers);
+router.get('/users/:id/overview', requirePermission('users'), adminUserController.getUserOverview);
 router.get('/users/:id', requirePermission('users'), adminUserController.getUserDetails);
 router.patch('/users/:id/status', requirePermission('users'), adminUserController.toggleUserStatus);
 
@@ -62,6 +64,7 @@ router.get('/specialty-requests', requirePermission('specialty-requests', 'worke
 router.patch('/workers/:workerId/specialties/:categoryId/review', requirePermission('specialty-requests', 'workers'), workerSpecialtyController.reviewSpecialtyRequest);
 
 router.get('/verification/requests', requirePermission('verification'), adminVerificationController.getVerificationRequests);
+router.get('/verification/requests/:id', requirePermission('verification'), adminVerificationController.getVerificationRequestDetails);
 router.patch('/verification/requests/:id/review', requirePermission('verification'), adminVerificationController.reviewVerificationRequest);
 
 router.get('/profession-requests', requirePermission('categories', 'workers'), adminProfessionRequestController.getAllProfessionRequests);
@@ -99,6 +102,7 @@ router.get('/support/requests/:id', requirePermission('support'), adminSupportCo
 router.post('/support/requests/:id/reply', requirePermission('support'), adminSupportController.replyToSupportRequest);
 router.patch('/support/requests/:id/status', requirePermission('support'), adminSupportController.updateSupportStatus);
 router.patch('/support/requests/:id/priority', requirePermission('support'), adminSupportController.updateSupportPriority);
+router.post('/support/requests/:id/notes', requirePermission('support'), adminSupportController.addSupportInternalNote);
 
 router.get('/wallets', requirePermission('wallets'), adminWalletController.getAllWorkerWallets);
 router.get('/wallets/summary', requirePermission('wallets'), adminWalletController.getWalletSummary);

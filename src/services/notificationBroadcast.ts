@@ -19,6 +19,7 @@ export type BroadcastRequest = {
   title: string;
   body: string;
   type?: string;
+  city?: string;
 };
 
 export type BroadcastSummary = {
@@ -39,18 +40,26 @@ export type BroadcastSummary = {
 const CHUNK_SIZE = 1000;
 
 export const broadcastNotification = async (payload: BroadcastRequest): Promise<BroadcastSummary> => {
-  const { target, title, body, type = 'general' } = payload;
+  const { target, title, body, type = 'general', city } = payload;
   const broadcastId = uuidv4();
 
   const recipients: Recipient[] = [];
+  const userQuery: any = { isActive: true };
+  const workerQuery: any = { isActive: true };
+
+  if (city && city !== 'all') {
+    const cityRegex = new RegExp(`^${city.trim()}$`, 'i');
+    userQuery.city = cityRegex;
+    workerQuery.city = cityRegex;
+  }
 
   if (target === 'users' || target === 'all') {
-    const users = await User.find({ isActive: true }, { _id: 1 }).lean();
+    const users = await User.find(userQuery, { _id: 1 }).lean();
     users.forEach((user) => recipients.push({ id: user._id, type: 'user' }));
   }
 
   if (target === 'workers' || target === 'all') {
-    const workers = await Worker.find({ isActive: true }, { _id: 1 }).lean();
+    const workers = await Worker.find(workerQuery, { _id: 1 }).lean();
     workers.forEach((worker) => recipients.push({ id: worker._id, type: 'worker' }));
   }
 

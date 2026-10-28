@@ -1,5 +1,6 @@
 import JobPost from "../models/JobPost";
 import JobBid from "../models/JobBid";
+import Booking from "../models/Booking";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
@@ -70,17 +71,27 @@ export const getAllJobs = asyncHandler(async (req: AdminAuthRequest, res) => {
  */
 export const getJobDetails = asyncHandler(async (req: AdminAuthRequest, res) => {
     const job = await JobPost.findById(req.params.id)
-        .populate('customer', 'fullName phone profileImage');
+        .populate('customer', 'fullName phone email city address profileImage isActive');
 
     if (!job) throw new NotFoundError("Job not found");
 
-    const bids = await JobBid.find({ jobPost: job._id })
-        .populate('worker', 'fullName phone profileImage rating totalReviews totalJobs category')
-        .sort({ createdAt: -1 });
+    const [bids, linkedBooking] = await Promise.all([
+        JobBid.find({ jobPost: job._id })
+            .populate('worker', 'fullName phone profileImage rating totalReviews totalJobs category city isVerified')
+            .sort({ createdAt: -1 }),
+        Booking.findOne({ jobPost: job._id })
+            .populate('worker', 'fullName phone profileImage rating category')
+            .select('status totalAmount scheduledDate scheduledTime createdAt worker agreement paymentStatus')
+            .lean(),
+    ]);
+
+    const acceptedBid = bids.find((b: any) => b.status === 'accepted') || null;
 
     return successResponse(res, 200, "Job details fetched successfully", {
         ...job.toObject(),
-        bids
+        bids,
+        acceptedBid,
+        linkedBooking,
     });
 });
 
