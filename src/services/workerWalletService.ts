@@ -92,7 +92,7 @@ export const getWalletEligibility = async (
 };
 
 export const buildInsufficientBalanceMessage = (requiredBalance: number, currentBalance = 0) => (
-    `Insufficient wallet balance. Please recharge your wallet. Required balance: Rs. ${requiredBalance.toLocaleString('en-PK')}. Current balance: Rs. ${currentBalance.toLocaleString('en-PK')}.`
+    `Low wallet balance. Please add balance to your wallet. Needed: Rs. ${requiredBalance.toLocaleString('en-PK')}. Available: Rs. ${currentBalance.toLocaleString('en-PK')}.`
 );
 
 /**
@@ -191,7 +191,7 @@ export const deductCommission = async (
         amount: commissionAmount,
         balanceBefore,
         balanceAfter,
-        description: `Commission deduction for booking ID: ${bookingId}`,
+        description: `App fee for job #${String(bookingId).slice(-6).toUpperCase()}`,
         reference: {
             booking: new mongoose.Types.ObjectId(bookingId),
             payment: new mongoose.Types.ObjectId(paymentId)
@@ -253,7 +253,7 @@ export const deductSpecialtySubscription = async ({
 
     if (!updatedWallet) {
         const availableBalance = Math.max(0, Number(wallet.balance || 0) - Number(wallet.reservedBalance || 0));
-        const error = new Error(`Insufficient available wallet balance for specialty subscription. Required balance: Rs. ${normalizedAmount.toLocaleString('en-PK')}. Current balance: Rs. ${availableBalance.toLocaleString('en-PK')}.`);
+        const error = new Error(`Low wallet balance for monthly category fee. Needed: Rs. ${normalizedAmount.toLocaleString('en-PK')}. Available: Rs. ${availableBalance.toLocaleString('en-PK')}.`);
         (error as any).statusCode = 402;
         (error as any).requiredBalance = normalizedAmount;
         (error as any).currentBalance = availableBalance;
@@ -269,7 +269,7 @@ export const deductSpecialtySubscription = async ({
             amount: normalizedAmount,
             balanceBefore: balanceAfter + normalizedAmount,
             balanceAfter,
-            description: 'Monthly additional specialty subscription',
+            description: 'Monthly extra category fee',
             reference: {
                 category: new mongoose.Types.ObjectId(categoryId),
                 specialty: new mongoose.Types.ObjectId(specialtyId),

@@ -45,13 +45,13 @@ const syncLinkedJobPostStatus = async (booking: any) => {
     }
 };
 
-const DEFAULT_BOOKING_STATUS_META = { label: 'Pending', tone: 'warning', accentColor: '#FFD700', actionLabel: 'Track request' };
+const DEFAULT_BOOKING_STATUS_META = { label: 'Waiting', tone: 'warning', accentColor: '#FFD700', actionLabel: 'Open job' };
 
 const BOOKING_STATUS_META: Record<string, { label: string; tone: string; accentColor: string; actionLabel: string }> = {
     pending: DEFAULT_BOOKING_STATUS_META,
-    accepted: { label: 'Accepted', tone: 'info', accentColor: '#00F5FF', actionLabel: 'Track booking' },
-    ongoing: { label: 'In progress', tone: 'info', accentColor: '#BF5AF2', actionLabel: 'Open live job' },
-    completed: { label: 'Completed', tone: 'success', accentColor: '#34C759', actionLabel: 'View receipt' },
+    accepted: { label: 'Confirmed', tone: 'info', accentColor: '#00F5FF', actionLabel: 'Open job' },
+    ongoing: { label: 'In Progress', tone: 'info', accentColor: '#BF5AF2', actionLabel: 'Track live' },
+    completed: { label: 'Completed', tone: 'success', accentColor: '#34C759', actionLabel: 'View details' },
     cancelled: { label: 'Cancelled', tone: 'danger', accentColor: '#FF3B30', actionLabel: 'View details' },
 };
 
@@ -89,13 +89,13 @@ const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker',
             email: isCommunicationLocked ? '' : profile.email || '',
         };
     };
-    const roleLabel = viewerRole === 'worker' ? 'Client' : 'Ustad';
+    const roleLabel = viewerRole === 'worker' ? 'Customer' : 'Ustad';
     const amount = viewerRole === 'worker'
         ? Number(booking.agreement?.workerNetIncome ?? booking.workerEarning ?? 0)
         : Number(booking.agreement?.cashDue ?? booking.totalAmount ?? 0);
     const statusMeta = BOOKING_STATUS_META[booking.status] || DEFAULT_BOOKING_STATUS_META;
     const dateMeta = formatDisplayDate(booking.scheduledDate);
-    const missionKindLabel = booking.bookingType === 'instant' ? 'Instant visit' : 'Scheduled visit';
+    const missionKindLabel = booking.bookingType === 'instant' ? 'Urgent visit' : 'Scheduled visit';
     const mediaImages = Array.isArray(booking.imageUrls) ? booking.imageUrls : [];
     const mediaVideos = Array.isArray(booking.videoUrls) ? booking.videoUrls : [];
     const mediaAudios = Array.isArray(booking.audioUrls) ? booking.audioUrls : [];
@@ -312,8 +312,8 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
         sendNotificationToRecipient(
             workerId,
             'worker',
-            'New Direct Booking Request! 📅',
-            `You have received a new booking request for ${category}.`,
+            'New Job Request! 📅',
+            `A customer requested your ${category} service. Tap to see details.`,
             { bookingId: booking._id.toString(), type: 'booking_new' }
         ).catch(err => logger.error(`Failed to send direct booking push notification to worker ${workerId}:`, err));
 

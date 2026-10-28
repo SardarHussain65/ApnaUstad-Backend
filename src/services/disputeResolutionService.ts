@@ -83,11 +83,12 @@ export const applyDisputeWalletActions = async ({
     const totalWorkerDebit = normalizedRefund + normalizedPenalty;
 
     if (totalWorkerDebit > 0) {
+        const bookingRef = String(booking._id).slice(-6).toUpperCase();
         await deductWorkerWallet(
             dispute.worker,
             totalWorkerDebit,
             adminId,
-            `Complaint moderation deduction (Dispute ${dispute._id}): ${resolutionDetails || 'Admin decision'}`,
+            `Complaint adjustment on job #${bookingRef}${resolutionDetails ? `: ${resolutionDetails}` : ''}`,
             booking._id,
             dispute._id as mongoose.Types.ObjectId,
             session,
@@ -96,11 +97,12 @@ export const applyDisputeWalletActions = async ({
 
     if (normalizedRefund > 0) {
         const actorId = adminId || new mongoose.Types.ObjectId();
+        const bookingRef = String(booking._id).slice(-6).toUpperCase();
         await creditUserWallet(
             dispute.customer,
             normalizedRefund,
             { actor: actorId, actorType: 'admin' },
-            `Complaint refund credit (Dispute ${dispute._id}): ${resolutionDetails || 'Credited by admin'}`,
+            `Refund for job #${bookingRef}${resolutionDetails ? `: ${resolutionDetails}` : ''}`,
             { booking: booking._id, dispute: dispute._id },
             session,
         );

@@ -91,10 +91,10 @@ export async function manuallyEscalateJobPrice(jobId: string): Promise<{ success
         throw new Error("Job post not found");
     }
     if (job.status !== 'open' || job.urgency !== 'instant' || !job.isFixedPrice) {
-        throw new Error("Job is not eligible for pricing escalation");
+        throw new Error("Rate cannot be increased for this job right now");
     }
     if (job.urgencyPricingVersion !== 1) {
-        throw new Error("Job pricing is already escalated");
+        throw new Error("Rate has already been increased once");
     }
 
     const oldPrice = job.amount || 0;
@@ -148,8 +148,8 @@ export async function manuallyEscalateJobPrice(jobId: string): Promise<{ success
         sendNotificationToRecipient(
             worker._id,
             'worker',
-            `🔥 Urgent Job Price Escalated!`,
-            `The price for the ${job.category} job near you is now Rs. ${newPrice.toLocaleString()}`,
+            `🔥 Urgent Job Rate Increased!`,
+            `The rate for the ${job.category} job near you is now Rs. ${newPrice.toLocaleString()}!`,
             { jobId: job._id.toString(), type: 'new_job' }
         ).catch(err => logger.error(`Failed to send escalation notification to worker ${worker._id}:`, err));
     }

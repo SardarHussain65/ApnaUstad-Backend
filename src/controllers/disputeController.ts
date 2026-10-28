@@ -346,16 +346,16 @@ export const resolveDispute = asyncHandler(async (req: AdminAuthRequest, res) =>
                 await sendNotificationToRecipient(
                     dispute.customer,
                     'user',
-                    'Complaint under investigation',
-                    `Your report for booking #${bIdStr} is being reviewed by ApnaUstad.`,
+                    'Checking your complaint',
+                    `Our team is checking your report for booking #${bIdStr}.`,
                     { type: 'dispute', bookingId },
                     disputeNotifyOptions,
                 );
                 await sendNotificationToRecipient(
                     dispute.worker,
                     'worker',
-                    'Complaint under investigation',
-                    `A report on booking #${bIdStr} is being reviewed by ApnaUstad.`,
+                    'Complaint being checked',
+                    `Our team is checking a report on booking #${bIdStr}.`,
                     { type: 'dispute', bookingId },
                     disputeNotifyOptions,
                 );
@@ -395,25 +395,25 @@ export const resolveDispute = asyncHandler(async (req: AdminAuthRequest, res) =>
 
                 if (status === 'resolved') {
                     const refundText = walletOutcome.customerRefund > 0
-                        ? ` Rs. ${walletOutcome.customerRefund.toLocaleString()} credited to your wallet.`
+                        ? ` Rs. ${walletOutcome.customerRefund.toLocaleString()} has been added to your wallet.`
                         : '';
                     await sendNotificationToRecipient(
                         dispute.customer,
                         'user',
-                        'Complaint upheld',
-                        `Your report for booking #${bIdStr} was upheld.${refundText} ${resolutionDetails || ''}`.trim(),
+                        'Complaint resolved',
+                        `Your report for booking #${bIdStr} was resolved in your favor.${refundText} ${resolutionDetails || ''}`.trim(),
                         { type: 'dispute', bookingId },
                         { ...disputeNotifyOptions, color: '#34C759' },
                     );
                     const debitTotal = walletOutcome.customerRefund + walletOutcome.workerPenalty;
                     const workerMsg = debitTotal > 0
-                        ? ` Rs. ${debitTotal.toLocaleString()} adjusted from your wallet.`
+                        ? ` Rs. ${debitTotal.toLocaleString()} was deducted from your wallet.`
                         : '';
                     await sendNotificationToRecipient(
                         dispute.worker,
                         'worker',
-                        'Complaint upheld against Ustad',
-                        `Moderation on booking #${bIdStr} is complete.${workerMsg} ${modSummary !== 'no extra actions' ? `Actions: ${modSummary}.` : ''}`.trim(),
+                        'Complaint decision on booking',
+                        `Our team finished checking booking #${bIdStr}.${workerMsg} ${modSummary !== 'no extra actions' ? `Details: ${modSummary}.` : ''}`.trim(),
                         { type: 'dispute', bookingId },
                         disputeNotifyOptions,
                     );
@@ -421,16 +421,16 @@ export const resolveDispute = asyncHandler(async (req: AdminAuthRequest, res) =>
                     await sendNotificationToRecipient(
                         dispute.customer,
                         'user',
-                        'Complaint not upheld',
-                        `Your report for booking #${bIdStr} was reviewed and not upheld. ${resolutionDetails || ''}`.trim(),
+                        'Complaint closed',
+                        `Our team checked your report for booking #${bIdStr} and closed it. ${resolutionDetails || ''}`.trim(),
                         { type: 'dispute', bookingId },
                         disputeNotifyOptions,
                     );
                     await sendNotificationToRecipient(
                         dispute.worker,
                         'worker',
-                        'Complaint dismissed',
-                        `Good news — the report on booking #${bIdStr} was dismissed. Payment can proceed normally.`,
+                        'Complaint closed — All clear',
+                        `Good news! The report on booking #${bIdStr} was closed. Payment can continue normally.`,
                         { type: 'dispute', bookingId },
                         { ...disputeNotifyOptions, color: '#34C759' },
                     );

@@ -168,7 +168,7 @@ const buildWorkerJobSignalPayload = (
         media,
         clientMeta: {
             _id: customer?._id || customerId,
-            fullName: customer?.fullName || 'Client',
+            fullName: customer?.fullName || 'Customer',
             profileImage: customer?.profileImage || '',
             rating: customer?.rating ?? null,
             totalReviews: customer?.totalReviews ?? 0,
@@ -179,7 +179,7 @@ const buildWorkerJobSignalPayload = (
             title: job.category,
             description: job.description,
             missionKind: job.urgency,
-            missionKindLabel: job.urgency === 'instant' ? 'Instant response' : 'Scheduled mission',
+            missionKindLabel: job.urgency === 'instant' ? 'Urgent job' : 'Scheduled visit',
             evidenceCount: media.totalCount,
             hasMedia: media.totalCount > 0,
             amount: offerAmount,
@@ -287,14 +287,14 @@ const buildJobPostCardPayloadsBatch = async (jobsDoc: any[]) => {
             phone: acceptedWorker.phone || '',
             email: acceptedWorker.email || '',
             profileImage: acceptedWorker.profileImage || '',
-            roleLabel: 'Accepted Ustad',
+            roleLabel: 'Ustad',
             category: acceptedWorker.category || '',
             rating: acceptedWorker.rating || 0,
             totalJobs: acceptedWorker.totalJobs || 0,
         } : {
-            fullName: bidCount > 0 ? `${bidCount} bids received` : 'Open broadcast',
+            fullName: bidCount > 0 ? `${bidCount} offers received` : 'Finding Ustads',
             profileImage: primaryImageUrl,
-            roleLabel: bidCount > 0 ? 'Bids' : 'Mission',
+            roleLabel: bidCount > 0 ? 'Offers' : 'Request',
         };
 
         return {
@@ -317,7 +317,7 @@ const buildJobPostCardPayloadsBatch = async (jobsDoc: any[]) => {
                 media,
                 counterParty,
                 financial: {
-                    label: acceptedBid ? 'Accepted Bid' : 'Budget',
+                    label: acceptedBid ? 'Agreed Rate' : 'Budget',
                     amount: Number(acceptedBid?.proposedPrice || job.amount || 0),
                     currency: 'PKR',
                 },
@@ -404,12 +404,12 @@ const buildJobPostDetailPayload = async (
     const statusInfo = job.status === 'cancelled'
         ? { value: job.status, label: 'Cancelled', tone: 'danger', accentColor: '#FF3B30' }
         : job.status === 'assigned'
-            ? { value: job.status, label: 'Ustad assigned', tone: 'success', accentColor: '#00FF7F' }
+            ? { value: job.status, label: 'Ustad booked', tone: 'success', accentColor: '#00FF7F' }
             : job.status === 'reviewing'
-                ? { value: job.status, label: 'Reviewing proposals', tone: 'warning', accentColor: '#FF8C00' }
+                ? { value: job.status, label: 'Offers received', tone: 'warning', accentColor: '#FF8C00' }
                 : job.status === 'closed'
                     ? { value: job.status, label: 'Closed', tone: 'neutral', accentColor: '#8E8E93' }
-                    : { value: job.status, label: 'Open request', tone: 'info', accentColor: '#00F5FF' };
+                    : { value: job.status, label: 'Finding Ustads', tone: 'info', accentColor: '#00F5FF' };
     const budget = Number(job.amount || 0);
 
     return {
@@ -421,7 +421,7 @@ const buildJobPostDetailPayload = async (
         media,
         clientMeta: {
             _id: customer?._id || customerId,
-            fullName: customer?.fullName || 'Client',
+            fullName: customer?.fullName || 'Customer',
             profileImage: customer?.profileImage || '',
             phone: customer?.phone || '',
             totalJobs: customerStats.totalJobs,
@@ -430,7 +430,7 @@ const buildJobPostDetailPayload = async (
         detailMeta: {
             statusInfo,
             missionKind: job.urgency,
-            missionKindLabel: job.urgency === 'instant' ? 'Instant visit' : 'Scheduled visit',
+            missionKindLabel: job.urgency === 'instant' ? 'Urgent visit' : 'Scheduled visit',
             schedule: {
                 ...schedule,
                 timeLabel: job.scheduledTime || (job.urgency === 'instant' ? 'ASAP' : ''),
@@ -439,7 +439,7 @@ const buildJobPostDetailPayload = async (
                 address: toPublicAreaLabel(job.address),
             },
             financial: {
-                label: 'Client budget',
+                label: 'Customer budget',
                 amount: budget,
                 amountText: budget > 0 ? `Rs. ${budget.toLocaleString()}` : 'Open budget',
                 currency: 'PKR',
@@ -472,7 +472,7 @@ const buildWorkerBidCardPayload = (
         ? { value: bid.status, label: 'Accepted', tone: 'success', accentColor: '#00FF7F' }
         : bid.status === 'rejected'
             ? { value: bid.status, label: 'Declined', tone: 'danger', accentColor: '#FF3B30' }
-            : { value: bid.status, label: 'Awaiting client', tone: 'warning', accentColor: '#FF8C00' };
+            : { value: bid.status, label: 'Waiting for customer', tone: 'warning', accentColor: '#FF8C00' };
 
     return {
         ...bid,
@@ -481,7 +481,7 @@ const buildWorkerBidCardPayload = (
             title: job.category,
             description: job.description,
             missionKind: job.urgency,
-            missionKindLabel: job.urgency === 'instant' ? 'Instant visit' : 'Scheduled visit',
+            missionKindLabel: job.urgency === 'instant' ? 'Urgent visit' : 'Scheduled visit',
             primaryImageUrl: customer?.profileImage || '',
             media,
             statusInfo,
@@ -494,16 +494,16 @@ const buildWorkerBidCardPayload = (
             },
             counterParty: {
                 _id: customer?._id || customerId,
-                fullName: customer?.fullName || 'Client',
+                fullName: customer?.fullName || 'Customer',
                 profileImage: customer?.profileImage || '',
-                roleLabel: 'Client',
+                roleLabel: 'Customer',
                 totalJobs: customerStats.totalJobs,
                 completedJobs: customerStats.completedJobs,
             },
             financial: {
-                label: 'Your quote',
+                label: 'Your rate',
                 amount: quotedAmount,
-                amountText: quotedAmount > 0 ? `Rs. ${quotedAmount.toLocaleString()}` : 'Open quote',
+                amountText: quotedAmount > 0 ? `Rs. ${quotedAmount.toLocaleString()}` : 'Open rate',
                 currency: 'PKR',
             },
             actionLabel: 'View details',
@@ -632,8 +632,8 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             sendNotificationToRecipient(
                 worker._id,
                 'worker',
-                `New ${category} Job Post Available!`,
-                `A new job post is available near you: "${description.substring(0, 100)}${description.length > 100 ? '...' : ''}"`,
+                `New ${category} Job Near You!`,
+                `A customer near you needs ${category} work: "${description.substring(0, 100)}${description.length > 100 ? '...' : ''}"`,
                 { jobId: jobPost._id.toString(), type: 'new_job' }
             ).catch(err => logger.error(`Failed to send job post push notification to worker ${worker._id}:`, err));
         }));
@@ -641,7 +641,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         res.status(201).json({
             success: true,
             data: signalPayload,
-            message: `Job post created and broadcasted to ${nearbyWorkers.length} workers.`
+            message: `Job request sent to ${nearbyWorkers.length} nearby Ustads.`
         });
     } catch (error: any) {
         logger.error("Error in createJobPost:", error);
@@ -696,7 +696,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
             finalMessage = "Urgent Counter-Offer";
         }
         if (!finalMessage) {
-            return res.status(400).json({ success: false, message: "A short proposal message is required" });
+            return res.status(400).json({ success: false, message: "Please write a short note for the customer" });
         }
 
         const estimatedCommission = await calculateCommissionAmount(proposedAmount);
@@ -992,8 +992,8 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
         sendNotificationToRecipient(
             bid.worker,
             'worker',
-            'Bid Accepted! 🎉',
-            `Your bid for "${jobPost.category}" has been accepted! A booking has been created.`,
+            'You Got the Job! 🎉',
+            `The customer accepted your rate for "${jobPost.category}" and booked you!`,
             { bookingId: booking._id.toString(), type: 'bid_won' }
         ).catch(err => logger.error(`Failed to send bid acceptance push notification to worker ${bid.worker}:`, err));
 
@@ -1341,7 +1341,7 @@ export const withdrawBid = async (req: AuthRequest, res: Response) => {
 
         res.status(200).json({
             success: true,
-            message: "Mission interest withdrawn successfully",
+            message: "Offer cancelled",
             data: { bidId, jobId: jobPost?._id }
         });
     } catch (error: any) {
