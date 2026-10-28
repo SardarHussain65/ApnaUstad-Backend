@@ -24,9 +24,11 @@ export const getMyWallet = async (req: AuthRequest, res: Response) => {
             return res.status(401).json({ success: false, message: "Unauthorized. Worker access only." });
         }
 
-        const wallet = await walletService.getOrCreateWallet(workerId);
-        const requiredBalance = await walletService.getRequiredWalletBalance();
-        const walletSettings = await getWalletSettings();
+        const [wallet, walletSettings] = await Promise.all([
+            walletService.getOrCreateWallet(workerId),
+            getWalletSettings(),
+        ]);
+        const requiredBalance = Number(walletSettings.minimumWalletBalance || 0);
         const reservedBalance = Number(wallet.reservedBalance || 0);
         const availableBalance = Number(wallet.balance || 0) - reservedBalance;
 
@@ -176,9 +178,11 @@ export const getMyTopUpRequests = async (req: AuthRequest, res: Response) => {
 
         const [requests, total] = await Promise.all([
             WalletTopUpRequest.find(query)
+                .select('-__v')
                 .sort({ createdAt: -1 })
                 .skip((page - 1) * limit)
-                .limit(limit),
+                .limit(limit)
+                .lean(),
             WalletTopUpRequest.countDocuments(query)
         ]);
 

@@ -96,13 +96,16 @@ export const getWorkerReviews = async (req: Request, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 10;
         const skip = (page - 1) * limit;
 
-        const reviews = await Review.find({ worker: workerId })
-            .populate('customer', 'fullName profileImage')
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
-
-        const total = await Review.countDocuments({ worker: workerId });
+        const [reviews, total] = await Promise.all([
+            Review.find({ worker: workerId })
+                .select('_id booking customer worker rating comment createdAt updatedAt')
+                .populate('customer', 'fullName profileImage')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Review.countDocuments({ worker: workerId }),
+        ]);
 
         res.status(200).json({
             success: true,

@@ -4,7 +4,7 @@ const optionalUrlArray = z.array(z.string().url()).max(5).optional();
 
 export const createJobPostSchema = z.object({
     category: z.string({ error: 'Category is required' }).trim().min(2).max(100),
-    description: z.string({ error: 'Description is required' }).trim().min(10).max(1000),
+    description: z.string().trim().max(1000).optional().default(''),
     urgency: z.enum(['instant', 'scheduled']).default('scheduled'),
     scheduledDate: z.union([z.string(), z.date()]).optional(),
     scheduledTime: z.string().trim().optional(),
@@ -12,6 +12,7 @@ export const createJobPostSchema = z.object({
     latitude: z.number().min(-90).max(90),
     address: z.string().trim().min(2).max(500),
     amount: z.number({ error: 'Client offer is required' }).positive('Client offer must be greater than zero'),
+    estimatedHours: z.number().min(1).max(12).optional(),
     imageUrl: z.string().url().optional(),
     imageUrls: optionalUrlArray,
     videoUrl: z.string().url().optional(),
@@ -19,6 +20,14 @@ export const createJobPostSchema = z.object({
     audioUrls: z.array(z.string().url()).max(1).optional(),
     targetWorkerId: z.string().length(24).optional()
 }).superRefine((data, ctx) => {
+    const hasAudio = Array.isArray(data.audioUrls) && data.audioUrls.length > 0;
+    if ((!data.description || data.description.trim().length < 3) && !hasAudio) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['description'],
+            message: 'Please describe the problem briefly or record a voice note'
+        });
+    }
     if (data.urgency === 'scheduled' && (!data.scheduledDate || !data.scheduledTime)) {
         ctx.addIssue({
             code: 'custom',

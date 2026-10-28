@@ -20,7 +20,7 @@ export const ensureActiveBookingCommunication = async (req: AuthRequest, res: Re
     try {
         const { bookingId } = req.params;
         const userId = req.tokenPayload?.id;
-        const booking = await Booking.findById(bookingId);
+        const booking = await Booking.findById(bookingId).select('customer worker status').lean();
 
         if (!booking) {
             return res.status(404).json({ success: false, message: "Booking not found" });
@@ -47,7 +47,7 @@ export const uploadChatAudio = async (req: AuthRequest & UploadRequest, res: Res
     try {
         const { bookingId } = req.params;
         const userId = req.tokenPayload?.id;
-        const booking = await Booking.findById(bookingId);
+        const booking = await Booking.findById(bookingId).select('customer worker status').lean();
 
         if (!booking) {
             return res.status(404).json({ success: false, message: "Booking not found" });
@@ -82,7 +82,7 @@ export const getBookingMessages = async (req: AuthRequest, res: Response) => {
         const userId = req.tokenPayload?.id;
 
         // Verify booking ownership/participation
-        const booking = await Booking.findById(bookingId);
+        const booking = await Booking.findById(bookingId).select('customer worker status').lean();
         if (!booking) {
             return res.status(404).json({ success: false, message: "Booking not found" });
         }
@@ -95,12 +95,15 @@ export const getBookingMessages = async (req: AuthRequest, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 50;
         const skip = (page - 1) * limit;
 
-        const messages = await Message.find({ booking: bookingId })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
-
-        const total = await Message.countDocuments({ booking: bookingId });
+        const [messages, total] = await Promise.all([
+            Message.find({ booking: bookingId })
+                .select('_id sender senderModel content messageType audioUrl audioDurationSeconds booking readAt createdAt')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Message.countDocuments({ booking: bookingId }),
+        ]);
 
         res.status(200).json({
             success: true,
@@ -128,7 +131,7 @@ export const markAsRead = async (req: AuthRequest, res: Response) => {
         const { bookingId } = req.params;
         const userId = req.tokenPayload?.id;
 
-        const booking = await Booking.findById(bookingId);
+        const booking = await Booking.findById(bookingId).select('customer worker status').lean();
         if (!booking) {
             return res.status(404).json({ success: false, message: "Booking not found" });
         }
@@ -182,7 +185,7 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "Upload a valid voice message first" });
         }
 
-        const booking = await Booking.findById(bookingId);
+        const booking = await Booking.findById(bookingId).select('customer worker status').lean();
         if (!booking) {
             return res.status(404).json({ success: false, message: "Booking not found" });
         }

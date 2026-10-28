@@ -1,27 +1,8 @@
 import { Response } from "express";
+import mongoose from "mongoose";
 import Payment from "../models/Payment";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import logger from "../config/logger";
-
-const buildSummary = (payments: any[], role: string | undefined) => {
-    const isWorker = role === 'worker';
-    return payments.reduce((summary, payment) => {
-        const amount = isWorker ? Number(payment.workerEarning || 0) : Number(payment.amount || 0);
-        summary.total += amount;
-        if (payment.status === 'paid') summary.paid += amount;
-        if (payment.status === 'payable') summary.payable += amount;
-        if (payment.status === 'pending') summary.pending += amount;
-        if (payment.status === 'cancelled') summary.cancelled += amount;
-        return summary;
-    }, {
-        total: 0,
-        paid: 0,
-        payable: 0,
-        pending: 0,
-        cancelled: 0,
-        currency: 'PKR',
-    });
-};
 
 /**
  * @description Get payment history for the authenticated user or worker
@@ -41,28 +22,58 @@ export const getMyPayments = async (req: AuthRequest, res: Response) => {
             return res.status(401).json({ success: false, message: "Unauthorized" });
         }
 
-        const query: any = actorType === 'worker' ? { worker: actorId } : { customer: actorId };
+        const isWorker = actorType === 'worker';
+        const baseMatch = isWorker
+            ? { worker: new mongoose.Types.ObjectId(actorId) }
+            : { customer: new mongoose.Types.ObjectId(actorId) };
+        const query: any = isWorker ? { worker: actorId } : { customer: actorId };
         if (status) {
             query.status = { $in: status.split(',').map(s => s.trim()) };
         }
 
-        const [payments, total, allForSummary] = await Promise.all([
+        const amountField = isWorker ? '$workerEarning' : '$amount';
+
+        const [payments, total, summaryAgg] = await Promise.all([
             Payment.find(query)
+                .select('_id status amount workerEarning booking customer worker createdAt updatedAt')
                 .populate('booking', 'category description status bookingType scheduledDate scheduledTime address paymentStatus')
                 .populate('customer', 'fullName phone profileImage')
                 .populate('worker', 'fullName phone profileImage')
                 .sort({ updatedAt: -1 })
                 .skip(skip)
-                .limit(limit),
+                .limit(limit)
+                .lean(),
             Payment.countDocuments(query),
-            Payment.find(actorType === 'worker' ? { worker: actorId } : { customer: actorId }).select('status amount workerEarning')
+            Payment.aggregate([
+                { $match: baseMatch },
+                {
+                    $group: {
+                        _id: null,
+                        total: { $sum: { $ifNull: [amountField, 0] } },
+                        paid: { $sum: { $cond: [{ $eq: ['$status', 'paid'] }, { $ifNull: [amountField, 0] }, 0] } },
+                        payable: { $sum: { $cond: [{ $eq: ['$status', 'payable'] }, { $ifNull: [amountField, 0] }, 0] } },
+                        pending: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, { $ifNull: [amountField, 0] }, 0] } },
+                        cancelled: { $sum: { $cond: [{ $eq: ['$status', 'cancelled'] }, { $ifNull: [amountField, 0] }, 0] } },
+                    },
+                },
+            ]),
         ]);
+
+        const aggRow = summaryAgg[0];
+        const summary = {
+            total: Number(aggRow?.total || 0),
+            paid: Number(aggRow?.paid || 0),
+            payable: Number(aggRow?.payable || 0),
+            pending: Number(aggRow?.pending || 0),
+            cancelled: Number(aggRow?.cancelled || 0),
+            currency: 'PKR',
+        };
 
         res.status(200).json({
             success: true,
             data: {
                 payments,
-                summary: buildSummary(allForSummary, actorType),
+                summary,
                 pagination: {
                     total,
                     page,

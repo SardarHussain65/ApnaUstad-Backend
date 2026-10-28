@@ -26,6 +26,13 @@ export const uploadImage = asyncHandler(async (req: UploadRequest, res) => {
     return successResponse(res, 200, "Image uploaded successfully", { imageUrl: req.uploadedImageUrl });
 });
 
+const PUBLIC_WORKER_LIST_SELECT =
+    "-password -fcmToken -refreshToken -cnicNumber -cnicFrontImage -cnicBackImage -location -address -phone -email -certificates -__v";
+const PUBLIC_WORKER_DETAIL_SELECT =
+    "-password -fcmToken -refreshToken -cnicNumber -cnicFrontImage -cnicBackImage -phone -email -__v";
+const SAFE_USER_SELECT = "-password -fcmToken -refreshToken -__v";
+const escapeSearchRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /**
  * Check if a user exists by phone
  * @route GET /api/v1/users/check-user
@@ -37,10 +44,10 @@ export const checkUserExists = asyncHandler(async (req, res) => {
         throw new BadRequestError("Phone number is required");
     }
 
-    const user = await User.findOne({ phone: phone as string });
+    const userExists = await User.exists({ phone: phone as string });
 
     return successResponse(res, 200, "User check completed", {
-        exists: !!user
+        exists: Boolean(userExists)
     });
 });
 
@@ -49,7 +56,10 @@ export const checkUserExists = asyncHandler(async (req, res) => {
  * @route GET /api/v1/users/categories
  */
 export const getCategories = asyncHandler(async (req, res) => {
-    const categories = await Category.find({ isActive: true }).sort({ sortOrder: 1 });
+    const categories = await Category.find({ isActive: true })
+        .select("_id name icon iconLegacy color description sortOrder isActive")
+        .sort({ sortOrder: 1 })
+        .lean();
     return successResponse(res, 200, "Categories fetched successfully", categories);
 });
 
@@ -68,15 +78,14 @@ export const getCategories = asyncHandler(async (req, res) => {
 export const getWorkers = asyncHandler(async (req, res) => {
     // Pagination parameters
     const page = Math.max(1, parseInt(req.query.page as string) || 1);
-    const limit = Math.min(100, parseInt(req.query.limit as string) || 10);
+    const limit = Math.min(100, parseInt(req.query.limit as string) || 20);
     const skip = (page - 1) * limit;
 
     // Build filter object
-    const filter: any = {};
-
-    // Public discovery only returns trusted active workers.
-    filter.isActive = true;
-    filter.isVerified = true;
+    const filter: any = {
+        isActive: true,
+        isVerified: true,
+    };
 
     // Filter by isAvailable
     if (req.query.isAvailable !== undefined) {
@@ -96,6 +105,25 @@ export const getWorkers = asyncHandler(async (req, res) => {
         filter.city = req.query.city as string;
     }
 
+    // Filter by search text
+    if (typeof req.query.search === 'string' && req.query.search.trim()) {
+        const searchPattern = new RegExp(escapeSearchRegex(req.query.search.trim()), 'i');
+        const searchCondition = {
+            $or: [
+                { fullName: searchPattern },
+                { category: searchPattern },
+                { city: searchPattern },
+                { skills: searchPattern },
+            ]
+        };
+        if (filter.$or) {
+            filter.$and = [{ $or: filter.$or }, searchCondition];
+            delete filter.$or;
+        } else {
+            Object.assign(filter, searchCondition);
+        }
+    }
+
     // Filter by minimum rating
     if (req.query.minRating) {
         const minRating = parseFloat(req.query.minRating as string);
@@ -104,12 +132,17 @@ export const getWorkers = asyncHandler(async (req, res) => {
         }
     }
 
-    // Fetch workers with filters
-    const workers = await Workers.find(filter)
-        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -location -address -phone -email")
-        .skip(skip)
-        .limit(limit)
-        .lean();
+    // Fetch workers and total count in parallel
+    const [workers, totalWorkers] = await Promise.all([
+        Workers.find(filter)
+            .select(PUBLIC_WORKER_LIST_SELECT)
+            .sort({ isAvailable: -1, rating: -1, totalJobs: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        Workers.countDocuments(filter),
+    ]);
+
     const data = req.query.category
         ? await Promise.all(workers.map(worker => applyMatchedSpecialtyProfileToWorkerPayload(
             worker,
@@ -118,8 +151,6 @@ export const getWorkers = asyncHandler(async (req, res) => {
         )))
         : workers;
 
-    // Get total count for pagination metadata
-    const totalWorkers = await Workers.countDocuments(filter);
     const totalPages = Math.ceil(totalWorkers / limit);
 
     return successResponse(res, 200, "Workers fetched successfully", {
@@ -145,7 +176,8 @@ export const getWorkerById = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
     const worker = await Workers.findOne({ _id: id, isActive: true, isVerified: true })
-        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -phone -email");
+        .select(PUBLIC_WORKER_DETAIL_SELECT)
+        .lean();
     if (!worker) {
         throw new BadRequestError("Worker not found");
     }
@@ -182,36 +214,20 @@ export const registerUser = asyncHandler(async (req, res) => {
 
 
     // 3. Check if user already exists: phone or email
-    const existedUserByPhone = await User.findOne({ phone });
+    const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
+    const [existedUserByPhone, existedUserByEmail] = await Promise.all([
+        User.exists({ phone }),
+        normalizedEmail ? User.exists({ email: normalizedEmail }) : Promise.resolve(null),
+    ]);
     if (existedUserByPhone) {
         throw new ConflictError("User with this phone number already exists");
     }
-
-    if (email) {
-        const existedUserByEmail = await User.findOne({ email });
-        if (existedUserByEmail) {
-            throw new ConflictError("User with this email already exists");
-        }
+    if (existedUserByEmail) {
+        throw new ConflictError("User with this email already exists");
     }
 
     // 4. Create user object - create entry in db
     // Note: Password hashing is handled by the pre-save hook in User model
-    const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
-    try {
-        await User.updateMany(
-            { email: { $in: [null, ""] } },
-            { $unset: { email: 1 } }
-        );
-        const indexes = await User.collection.indexes();
-        for (const idx of indexes) {
-            if ((idx.name === "email_1" || idx.name === "phone_1") && !idx.sparse && idx.name !== "phone_1") {
-                await User.collection.dropIndex(idx.name);
-            }
-        }
-    } catch {
-        // Ignore index cleanup errors
-    }
-
     const user = await User.create({
         fullName: fullName,
         ...(normalizedEmail ? { email: normalizedEmail } : {}),
@@ -230,8 +246,8 @@ export const registerUser = asyncHandler(async (req, res) => {
         fcmToken: fcmToken || ""
     });
 
-    // 5. Remove password and fcmToken from response
-    const createdUser = await User.findById(user._id).select("-password -fcmToken");
+    // 5. Remove sensitive fields from response
+    const createdUser = await User.findById(user._id).select(SAFE_USER_SELECT).lean();
 
     // 6. Check for user creation
     if (!createdUser) {
@@ -308,7 +324,7 @@ export const getUserById = asyncHandler(async (req: AuthRequest, res) => {
         throw new ForbiddenError("You are not authorized to view this profile");
     }
 
-    const user = await User.findById(id).select("-password -fcmToken");
+    const user = await User.findById(id).select(SAFE_USER_SELECT).lean();
     if (!user) {
         throw new BadRequestError("User not found");
     }
@@ -325,7 +341,7 @@ export const getMyAccountStatus = asyncHandler(async (req: AuthRequest, res) => 
         throw new UnauthorizedError("Unauthorized access");
     }
 
-    const user = await User.findById(userId).select("isActive deactivationReason deactivatedAt");
+    const user = await User.findById(userId).select("isActive deactivationReason deactivatedAt").lean();
     if (!user) {
         throw new BadRequestError("User not found");
     }
@@ -344,7 +360,7 @@ export const getMyAccountStatus = asyncHandler(async (req: AuthRequest, res) => 
 export const getPublicUserProfile = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
 
-    const user = await User.findById(id).select("fullName profileImage address city createdAt isActive");
+    const user = await User.findById(id).select("fullName profileImage address city createdAt isActive").lean();
     if (!user) {
         throw new BadRequestError("User not found");
     }
@@ -374,7 +390,7 @@ export const getPublicUserProfile = asyncHandler(async (req: AuthRequest, res) =
         : null;
 
     return successResponse(res, 200, "Client profile fetched successfully", {
-        ...user.toObject(),
+        ...user,
         stats: {
             totalBookings,
             completedBookings,
@@ -519,23 +535,24 @@ export const updateEmail = asyncHandler(async (req: AuthRequest, res) => {
 
     if (!email) throw new BadRequestError("Email is required");
 
-    const user = await User.findById(id);
-    if (!user) throw new BadRequestError("User not found");
-
-    // Check for email uniqueness
-    const existingUser = await User.findOne({ email, _id: { $ne: id as any } });
+    const existingUser = await User.exists({ email, _id: { $ne: id as any } });
     if (existingUser) throw new ConflictError("Email already in use by another user");
 
-    user.email = email;
+    let updatedUser;
     try {
-        await user.save();
+        updatedUser = await User.findByIdAndUpdate(
+            id,
+            { $set: { email } },
+            { new: true, runValidators: true }
+        ).select(SAFE_USER_SELECT).lean();
     } catch (error: any) {
         if (error.code === 11000) {
             throw new ConflictError("Email already in use");
         }
         throw error;
     }
-    return successResponse(res, 200, "Email updated successfully", user);
+    if (!updatedUser) throw new BadRequestError("User not found");
+    return successResponse(res, 200, "Email updated successfully", updatedUser);
 });
 
 
@@ -551,11 +568,13 @@ export const updateProfileImage = asyncHandler(async (req: AuthRequest, res) => 
 
     if (!profileImage) throw new BadRequestError("Profile image is required");
 
-    const user = await User.findById(id);
-    if (!user) throw new BadRequestError("User not found");
-    user.profileImage = profileImage;
-    await user.save();
-    return successResponse(res, 200, "Profile image updated successfully", user);
+    const updatedUser = await User.findByIdAndUpdate(
+        id,
+        { $set: { profileImage } },
+        { new: true }
+    ).select(SAFE_USER_SELECT).lean();
+    if (!updatedUser) throw new BadRequestError("User not found");
+    return successResponse(res, 200, "Profile image updated successfully", updatedUser);
 });
 
 
@@ -569,14 +588,17 @@ export const updateLocation = asyncHandler(async (req: AuthRequest, res) => {
 
     const { latitude, longitude } = req.body;
 
-    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) throw new BadRequestError("Latitude and longitude are required");
+    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) {
+        throw new BadRequestError("Latitude and longitude are required");
+    }
 
-    const user = await User.findById(id);
-    if (!user) throw new BadRequestError("User not found");
-    user.location.coordinates[1] = latitude;
-    user.location.coordinates[0] = longitude;
-    await user.save();
-    return successResponse(res, 200, "Location updated successfully", user);
+    const updatedUser = await User.findByIdAndUpdate(
+        id,
+        { $set: { "location.type": "Point", "location.coordinates": [longitude, latitude] } },
+        { new: true }
+    ).select("_id location").lean();
+    if (!updatedUser) throw new BadRequestError("User not found");
+    return successResponse(res, 200, "Location updated successfully", updatedUser);
 });
 
 /**
@@ -765,10 +787,13 @@ export const getUserFavorites = asyncHandler(async (req: AuthRequest, res) => {
         throw new ForbiddenError("You are not authorized to view these favorites");
     }
 
-    const user = await User.findById(id).populate({
-        path: "favorites",
-        select: "-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -location -address -phone -email"
-    });
+    const user = await User.findById(id)
+        .select("favorites")
+        .populate({
+            path: "favorites",
+            select: PUBLIC_WORKER_LIST_SELECT
+        })
+        .lean();
 
     if (!user) {
         throw new BadRequestError("User not found");
@@ -795,12 +820,12 @@ export const toggleUserFavorite = asyncHandler(async (req: AuthRequest, res) => 
     }
 
     // Verify worker exists and is active
-    const worker = await Workers.findOne({ _id: workerId, isActive: true });
-    if (!worker) {
+    const workerExists = await Workers.exists({ _id: workerId, isActive: true });
+    if (!workerExists) {
         throw new BadRequestError("Worker not found or inactive");
     }
 
-    const user = await User.findById(id);
+    const user = await User.findById(id).select("favorites");
     if (!user) {
         throw new BadRequestError("User not found");
     }

@@ -20,8 +20,10 @@ export const getMyUserWallet = async (req: AuthRequest, res: Response) => {
         const page = parseInt(req.query.page as string) || 1;
         const limit = parseInt(req.query.limit as string) || 10;
 
-        const wallet = await userWalletService.getOrCreateUserWallet(userId);
-        const transactionResult = await userWalletService.getCustomerTransactionHistory(userId, page, limit);
+        const [wallet, transactionResult] = await Promise.all([
+            userWalletService.getOrCreateUserWallet(userId),
+            userWalletService.getCustomerTransactionHistory(userId, page, limit),
+        ]);
 
         return res.status(200).json({
             success: true,

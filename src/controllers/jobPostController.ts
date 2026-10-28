@@ -14,6 +14,7 @@ import { sendNotificationToRecipient } from "../services/notificationHelper";
 import {
     buildInsufficientBalanceMessage,
     calculateCommissionAmount,
+    getOrCreateWallet,
     getWalletEligibility
 } from "../services/workerWalletService";
 import {
@@ -179,7 +180,7 @@ const buildWorkerJobSignalPayload = (
             title: job.category,
             description: job.description,
             missionKind: job.urgency,
-            missionKindLabel: job.urgency === 'instant' ? 'Instant response' : 'Scheduled mission',
+            missionKindLabel: job.urgency === 'instant' ? 'Urgent visit' : 'Scheduled visit',
             evidenceCount: media.totalCount,
             hasMedia: media.totalCount > 0,
             amount: offerAmount,
@@ -201,10 +202,20 @@ const buildWorkerJobSignalPayload = (
     };
 };
 
+interface PreloadedWalletContext {
+    wallet?: any;
+    walletSettings?: {
+        commissionEnabled?: boolean;
+        platformFeePercentage?: number;
+        minimumWalletBalance?: number;
+    };
+}
+
 const buildPersonalizedWorkerJobSignalPayload = async (
     jobDoc: any,
     customerStatsById: Map<string, { totalJobs: number; completedJobs: number }>,
-    workerProfile: any
+    workerProfile: any,
+    walletContext?: PreloadedWalletContext
 ) => {
     const job = toPlainObject(jobDoc);
     const matchedSpecialtyProfile = await getWorkerMatchedSpecialtyProfile(workerProfile, job.category);
@@ -213,10 +224,44 @@ const buildPersonalizedWorkerJobSignalPayload = async (
         : workerProfile;
     const payload = buildWorkerJobSignalPayload(jobDoc, customerStatsById, workerForPayload);
     const offerAmount = Number(payload.signalMeta.amount || 0);
-    const estimatedCommission = await calculateCommissionAmount(offerAmount);
-    const walletEligibility = workerProfile?._id
-        ? await getWalletEligibility(workerProfile._id, estimatedCommission)
-        : null;
+
+    let estimatedCommission = 0;
+    let walletEligibility: {
+        balance: number;
+        reservedBalance: number;
+        availableBalance: number;
+        requiredBalance: number;
+        isEligible: boolean;
+    } | null = null;
+
+    if (walletContext?.walletSettings) {
+        const feePct = walletContext.walletSettings.commissionEnabled
+            ? Number(walletContext.walletSettings.platformFeePercentage || 0)
+            : 0;
+        estimatedCommission = Math.round((offerAmount * (feePct / 100)) * 100) / 100;
+
+        if (walletContext.wallet) {
+            const balance = Number(walletContext.wallet.balance || 0);
+            const reservedBalance = Number(walletContext.wallet.reservedBalance || 0);
+            const availableBalance = balance - reservedBalance;
+            const minimumBalance = Number(walletContext.walletSettings.minimumWalletBalance || 0);
+            const requiredBalance = Math.max(minimumBalance, estimatedCommission);
+            walletEligibility = {
+                balance,
+                reservedBalance,
+                availableBalance,
+                requiredBalance,
+                isEligible: Boolean(walletContext.wallet.isActive) && availableBalance >= requiredBalance,
+            };
+        } else if (workerProfile?._id) {
+            walletEligibility = await getWalletEligibility(workerProfile._id, estimatedCommission);
+        }
+    } else {
+        estimatedCommission = await calculateCommissionAmount(offerAmount);
+        walletEligibility = workerProfile?._id
+            ? await getWalletEligibility(workerProfile._id, estimatedCommission)
+            : null;
+    }
 
     return {
         ...payload,
@@ -244,29 +289,31 @@ const buildJobPostCardPayloadsBatch = async (jobsDoc: any[]) => {
     const jobs = jobsDoc.map(toPlainObject);
     const jobIds = jobs.map(j => j._id);
 
-    // 1. Batch count all bids and pending bids using aggregation
-    const bidStats = await JobBid.aggregate([
-        { $match: { jobPost: { $in: jobIds } } },
-        {
-            $group: {
-                _id: "$jobPost",
-                totalBids: { $sum: 1 },
-                pendingBids: {
-                    $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] }
+    // 1. Batch count bids and fetch accepted bids in parallel
+    const [bidStats, acceptedBids] = await Promise.all([
+        JobBid.aggregate([
+            { $match: { jobPost: { $in: jobIds } } },
+            {
+                $group: {
+                    _id: "$jobPost",
+                    totalBids: { $sum: 1 },
+                    pendingBids: {
+                        $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] }
+                    }
                 }
             }
-        }
+        ]),
+        JobBid.find({
+            jobPost: { $in: jobIds },
+            status: 'accepted'
+        })
+            .select('_id jobPost worker proposedPrice message status')
+            .populate('worker', WORKER_BID_PROFILE_SELECT)
+            .lean(),
     ]);
 
     // Map stats for easy lookup
     const statsMap = new Map(bidStats.map(s => [s._id.toString(), s]));
-
-    // 2. Batch fetch accepted bids for these jobs
-    const acceptedBids = await JobBid.find({
-        jobPost: { $in: jobIds },
-        status: 'accepted'
-    }).populate('worker', WORKER_BID_PROFILE_SELECT);
-
     const acceptedBidsMap = new Map(acceptedBids.map(b => [b.jobPost.toString(), b]));
 
     // 3. Construct payload for each job matching original structure perfectly
@@ -287,14 +334,14 @@ const buildJobPostCardPayloadsBatch = async (jobsDoc: any[]) => {
             phone: acceptedWorker.phone || '',
             email: acceptedWorker.email || '',
             profileImage: acceptedWorker.profileImage || '',
-            roleLabel: 'Accepted Ustad',
+            roleLabel: 'Assigned Ustad',
             category: acceptedWorker.category || '',
             rating: acceptedWorker.rating || 0,
             totalJobs: acceptedWorker.totalJobs || 0,
         } : {
-            fullName: bidCount > 0 ? `${bidCount} bids received` : 'Open broadcast',
+            fullName: bidCount > 0 ? `${bidCount} ${bidCount === 1 ? 'offer' : 'offers'} received` : 'Finding Ustads',
             profileImage: primaryImageUrl,
-            roleLabel: bidCount > 0 ? 'Bids' : 'Mission',
+            roleLabel: bidCount > 0 ? 'Offers' : 'Open Request',
         };
 
         return {
@@ -523,10 +570,12 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         if (!customerId) return res.status(401).json({ success: false, message: "Unauthorized" });
 
         const {
-            category, description, urgency,
+            category, urgency,
             longitude, latitude, address,
             imageUrl, imageUrls, videoUrl, videoUrls, audioUrls, amount
         } = req.body;
+        const rawDescription = typeof req.body.description === 'string' ? req.body.description.trim() : '';
+        const description = rawDescription || (Array.isArray(audioUrls) && audioUrls.length > 0 ? 'Voice note attached' : 'Service requested');
 
         let { scheduledDate, scheduledTime } = req.body;
         const clientOffer = Number(amount);
@@ -537,7 +586,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
 
         if (isInstant) {
             const urgentPrice = await calculateUrgentPrice(category, finalEstimatedHours);
-            finalAmount = urgentPrice.fixedPrice;
+            finalAmount = Number.isFinite(clientOffer) && clientOffer > 0 ? clientOffer : urgentPrice.fixedPrice;
             
             const now = new Date();
             scheduledDate = now;
@@ -1131,11 +1180,20 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
         query.urgency = { $in: enabledJobTypes };
 
         const jobs = await JobPost.find(query)
+            .select('-__v -deletedAt -deletedBy -deleteReason')
             .populate('customer', 'fullName profileImage phone')
-            .sort({ createdAt: -1 });
+            .sort({ createdAt: -1 })
+            .limit(30)
+            .lean();
 
-        const customerStats = await buildCustomerStatsById(jobs);
-        const payload = await Promise.all(jobs.map(job => buildPersonalizedWorkerJobSignalPayload(job, customerStats, worker)));
+        const [customerStats, wallet, walletSettings] = await Promise.all([
+            buildCustomerStatsById(jobs),
+            worker._id ? getOrCreateWallet(worker._id) : Promise.resolve(undefined),
+            getWalletSettings(),
+        ]);
+        const payload = await Promise.all(
+            jobs.map(job => buildPersonalizedWorkerJobSignalPayload(job, customerStats, worker, { wallet, walletSettings }))
+        );
 
         res.status(200).json({ success: true, data: payload });
     } catch (error: any) {
@@ -1202,12 +1260,20 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
         query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
 
         const jobs = await JobPost.find(query)
+            .select('-__v -deletedAt -deletedBy -deleteReason')
             .populate('customer', 'fullName profileImage phone')
             .sort({ createdAt: -1 })
-            .limit(20);
+            .limit(20)
+            .lean();
 
-        const customerStats = await buildCustomerStatsById(jobs);
-        const payload = await Promise.all(jobs.map(job => buildPersonalizedWorkerJobSignalPayload(job, customerStats, worker)));
+        const [customerStats, wallet, walletSettings] = await Promise.all([
+            buildCustomerStatsById(jobs),
+            worker._id ? getOrCreateWallet(worker._id) : Promise.resolve(undefined),
+            getWalletSettings(),
+        ]);
+        const payload = await Promise.all(
+            jobs.map(job => buildPersonalizedWorkerJobSignalPayload(job, customerStats, worker, { wallet, walletSettings }))
+        );
 
         res.status(200).json({ success: true, data: payload });
     } catch (error: any) {
@@ -1224,8 +1290,10 @@ export const getJobBids = async (req: AuthRequest, res: Response) => {
     try {
         const { jobId } = req.params;
         const bids = await JobBid.find({ jobPost: jobId })
+            .select('-__v')
             .populate('worker', WORKER_BID_PROFILE_SELECT)
-            .sort({ createdAt: -1 });
+            .sort({ createdAt: -1 })
+            .lean();
 
         res.status(200).json({ success: true, data: bids });
     } catch (e) {
@@ -1259,15 +1327,20 @@ export const getWorkerBids = async (req: AuthRequest, res: Response) => {
             query.status = { $in: statuses };
         }
 
-        const bids = await JobBid.find(query)
-            .populate({
-                path: 'jobPost',
-                select: 'customer category description urgency scheduledDate scheduledTime address location amount imageUrl imageUrls videoUrl videoUrls audioUrls status expiresAt createdAt updatedAt',
-                populate: { path: 'customer', select: 'fullName profileImage phone' }
-            })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
+        const [bids, total] = await Promise.all([
+            JobBid.find(query)
+                .select('-__v')
+                .populate({
+                    path: 'jobPost',
+                    select: 'customer category description urgency scheduledDate scheduledTime address location amount imageUrl imageUrls videoUrl videoUrls audioUrls status expiresAt createdAt updatedAt',
+                    populate: { path: 'customer', select: 'fullName profileImage phone' }
+                })
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            JobBid.countDocuments(query),
+        ]);
 
         const customerStats = await buildCustomerStatsById(
             bids
@@ -1275,7 +1348,6 @@ export const getWorkerBids = async (req: AuthRequest, res: Response) => {
                 .filter(Boolean)
         );
         const responseBids = bids.map(bid => buildWorkerBidCardPayload(bid, customerStats));
-        const total = await JobBid.countDocuments(query);
 
         res.status(200).json({
             success: true,
@@ -1568,16 +1640,21 @@ export const getMyJobPosts = async (req: AuthRequest, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 10;
         const skip = (page - 1) * limit;
 
-        const jobs = await JobPost.find({ customer: customerId })
-            .populate('customer', 'fullName phone email profileImage')
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
+        const [jobs, total] = await Promise.all([
+            JobPost.find({ customer: customerId })
+                .select('-__v -deletedAt -deletedBy -deleteReason')
+                .populate('customer', 'fullName phone email profileImage')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit),
+            JobPost.countDocuments({ customer: customerId }),
+        ]);
 
-        await Promise.all(jobs.map((job) => reconcileAssignedJobPost(job)));
+        const assignedJobs = jobs.filter((job) => job.status === 'assigned');
+        if (assignedJobs.length > 0) {
+            await Promise.all(assignedJobs.map((job) => reconcileAssignedJobPost(job)));
+        }
         const jobsWithCardData = await buildJobPostCardPayloadsBatch(jobs);
-
-        const total = await JobPost.countDocuments({ customer: customerId });
 
         res.status(200).json({
             success: true,

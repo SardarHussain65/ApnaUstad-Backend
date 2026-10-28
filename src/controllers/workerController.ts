@@ -65,6 +65,8 @@ export const uploadWorkerCnicBack = asyncHandler(async (req: UploadRequest, res)
     });
 });
 
+const SAFE_WORKER_SELF_SELECT = "-password -fcmToken -refreshToken -__v";
+
 /**
  * Check if a worker exists by phone
  * @route GET /api/v1/workers/check-worker
@@ -76,10 +78,10 @@ export const checkWorkerExists = asyncHandler(async (req, res) => {
         throw new BadRequestError("Phone number is required");
     }
 
-    const worker = await Workers.findOne({ phone: phone as string });
+    const workerExists = await Workers.exists({ phone: phone as string });
 
     return successResponse(res, 200, "Worker check completed", {
-        exists: !!worker
+        exists: Boolean(workerExists)
     });
 });
 
@@ -107,24 +109,24 @@ export const registerWorker = asyncHandler(async (req, res) => {
     const cnicFrontImageUrl = cnicFrontImage || "";
     const cnicBackImageUrl = cnicBackImage || "";
 
-    const existingWorker = await Workers.findOne({ phone });
+    const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
+    const normalizedCnic = cnicNumber && String(cnicNumber).trim() ? String(cnicNumber).trim() : undefined;
+
+    const [existingWorker, existingWorkerByEmail, existingWorkerCnic] = await Promise.all([
+        Workers.exists({ phone }),
+        normalizedEmail ? Workers.exists({ email: normalizedEmail }) : Promise.resolve(null),
+        normalizedCnic ? Workers.exists({ cnicNumber: normalizedCnic }) : Promise.resolve(null),
+    ]);
     if (existingWorker) {
         throw new ConflictError("Worker with this phone number already exists");
     }
-
-    if (email) {
-        const existingWorkerByEmail = await Workers.findOne({ email });
-        if (existingWorkerByEmail) {
-            throw new ConflictError("Worker with this email already exists");
-        }
+    if (existingWorkerByEmail) {
+        throw new ConflictError("Worker with this email already exists");
+    }
+    if (existingWorkerCnic) {
+        throw new ConflictError("Worker with this CNIC number already exists");
     }
 
-    if (cnicNumber && String(cnicNumber).trim()) {
-        const existingWorkerCnic = await Workers.findOne({ cnicNumber: String(cnicNumber).trim() });
-        if (existingWorkerCnic) {
-            throw new ConflictError("Worker with this CNIC number already exists");
-        }
-    }
     const primaryProfile = normalizeSpecialtyProfileInput({ skills, hourlyRate, experience, bio });
 
     let initialSpecialties: any[] = [];
@@ -158,29 +160,6 @@ export const registerWorker = asyncHandler(async (req, res) => {
             issueYear: c.issueYear,
             certificateUrl: c.certificateUrl,
         }));
-    }
-
-    const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
-    const normalizedCnic = cnicNumber && String(cnicNumber).trim() ? String(cnicNumber).trim() : undefined;
-
-    // Clean up any legacy null/empty cnicNumber or email fields and non-sparse unique indexes
-    try {
-        await Workers.updateMany(
-            { cnicNumber: { $in: [null, ""] } },
-            { $unset: { cnicNumber: 1 } }
-        );
-        await Workers.updateMany(
-            { email: { $in: [null, ""] } },
-            { $unset: { email: 1 } }
-        );
-        const indexes = await Workers.collection.indexes();
-        for (const idx of indexes) {
-            if ((idx.name === "cnicNumber_1" || idx.name === "email_1") && !idx.sparse) {
-                await Workers.collection.dropIndex(idx.name);
-            }
-        }
-    } catch (indexErr) {
-        // Ignore index cleanup errors if index was already dropped
     }
 
     const worker = await Workers.create({
@@ -234,7 +213,7 @@ export const registerWorker = asyncHandler(async (req, res) => {
         }
     }
 
-    const createdWorker = await Workers.findById(worker._id).select("-fcmToken");
+    const createdWorker = await Workers.findById(worker._id).select(SAFE_WORKER_SELF_SELECT).lean();
 
     if (!createdWorker) {
         throw new InternalServerError("Something went wrong while registering the worker");
@@ -260,11 +239,6 @@ export const loginWorker = asyncHandler(async (req, res) => {
         throw new UnauthorizedError("Invalid credentials");
     }
 
-    if (fcmToken) {
-        worker.fcmToken = fcmToken;
-        await worker.save();
-    }
-
     const accessToken = generateToken({
         id: worker._id.toString(),
         username: worker.fullName,
@@ -277,7 +251,9 @@ export const loginWorker = asyncHandler(async (req, res) => {
         type: 'worker'
     });
 
-    // Save refresh token
+    if (fcmToken) {
+        worker.fcmToken = fcmToken;
+    }
     worker.refreshToken = refreshToken;
     await worker.save();
 
@@ -349,7 +325,7 @@ export const getWorkerById = asyncHandler(async (req: AuthRequest, res) => {
         throw new ForbiddenError("You are not authorized to view this profile");
     }
 
-    const worker = await Workers.findById(id).select("-password -fcmToken");
+    const worker = await Workers.findById(id).select(SAFE_WORKER_SELF_SELECT).lean();
     if (!worker) {
         throw new BadRequestError("Worker not found");
     }
@@ -366,7 +342,7 @@ export const getMyWorkerAccountStatus = asyncHandler(async (req: AuthRequest, re
         throw new UnauthorizedError("Unauthorized access");
     }
 
-    const worker = await Workers.findById(workerId).select("isActive deactivationReason deactivatedAt");
+    const worker = await Workers.findById(workerId).select("isActive deactivationReason deactivatedAt").lean();
     if (!worker) {
         throw new BadRequestError("Worker not found");
     }
@@ -542,23 +518,24 @@ export const updateWorkerEmail = asyncHandler(async (req: AuthRequest, res) => {
 
     if (!email) throw new BadRequestError("Email is required");
 
-    const worker = await Workers.findById(id);
-    if (!worker) throw new BadRequestError("Worker not found");
-
-    // Check for email uniqueness
-    const existingWorker = await Workers.findOne({ email, _id: { $ne: id as any } });
+    const existingWorker = await Workers.exists({ email, _id: { $ne: id as any } });
     if (existingWorker) throw new ConflictError("Email already in use by another worker");
 
-    worker.email = email;
+    let updatedWorker;
     try {
-        await worker.save();
+        updatedWorker = await Workers.findByIdAndUpdate(
+            id,
+            { $set: { email } },
+            { new: true, runValidators: true }
+        ).select(SAFE_WORKER_SELF_SELECT).lean();
     } catch (error: any) {
         if (error.code === 11000) {
             throw new ConflictError("Email already in use");
         }
         throw error;
     }
-    return successResponse(res, 200, "Email updated successfully", worker);
+    if (!updatedWorker) throw new BadRequestError("Worker not found");
+    return successResponse(res, 200, "Email updated successfully", updatedWorker);
 });
 
 export const updateWorkerProfileImage = asyncHandler(async (req: AuthRequest, res) => {
@@ -573,11 +550,13 @@ export const updateWorkerProfileImage = asyncHandler(async (req: AuthRequest, re
 
     if (!profileImage) throw new BadRequestError("Profile image is required");
 
-    const worker = await Workers.findById(id);
-    if (!worker) throw new BadRequestError("Worker not found");
-    worker.profileImage = profileImage;
-    await worker.save();
-    return successResponse(res, 200, "Profile image updated successfully", worker);
+    const updatedWorker = await Workers.findByIdAndUpdate(
+        id,
+        { $set: { profileImage } },
+        { new: true }
+    ).select(SAFE_WORKER_SELF_SELECT).lean();
+    if (!updatedWorker) throw new BadRequestError("Worker not found");
+    return successResponse(res, 200, "Profile image updated successfully", updatedWorker);
 });
 
 export const updateWorkerLocation = asyncHandler(async (req: AuthRequest, res) => {
@@ -590,14 +569,17 @@ export const updateWorkerLocation = asyncHandler(async (req: AuthRequest, res) =
 
     const { latitude, longitude } = req.body;
 
-    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) throw new BadRequestError("Latitude and longitude are required");
+    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) {
+        throw new BadRequestError("Latitude and longitude are required");
+    }
 
-    const worker = await Workers.findById(id);
-    if (!worker) throw new BadRequestError("Worker not found");
-    worker.location.coordinates[1] = latitude;
-    worker.location.coordinates[0] = longitude;
-    await worker.save();
-    return successResponse(res, 200, "Location updated successfully", worker);
+    const updatedWorker = await Workers.findByIdAndUpdate(
+        id,
+        { $set: { "location.type": "Point", "location.coordinates": [longitude, latitude] } },
+        { new: true }
+    ).select("_id location").lean();
+    if (!updatedWorker) throw new BadRequestError("Worker not found");
+    return successResponse(res, 200, "Location updated successfully", updatedWorker);
 });
 
 /**
@@ -686,6 +668,9 @@ export const getVerificationStatus = asyncHandler(async (req: AuthRequest, res) 
         throw new UnauthorizedError("Unauthorized access");
     }
 
-    const request = await VerificationRequest.findOne({ worker: workerId }).sort({ createdAt: -1 });
+    const request = await VerificationRequest.findOne({ worker: workerId })
+        .select("_id status cnicNumber rejectionReason reviewedAt createdAt updatedAt")
+        .sort({ createdAt: -1 })
+        .lean();
     return successResponse(res, 200, "Verification status fetched successfully", request || null);
 });

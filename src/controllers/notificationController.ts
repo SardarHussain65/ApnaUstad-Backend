@@ -432,16 +432,19 @@ export const getNotifications = async (req: AuthRequest, res: Response) => {
       recipientType: userType  // ✅ Use type from JWT payload
     };
 
-    const notifications = await Notification.find(query)
-      .sort({ createdAt: -1 })
-      .limit(Math.min(Number(limit), 100))  // Cap at 100 per page
-      .skip(Math.max(0, Number(skip)));
-
-    const total = await Notification.countDocuments(query);
-    const unreadCount = await Notification.countDocuments({
-      ...query,
-      isRead: false
-    });
+    const [notifications, total, unreadCount] = await Promise.all([
+      Notification.find(query)
+        .select('_id title message type icon color booking isRead createdAt readAt')
+        .sort({ createdAt: -1 })
+        .limit(Math.min(Number(limit), 100))  // Cap at 100 per page
+        .skip(Math.max(0, Number(skip)))
+        .lean(),
+      Notification.countDocuments(query),
+      Notification.countDocuments({
+        ...query,
+        isRead: false
+      }),
+    ]);
 
     logger.info('Fetched notifications', {
       requestId,

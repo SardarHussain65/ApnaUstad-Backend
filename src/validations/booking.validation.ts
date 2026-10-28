@@ -3,7 +3,7 @@ import { z } from "zod";
 export const createBookingSchema = z.object({
     worker: z.string({ error: "Worker ID is required" }).length(24, "Invalid Worker ID format"),
     category: z.string({ error: "Category is required" }).min(2, "Category is too short"),
-    description: z.string({ error: "Description is required" }).min(10, "Description must be at least 10 characters").max(1000, "Description is too long"),
+    description: z.string().trim().max(1000, "Description is too long").optional().default(''),
     scheduledDate: z.string({ error: "Scheduled date is required" }).datetime({ offset: true, message: "Invalid datetime format for scheduledDate. Expected ISO string." }).or(z.string()).optional(),
     scheduledTime: z.string({ error: "Scheduled time is required" }).optional(),
     bookingType: z.enum(['instant', 'scheduled']).optional().default('scheduled'),
@@ -19,6 +19,15 @@ export const createBookingSchema = z.object({
     imageUrls: z.array(z.string().url()).max(5).optional(),
     videoUrls: z.array(z.string().url()).max(5).optional(),
     audioUrls: z.array(z.string().url()).max(1).optional(),
+}).superRefine((data, ctx) => {
+    const hasAudio = Array.isArray(data.audioUrls) && data.audioUrls.length > 0;
+    if ((!data.description || data.description.trim().length < 3) && !hasAudio) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['description'],
+            message: 'Please describe the problem briefly or record a voice note'
+        });
+    }
 });
 
 export const updateBookingStatusSchema = z.object({

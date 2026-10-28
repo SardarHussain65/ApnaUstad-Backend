@@ -94,12 +94,15 @@ export const getCustomerTransactionHistory = async (
 ) => {
     const skip = (page - 1) * limit;
 
-    const transactions = await UserWalletTransaction.find({ user: userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit);
-
-    const total = await UserWalletTransaction.countDocuments({ user: userId });
+    const [transactions, total] = await Promise.all([
+        UserWalletTransaction.find({ user: userId })
+            .select('-__v')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        UserWalletTransaction.countDocuments({ user: userId }),
+    ]);
 
     return {
         transactions,
