@@ -5,6 +5,13 @@ import bcrypt from 'bcrypt';
 export type WorkerSpecialtyApprovalStatus = 'pending' | 'approved' | 'rejected';
 export type WorkerSpecialtySubscriptionStatus = 'free' | 'pending_activation' | 'active' | 'payment_due' | 'expired';
 
+export interface IWorkerSpecialtyCertificate {
+    title: string;
+    issuingOrg?: string;
+    issueYear?: string;
+    certificateUrl: string;
+}
+
 export interface IWorkerSpecialty {
     _id: mongoose.Types.ObjectId;
     categoryId: mongoose.Types.ObjectId;
@@ -13,6 +20,7 @@ export interface IWorkerSpecialty {
     hourlyRate: number;
     experience: number;
     bio?: string;
+    certificates?: IWorkerSpecialtyCertificate[];
     isActive: boolean;
     approvalStatus: WorkerSpecialtyApprovalStatus;
     subscriptionStatus: WorkerSpecialtySubscriptionStatus;
@@ -28,6 +36,19 @@ export interface IWorkerSpecialty {
     graceEndsAt?: Date | null;
     billingLockKey?: string;
     billingLockedAt?: Date | null;
+}
+
+export interface IWorkerCertificate {
+    _id?: mongoose.Types.ObjectId;
+    title: string;
+    issuingOrg?: string;
+    issueYear?: string;
+    certificateUrl: string;
+    categoryName?: string;
+    verificationStatus: 'pending' | 'verified' | 'rejected';
+    verifiedAt?: Date | null;
+    verifiedBy?: mongoose.Types.ObjectId | null;
+    rejectionReason?: string;
 }
 
 export interface IWorker extends Document {
@@ -51,6 +72,9 @@ export interface IWorker extends Document {
         type: string;
         coordinates: number[];
     };
+    certificates: IWorkerCertificate[];
+    isCustomProfessionRequested?: boolean;
+    customProfessionName?: string;
     isAvailable: boolean;
     isInstantAvailable: boolean;
     isScheduledAvailable: boolean;
@@ -81,6 +105,20 @@ const workerSpecialtySchema = new Schema<IWorkerSpecialty>(
         hourlyRate: { type: Number, min: 0, default: 0 },
         experience: { type: Number, min: 0, default: 0 },
         bio: { type: String, trim: true, maxlength: 500, default: '' },
+        certificates: {
+            type: [
+                new Schema<IWorkerSpecialtyCertificate>(
+                    {
+                        title: { type: String, required: true, trim: true },
+                        issuingOrg: { type: String, trim: true, default: '' },
+                        issueYear: { type: String, trim: true, default: '' },
+                        certificateUrl: { type: String, required: true },
+                    },
+                    { _id: false }
+                ),
+            ],
+            default: [],
+        },
         isActive: { type: Boolean, default: false },
         approvalStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
         subscriptionStatus: {
@@ -108,10 +146,10 @@ const workerSchema = new Schema<IWorker>(
     {
         fullName: { type: String, trim: true, default: '' },
         phone: { type: String, required: true, unique: true, trim: true },
-        email: { type: String, trim: true, lowercase: true, sparse: true, default: null },
+        email: { type: String, trim: true, lowercase: true, sparse: true },
         password: { type: String, required: [true, 'Password is required'], trim: true, select: false },
         profileImage: { type: String, default: '' },
-        cnicNumber: { type: String, required: true, unique: true, trim: true },
+        cnicNumber: { type: String, trim: true, sparse: true },
         cnicFrontImage: { type: String, default: '' },
         cnicBackImage: { type: String, default: '' },
         category: { type: String, required: true, trim: true },
@@ -126,6 +164,28 @@ const workerSchema = new Schema<IWorker>(
             type: { type: String, enum: ['Point'], default: 'Point' },
             coordinates: { type: [Number], default: [0, 0] }
         },
+        certificates: {
+            type: [
+                new Schema<IWorkerCertificate>({
+                    title: { type: String, required: true, trim: true },
+                    issuingOrg: { type: String, trim: true, default: '' },
+                    issueYear: { type: String, trim: true, default: '' },
+                    certificateUrl: { type: String, required: true },
+                    categoryName: { type: String, trim: true, default: '' },
+                    verificationStatus: {
+                        type: String,
+                        enum: ['pending', 'verified', 'rejected'],
+                        default: 'pending'
+                    },
+                    verifiedAt: { type: Date, default: null },
+                    verifiedBy: { type: Schema.Types.ObjectId, ref: 'Admin', default: null },
+                    rejectionReason: { type: String, default: '' }
+                }, { timestamps: true })
+            ],
+            default: []
+        },
+        isCustomProfessionRequested: { type: Boolean, default: false },
+        customProfessionName: { type: String, trim: true, default: '' },
         isAvailable: { type: Boolean, default: true },
         isInstantAvailable: { type: Boolean, default: true },
         isScheduledAvailable: { type: Boolean, default: true },

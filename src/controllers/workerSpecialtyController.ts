@@ -31,12 +31,38 @@ const getWorkerId = (req: AuthRequest) => {
 const buildSpecialtyResponse = async (worker: any) => {
     const additionalCategoryMonthlyFee = await getAdditionalCategoryMonthlyFee();
     await worker.populate('specialties.categoryId', 'name icon color isActive additionalCategoryMonthlyFee additionalCategoryGraceDays');
+    const workerCerts = Array.isArray(worker.certificates) ? worker.certificates : [];
     const specialties = [...(worker.specialties || [])]
         .sort((left: any, right: any) => left.priority - right.priority)
-        .map((specialty: any) => ({
-            ...specialty.toObject(),
-            tier: getSpecialtyTier(specialty.priority)
-        }));
+        .map((specialty: any) => {
+            const obj = specialty.toObject();
+            const catName = String(obj.categoryId?.name || '').trim().toLowerCase();
+            const existingCerts = Array.isArray(obj.certificates) ? obj.certificates : [];
+            const matchedWorkerCerts = workerCerts.filter((wc: any) => {
+                const wcCat = String(wc.categoryName || '').trim().toLowerCase();
+                if (wcCat && catName) return wcCat === catName;
+                if (!wcCat && obj.priority === 1) return true;
+                return false;
+            });
+            const mergedMap = new Map<string, any>();
+            for (const c of [...existingCerts, ...matchedWorkerCerts]) {
+                if (c && c.certificateUrl) {
+                    const prev = mergedMap.get(c.certificateUrl) || {};
+                    mergedMap.set(c.certificateUrl, {
+                        title: c.title || prev.title || 'Certificate',
+                        issuingOrg: c.issuingOrg || prev.issuingOrg || '',
+                        issueYear: c.issueYear || prev.issueYear || '',
+                        certificateUrl: c.certificateUrl,
+                        verificationStatus: c.verificationStatus || prev.verificationStatus || 'pending',
+                    });
+                }
+            }
+            return {
+                ...obj,
+                certificates: Array.from(mergedMap.values()),
+                tier: getSpecialtyTier(specialty.priority)
+            };
+        });
     return {
         specialties,
         maxSpecialties: MAX_WORKER_SPECIALTIES,
@@ -53,10 +79,10 @@ export const getMySpecialties = asyncHandler(async (req: AuthRequest, res) => {
 });
 
 export const requestSpecialty = asyncHandler(async (req: AuthRequest, res) => {
-    const { categoryId } = req.body;
+    const { categoryId, certificates } = req.body;
     if (!categoryId) throw new BadRequestError('categoryId is required');
     const profile = normalizeSpecialtyProfileInput(req.body);
-    const worker = await requestWorkerSpecialty(getWorkerId(req), categoryId, profile);
+    const worker = await requestWorkerSpecialty(getWorkerId(req), categoryId, profile, certificates);
     return successResponse(res, 201, 'Specialty request submitted for admin approval', await buildSpecialtyResponse(worker));
 });
 
@@ -93,7 +119,7 @@ export const getPendingSpecialtyRequests = asyncHandler(async (req: AdminAuthReq
     const query = { specialties: { $elemMatch: { approvalStatus: 'pending' } } };
     const [workers, total] = await Promise.all([
         Worker.find(query)
-            .select('fullName phone email profileImage category specialties')
+            .select('fullName phone email profileImage category specialties certificates')
             .populate('specialties.categoryId', 'name icon color additionalCategoryMonthlyFee additionalCategoryGraceDays')
             .sort({ updatedAt: -1 })
             .skip((page - 1) * limit)

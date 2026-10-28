@@ -1,5 +1,6 @@
 import Workers from "../models/Workers";
 import VerificationRequest from "../models/VerificationRequest";
+import ProfessionRequest from "../models/ProfessionRequest";
 import { requestVerificationSchema } from "../validations/worker.validation";
 import { ConflictError, InternalServerError, BadRequestError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
@@ -11,6 +12,19 @@ import {
     normalizeSpecialtyProfileInput,
     setWorkerPrimarySpecialtyFromLegacyCategory
 } from "../services/workerSpecialtyService";
+
+/**
+ * Upload worker certificate or degree image to ImageKit → /workers/certificates/
+ * @route POST /api/v1/workers/upload-certificate
+ */
+export const uploadWorkerCertificate = asyncHandler(async (req: UploadRequest, res) => {
+    if (!req.uploadedImageUrl) {
+        throw new BadRequestError("Certificate upload failed or no image provided");
+    }
+    return successResponse(res, 200, "Certificate uploaded successfully", {
+        imageUrl: req.uploadedImageUrl,
+    });
+});
 
 /**
  * Upload worker profile image to ImageKit → /workers/profile-images/
@@ -85,6 +99,7 @@ export const registerWorker = asyncHandler(async (req, res) => {
         category, skills, hourlyRate, bio,
         experience, city, address,
         latitude, longitude, fcmToken,
+        certificates, isCustomProfessionRequested, customProfessionName, professionRequirements
     } = req.body;
 
     // URLs come from body — already uploaded via dedicated endpoints
@@ -104,38 +119,120 @@ export const registerWorker = asyncHandler(async (req, res) => {
         }
     }
 
-    const existingWorkerCnic = await Workers.findOne({ cnicNumber });
-    if (existingWorkerCnic) {
-        throw new ConflictError("Worker with this CNIC number already exists");
+    if (cnicNumber && String(cnicNumber).trim()) {
+        const existingWorkerCnic = await Workers.findOne({ cnicNumber: String(cnicNumber).trim() });
+        if (existingWorkerCnic) {
+            throw new ConflictError("Worker with this CNIC number already exists");
+        }
     }
     const primaryProfile = normalizeSpecialtyProfileInput({ skills, hourlyRate, experience, bio });
+
+    let initialSpecialties: any[] = [];
+    const isCustom = Boolean(isCustomProfessionRequested);
+    const resolvedCategoryName = isCustom ? (customProfessionName || category || 'Custom') : category;
+
+    if (!isCustom) {
+        try {
+            initialSpecialties = await createPrimarySpecialtyFromLegacyCategory({
+                categoryName: resolvedCategoryName,
+                profile: primaryProfile
+            });
+        } catch (catErr: any) {
+            console.warn(`Could not resolve primary category '${resolvedCategoryName}', treating as custom:`, catErr.message);
+        }
+    }
+
+    const formattedCertificates = Array.isArray(certificates) ? certificates.map((c: any) => ({
+        title: c.title,
+        issuingOrg: c.issuingOrg || '',
+        issueYear: c.issueYear || '',
+        certificateUrl: c.certificateUrl,
+        categoryName: resolvedCategoryName,
+        verificationStatus: 'pending'
+    })) : [];
+
+    if (initialSpecialties.length > 0 && formattedCertificates.length > 0) {
+        initialSpecialties[0].certificates = formattedCertificates.map((c) => ({
+            title: c.title,
+            issuingOrg: c.issuingOrg,
+            issueYear: c.issueYear,
+            certificateUrl: c.certificateUrl,
+        }));
+    }
+
+    const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
+    const normalizedCnic = cnicNumber && String(cnicNumber).trim() ? String(cnicNumber).trim() : undefined;
+
+    // Clean up any legacy null/empty cnicNumber or email fields and non-sparse unique indexes
+    try {
+        await Workers.updateMany(
+            { cnicNumber: { $in: [null, ""] } },
+            { $unset: { cnicNumber: 1 } }
+        );
+        await Workers.updateMany(
+            { email: { $in: [null, ""] } },
+            { $unset: { email: 1 } }
+        );
+        const indexes = await Workers.collection.indexes();
+        for (const idx of indexes) {
+            if ((idx.name === "cnicNumber_1" || idx.name === "email_1") && !idx.sparse) {
+                await Workers.collection.dropIndex(idx.name);
+            }
+        }
+    } catch (indexErr) {
+        // Ignore index cleanup errors if index was already dropped
+    }
 
     const worker = await Workers.create({
         fullName,
         phone,
-        email,
+        ...(normalizedEmail ? { email: normalizedEmail } : {}),
         password,
-        cnicNumber,
+        ...(normalizedCnic ? { cnicNumber: normalizedCnic } : {}),
         cnicFrontImage: cnicFrontImageUrl,
         cnicBackImage: cnicBackImageUrl,
-        category,
-        specialties: await createPrimarySpecialtyFromLegacyCategory({
-            categoryName: category,
-            profile: primaryProfile
-        }),
+        category: resolvedCategoryName,
+        specialties: initialSpecialties,
         skills: primaryProfile.skills,
         hourlyRate: primaryProfile.hourlyRate,
         bio: primaryProfile.bio,
         experience: primaryProfile.experience,
-        city,
-        address,
+        city: city || "",
+        address: address || city || "",
         location: {
             type: "Point",
-            coordinates: [longitude, latitude],
+            coordinates: [
+                typeof longitude === "number" && !Number.isNaN(longitude) ? longitude : 0,
+                typeof latitude === "number" && !Number.isNaN(latitude) ? latitude : 0,
+            ],
         },
+        certificates: formattedCertificates,
+        isCustomProfessionRequested: isCustom,
+        customProfessionName: isCustom ? resolvedCategoryName : '',
         profileImage: profileImageUrl,
         fcmToken,
     });
+
+    // If custom profession was requested, create a ProfessionRequest in the database
+    if (isCustom) {
+        try {
+            await ProfessionRequest.create({
+                worker: worker._id,
+                professionName: resolvedCategoryName,
+                requirements: professionRequirements || '',
+                description: primaryProfile.bio,
+                experience: primaryProfile.experience,
+                hourlyRate: primaryProfile.hourlyRate,
+                skills: primaryProfile.skills,
+                requesterName: fullName,
+                requesterPhone: phone,
+                requesterEmail: email || '',
+                status: 'pending',
+            });
+        } catch (reqErr: any) {
+            console.error('Failed to create ProfessionRequest record:', reqErr);
+        }
+    }
 
     const createdWorker = await Workers.findById(worker._id).select("-fcmToken");
 

@@ -285,6 +285,7 @@ const handleChatAudioUpload = createChatAudioUploadMiddleware("audio", "messages
 const handleWorkerProfileImageUpload = createUploadMiddleware("profileImage",   "workers/profile-images");
 const handleWorkerCnicFrontUpload    = createUploadMiddleware("cnicFrontImage", "workers/cnic");
 const handleWorkerCnicBackUpload     = createUploadMiddleware("cnicBackImage",  "workers/cnic");
+const handleWorkerCertificateUpload  = createUploadMiddleware("certificateImage", "workers/certificates");
 
 export {
     handleProfileImageUpload,
@@ -294,6 +295,7 @@ export {
     handleWorkerProfileImageUpload,
     handleWorkerCnicFrontUpload,
     handleWorkerCnicBackUpload,
+    handleWorkerCertificateUpload,
     uploadToImageKit,
 };
 export type { UploadRequest };

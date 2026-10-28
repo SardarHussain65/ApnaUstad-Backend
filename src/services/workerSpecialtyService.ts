@@ -68,7 +68,7 @@ export const normalizeSpecialtyProfileInput = (input: any): SpecialtyProfileInpu
     const bio = String(input?.bio || '').trim();
 
     if (skills.length === 0) {
-        throw Object.assign(new Error('At least one skill is required for this category'), { statusCode: 400 });
+        skills.push('General Service');
     }
     if (!Number.isFinite(hourlyRate) || hourlyRate < 100) {
         throw Object.assign(new Error('Hourly rate must be at least 100'), { statusCode: 400 });
@@ -141,10 +141,21 @@ export const ensureLegacyPrimarySpecialty = async (worker: IWorker) => {
     if (!category) return worker;
 
     const isApproved = worker.isVerified === true;
+    const initialCerts = Array.isArray(worker.certificates)
+        ? worker.certificates
+              .filter((c: any) => c && c.certificateUrl)
+              .map((c: any) => ({
+                  title: c.title || 'Certificate',
+                  issuingOrg: c.issuingOrg || '',
+                  issueYear: c.issueYear || '',
+                  certificateUrl: c.certificateUrl,
+              }))
+        : [];
     (worker.specialties as any).push({
         categoryId: category._id,
         priority: 1,
         ...buildProfileFromWorker(worker),
+        certificates: initialCerts,
         isActive: isApproved,
         approvalStatus: isApproved ? 'approved' : 'pending',
         subscriptionStatus: 'free',
@@ -274,7 +285,8 @@ export const setWorkerPrimarySpecialtyFromLegacyCategory = async ({
 export const requestWorkerSpecialty = async (
     workerId: string | mongoose.Types.ObjectId,
     categoryId: string | mongoose.Types.ObjectId,
-    profile: SpecialtyProfileInput
+    profile: SpecialtyProfileInput,
+    certificates?: any[]
 ) => {
     const worker = await Worker.findById(workerId);
     if (!worker) throw Object.assign(new Error('Worker not found'), { statusCode: 404 });
@@ -292,10 +304,22 @@ export const requestWorkerSpecialty = async (
     const additionalCategoryMonthlyFee = await getAdditionalCategoryMonthlyFee();
     await ensureWalletCanRequestAdditionalCategory(workerId, additionalCategoryMonthlyFee);
 
+    const formattedCertificates = Array.isArray(certificates)
+        ? certificates
+              .filter((c: any) => c && c.title && c.certificateUrl)
+              .map((c: any) => ({
+                  title: String(c.title).trim(),
+                  issuingOrg: c.issuingOrg ? String(c.issuingOrg).trim() : '',
+                  issueYear: c.issueYear ? String(c.issueYear).trim() : '',
+                  certificateUrl: String(c.certificateUrl).trim(),
+              }))
+        : [];
+
     (worker.specialties as any).push({
         categoryId: category._id,
         priority: worker.specialties.length + 1,
         ...profile,
+        certificates: formattedCertificates,
         isActive: false,
         approvalStatus: 'pending',
         subscriptionStatus: 'pending_activation',
@@ -303,6 +327,20 @@ export const requestWorkerSpecialty = async (
         autoRenew: true,
         requestedAt: new Date()
     });
+
+    if (formattedCertificates.length > 0) {
+        const existingUrls = new Set((worker.certificates || []).map((c: any) => c.certificateUrl));
+        formattedCertificates.forEach((cert) => {
+            if (!existingUrls.has(cert.certificateUrl)) {
+                worker.certificates.push({
+                    ...cert,
+                    categoryName: category.name,
+                    verificationStatus: 'pending',
+                } as any);
+            }
+        });
+    }
+
     await worker.save();
     return worker;
 };
@@ -355,8 +393,24 @@ export const reviewWorkerSpecialty = async ({
             specialty.subscriptionStatus = 'pending_activation';
             await chargeSpecialtyPeriod({ worker, specialty, periodStart: reviewedAt });
         }
+
+        // Automatically mark associated certificates as verified with the specialty approval
+        const certUrls = new Set(((specialty as any).certificates || []).map((c: any) => c.certificateUrl));
+        (worker.certificates || []).forEach((cert: any) => {
+            if (certUrls.has(cert.certificateUrl) || cert.categoryName === category.name || (!cert.categoryName && specialty.priority === 1)) {
+                cert.verificationStatus = 'verified';
+                cert.verifiedAt = reviewedAt;
+                cert.verifiedBy = toObjectId(adminId);
+            }
+        });
     } else {
         specialty.subscriptionStatus = 'expired';
+        const certUrls = new Set(((specialty as any).certificates || []).map((c: any) => c.certificateUrl));
+        (worker.certificates || []).forEach((cert: any) => {
+            if (certUrls.has(cert.certificateUrl) || cert.categoryName === category.name) {
+                cert.verificationStatus = 'rejected';
+            }
+        });
     }
 
     await syncLegacyCategory(worker);
@@ -374,6 +428,12 @@ export const approveFreeSpecialtiesForVerifiedWorker = async (worker: IWorker) =
             specialty.monthlyFeeSnapshot = 0;
             specialty.isActive = true;
             specialty.approvedAt = now;
+        }
+    });
+    (worker.certificates || []).forEach((cert: any) => {
+        if (cert.verificationStatus === 'pending' && (!cert.categoryName || cert.categoryName === worker.category)) {
+            cert.verificationStatus = 'verified';
+            cert.verifiedAt = now;
         }
     });
     await syncLegacyCategory(worker);
