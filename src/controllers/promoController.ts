@@ -1,7 +1,7 @@
-// src/controllers/promoController.ts
 import PromoCode from "../models/PromoCode";
 import UserPromoUsage from "../models/UserPromoUsage";
 import User from "../models/User";
+import Booking from "../models/Booking";
 import Notification from "../models/Notifications";
 import { broadcastNotification } from "../services/notificationBroadcast";
 import { asyncHandler } from "../utils/asyncHandler";
@@ -27,7 +27,9 @@ export const createPromoCode = asyncHandler(async (req: AdminAuthRequest, res) =
         startDate, 
         endDate, 
         usageLimit = 0, 
-        userUsageLimit = 1 
+        userUsageLimit = 1,
+        firstTimeOnly = false,
+        city = 'all'
     } = req.body;
 
     if (!code || !discountType || discountValue === undefined || !startDate || !endDate) {
@@ -51,7 +53,9 @@ export const createPromoCode = asyncHandler(async (req: AdminAuthRequest, res) =
         startDate: new Date(startDate),
         endDate: new Date(endDate),
         usageLimit,
-        userUsageLimit
+        userUsageLimit,
+        firstTimeOnly: Boolean(firstTimeOnly),
+        city: city ? String(city).trim() : 'all'
     });
 
     // Record system audit log
@@ -262,6 +266,31 @@ export const validatePromoCode = asyncHandler(async (req: AuthRequest, res) => {
             return res.status(200).json({
                 success: true,
                 data: { isValid: false, message: "You have exceeded the usage limit for this promo code" }
+            });
+        }
+
+        // First-time customer only check
+        if (promo.firstTimeOnly) {
+            const completedBookings = await Booking.countDocuments({
+                user: userId,
+                status: 'completed'
+            });
+            if (completedBookings > 0) {
+                return res.status(200).json({
+                    success: true,
+                    data: { isValid: false, message: "This promo code is strictly reserved for first-time customers" }
+                });
+            }
+        }
+    }
+
+    // City restriction check
+    if (promo.city && promo.city !== 'all') {
+        const clientCity = req.body.city ? String(req.body.city).trim().toLowerCase() : null;
+        if (clientCity && clientCity !== promo.city.toLowerCase()) {
+            return res.status(200).json({
+                success: true,
+                data: { isValid: false, message: `This promo code is only valid for bookings in ${promo.city}` }
             });
         }
     }

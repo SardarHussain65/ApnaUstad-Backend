@@ -196,9 +196,25 @@ export const registerUser = asyncHandler(async (req, res) => {
 
     // 4. Create user object - create entry in db
     // Note: Password hashing is handled by the pre-save hook in User model
+    const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
+    try {
+        await User.updateMany(
+            { email: { $in: [null, ""] } },
+            { $unset: { email: 1 } }
+        );
+        const indexes = await User.collection.indexes();
+        for (const idx of indexes) {
+            if ((idx.name === "email_1" || idx.name === "phone_1") && !idx.sparse && idx.name !== "phone_1") {
+                await User.collection.dropIndex(idx.name);
+            }
+        }
+    } catch {
+        // Ignore index cleanup errors
+    }
+
     const user = await User.create({
         fullName: fullName,
-        email: email || null,
+        ...(normalizedEmail ? { email: normalizedEmail } : {}),
         password,
         phone,
         profileImage: profileImageUrl,

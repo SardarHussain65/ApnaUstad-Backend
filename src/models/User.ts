@@ -30,8 +30,8 @@ export interface IUser extends Document {
 const userSchema = new Schema<IUser>(
     {
         fullName: { type: String, trim: true, default: '' },
-        phone: { type: String, trim: true, sparse: true, default: null },
-        email: { type: String, trim: true, lowercase: true, sparse: true, default: null },
+        phone: { type: String, trim: true, sparse: true },
+        email: { type: String, trim: true, lowercase: true, sparse: true },
         password: { type: String, required: [true, 'Password is required'], trim: true, select: false },
         profileImage: { type: String, default: '' },
         address: { type: String, trim: true, default: '' },

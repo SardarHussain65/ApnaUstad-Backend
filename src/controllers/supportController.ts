@@ -195,3 +195,28 @@ export const updateSupportPriority = asyncHandler(async (req: Request, res: Resp
 
   return successResponse(res, 200, 'Support request priority updated', doc);
 });
+
+export const addSupportInternalNote = asyncHandler(async (req: any, res: Response) => {
+  const id = req.params.id;
+  const { note } = req.body;
+
+  if (!note || !note.trim()) {
+    return successResponse(res, 400, 'Internal note cannot be empty');
+  }
+
+  const doc = await SupportRequest.findById(id);
+  if (!doc) return successResponse(res, 404, 'Support request not found');
+
+  doc.metadata = doc.metadata || {};
+  doc.metadata.internalNotes = doc.metadata.internalNotes || [];
+  doc.metadata.internalNotes.push({
+    note: note.trim(),
+    authorName: req.admin?.fullName || 'Admin',
+    createdAt: new Date(),
+  });
+  doc.markModified('metadata');
+  await doc.save();
+
+  return successResponse(res, 200, 'Internal note added', doc);
+});
+

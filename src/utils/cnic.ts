@@ -24,18 +24,41 @@ const CNIC_KEYS = new Set(['cnicNumber', 'cnic']);
 /**
  * Recursively masks CNIC number fields in an API payload (returns a new structure).
  * Image URLs are intentionally left alone; they are gated by the reveal endpoint on the UI side.
+ * Safely handles Mongoose document instances and prevents circular traversal.
  */
-export const maskCnicDeep = <T>(input: T): T => {
-  if (Array.isArray(input)) return input.map((item) => maskCnicDeep(item)) as unknown as T;
+export const maskCnicDeep = <T>(input: T, seen = new WeakSet<object>()): T => {
+  if (Array.isArray(input)) return input.map((item) => maskCnicDeep(item, seen)) as unknown as T;
   if (input && typeof input === 'object') {
-    if (input instanceof Date) return input;
+    if (input instanceof Date || input instanceof RegExp) return input;
+
+    // Preserve and stringify MongoDB ObjectId / BSON instances
+    const ctorName = input.constructor?.name;
+    if (
+      ctorName === 'ObjectId' ||
+      ctorName === 'ObjectID' ||
+      (input as any)._bsontype === 'ObjectID' ||
+      (input as any)._bsontype === 'ObjectId' ||
+      typeof (input as any).toHexString === 'function'
+    ) {
+      return String(input) as unknown as T;
+    }
+
+    if (seen.has(input)) return input;
+    seen.add(input);
+
+    let target: any = input;
+    if (typeof target.toObject === 'function') {
+      target = target.toObject();
+    }
+
     const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(input as Record<string, unknown>)) {
+    for (const [key, val] of Object.entries(target)) {
+      if (key.startsWith('$') || key === '_doc' || key === '$__') continue;
       if (CNIC_KEYS.has(key) && typeof val === 'string' && val) {
         out[key] = maskCnic(val);
         out.cnicMasked = true;
       } else {
-        out[key] = maskCnicDeep(val);
+        out[key] = maskCnicDeep(val, seen);
       }
     }
     return out as T;
