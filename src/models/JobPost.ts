@@ -33,6 +33,9 @@ export interface IJobPost extends Document {
     cancelledBy?: 'customer' | 'admin' | null;
     cancelReason?: string;
     cancelledAt?: Date | null;
+    deletedAt?: Date | null;
+    deletedBy?: mongoose.Types.ObjectId | null;
+    deleteReason?: string;
 }
 
 const jobPostSchema = new Schema<IJobPost>(
@@ -72,7 +75,10 @@ const jobPostSchema = new Schema<IJobPost>(
         expiresAt: { type: Date, required: true },
         cancelledBy: { type: String, enum: ['customer', 'admin', null], default: null },
         cancelReason: { type: String, trim: true, default: '' },
-        cancelledAt: { type: Date, default: null }
+        cancelledAt: { type: Date, default: null },
+        deletedAt: { type: Date, default: null },
+        deletedBy: { type: Schema.Types.ObjectId, ref: 'Admin', default: null },
+        deleteReason: { type: String, trim: true, default: '' }
     },
     { timestamps: true }
 );
@@ -82,5 +88,6 @@ jobPostSchema.index({ customer: 1, status: 1 });
 jobPostSchema.index({ category: 1, status: 1 });
 jobPostSchema.index({ status: 1, expiresAt: 1, category: 1 });
 jobPostSchema.index({ customer: 1, createdAt: -1 });
+jobPostSchema.index({ deletedAt: 1, status: 1, createdAt: -1 });
 
 export default mongoose.models.JobPost || mongoose.model<IJobPost>('JobPost', jobPostSchema);

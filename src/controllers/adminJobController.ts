@@ -1,11 +1,13 @@
 import JobPost from "../models/JobPost";
 import JobBid from "../models/JobBid";
+import Booking from "../models/Booking";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import { NotFoundError, BadRequestError } from "../utils/ApiError";
 import { recordAdminAction } from "../services/adminAuditLog";
 import { getIO } from "../sockets/socketManager";
+import { checkReason, extractReason } from "../utils/adminReason";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -22,6 +24,10 @@ export const getAllJobs = asyncHandler(async (req: AdminAuthRequest, res) => {
     const urgency = req.query.urgency as string;
 
     const query: any = {};
+    // Soft-deleted jobs are hidden unless explicitly requested (`?includeDeleted=true`).
+    if (req.query.includeDeleted !== 'true') {
+        query.deletedAt = null;
+    }
     if (search) {
         const searchRegex = new RegExp(escapeRegex(search), 'i');
         query.$or = [
@@ -65,33 +71,60 @@ export const getAllJobs = asyncHandler(async (req: AdminAuthRequest, res) => {
  */
 export const getJobDetails = asyncHandler(async (req: AdminAuthRequest, res) => {
     const job = await JobPost.findById(req.params.id)
-        .populate('customer', 'fullName phone profileImage');
+        .populate('customer', 'fullName phone email city address profileImage isActive');
 
     if (!job) throw new NotFoundError("Job not found");
 
-    const bids = await JobBid.find({ jobPost: job._id })
-        .populate('worker', 'fullName phone profileImage rating totalReviews totalJobs category')
-        .sort({ createdAt: -1 });
+    const [bids, linkedBooking] = await Promise.all([
+        JobBid.find({ jobPost: job._id })
+            .populate('worker', 'fullName phone profileImage rating totalReviews totalJobs category city isVerified')
+            .sort({ createdAt: -1 }),
+        Booking.findOne({ jobPost: job._id })
+            .populate('worker', 'fullName phone profileImage rating category')
+            .select('status totalAmount scheduledDate scheduledTime createdAt worker agreement paymentStatus')
+            .lean(),
+    ]);
+
+    const acceptedBid = bids.find((b: any) => b.status === 'accepted') || null;
 
     return successResponse(res, 200, "Job details fetched successfully", {
         ...job.toObject(),
-        bids
+        bids,
+        acceptedBid,
+        linkedBooking,
     });
 });
 
 /**
- * Delete a job post
+ * Soft-delete a job post. The document is kept (audit trail, bookings, bids) and flagged
+ * `deletedAt`; it is also marked cancelled so the mobile app treats it as a cancelled job.
+ * A reason is mandatory.
  * @route DELETE /api/v1/admin/jobs/:id
  */
 export const deleteJob = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const reason = typeof req.body?.reason === 'string'
-        ? req.body.reason.trim()
-        : typeof req.query?.reason === 'string'
-            ? String(req.query.reason).trim()
-            : '';
+    const check = checkReason(extractReason(req.body, req.query as Record<string, unknown>), true);
+    if (!check.ok) throw new BadRequestError(check.message);
+    const { reason } = check;
 
-    const job = await JobPost.findByIdAndDelete(req.params.id);
-    if (!job) throw new NotFoundError("Job not found");
+    const job = await JobPost.findById(req.params.id);
+    if (!job || (job as any).deletedAt) throw new NotFoundError("Job not found");
+
+    const previousStatus = job.status;
+    if (job.status !== 'cancelled') {
+        job.status = 'cancelled';
+        job.cancelledBy = 'admin';
+        job.cancelReason = reason;
+        job.cancelledAt = new Date();
+    }
+    (job as any).deletedAt = new Date();
+    (job as any).deletedBy = req.admin?._id || null;
+    (job as any).deleteReason = reason;
+    await job.save();
+
+    await JobBid.updateMany(
+        { jobPost: job._id, status: 'pending' },
+        { $set: { status: 'rejected' } }
+    );
 
     await recordAdminAction(req, {
         action: 'job.delete',
@@ -99,8 +132,9 @@ export const deleteJob = asyncHandler(async (req: AdminAuthRequest, res) => {
         entityId: job._id.toString(),
         reason,
         metadata: {
+            soft: true,
             category: job.category,
-            status: job.status,
+            previousStatus,
             customer: job.customer?.toString?.() || ''
         }
     });

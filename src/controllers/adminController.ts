@@ -10,6 +10,8 @@ import { BadRequestError, UnauthorizedError, NotFoundError, ForbiddenError, Conf
 import { successResponse } from "../utils/ApiResponse";
 import { generateToken } from "../middlewares/jwt.middleware";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
+import { getPermissionsForRole } from "../config/adminPermissions";
+import { getActionsForRole } from "../config/adminActions";
 
 /**
  * Admin Login
@@ -49,9 +51,11 @@ export const loginAdmin = asyncHandler(async (req, res) => {
         type: 'admin'
     });
 
-    // Remove password from response
-    const adminData = admin.toObject();
+    // Remove password from response and attach role permissions + granular actions
+    const adminData: any = admin.toObject();
     delete adminData.password;
+    adminData.permissions = getPermissionsForRole(admin.role);
+    adminData.actions = getActionsForRole(admin.role);
 
     return successResponse(res, 200, "Admin logged in successfully", {
         admin: adminData,
@@ -127,7 +131,15 @@ export const getDashboardStats = asyncHandler(async (req: AdminAuthRequest, res)
  * @route GET /api/v1/admin/me
  */
 export const getAdminProfile = asyncHandler(async (req: AdminAuthRequest, res: Response) => {
-    return successResponse(res, 200, "Admin profile fetched successfully", req.admin);
+    if (!req.admin) {
+        throw new UnauthorizedError("Admin not found");
+    }
+    const adminData: any = req.admin.toObject ? req.admin.toObject() : { ...req.admin };
+    delete adminData.password;
+    adminData.permissions = getPermissionsForRole(req.admin.role);
+    adminData.actions = getActionsForRole(req.admin.role);
+
+    return successResponse(res, 200, "Admin profile fetched successfully", adminData);
 });
 
 /**

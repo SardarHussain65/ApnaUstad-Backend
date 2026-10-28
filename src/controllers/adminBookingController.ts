@@ -4,6 +4,8 @@ import JobPost from "../models/JobPost";
 import User from "../models/User";
 import Worker from "../models/Workers";
 import Message from "../models/Message";
+import Dispute from "../models/Dispute";
+import Review from "../models/Reviews";
 import { asyncHandler } from "../utils/asyncHandler";
 import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
@@ -95,8 +97,8 @@ export const getAllBookings = asyncHandler(async (req: AdminAuthRequest, res) =>
 
     const total = await Booking.countDocuments(query);
     const bookings = await Booking.find(query)
-        .populate('customer', 'fullName phone')
-        .populate('worker', 'fullName phone')
+        .populate('customer', 'fullName phone email city address location profileImage')
+        .populate('worker', 'fullName phone email city address location category profileImage isAvailable lastOnlineAt')
         .skip((page - 1) * limit)
         .limit(limit)
         .sort({ createdAt: -1 });
@@ -116,16 +118,24 @@ export const getAllBookings = asyncHandler(async (req: AdminAuthRequest, res) =>
  */
 export const getBookingDetails = asyncHandler(async (req: AdminAuthRequest, res) => {
     const booking = await Booking.findById(req.params.id)
-        .populate('customer', 'fullName phone profileImage')
-        .populate('worker', 'fullName phone profileImage');
+        .populate('customer', 'fullName phone email city address location profileImage isActive')
+        .populate('worker', 'fullName phone email city address location category hourlyRate rating totalReviews profileImage isVerified isAvailable lastOnlineAt')
+        .populate('jobPost', 'title category description address location urgency pricing status createdAt')
+        .populate('acceptedBid', 'proposedPrice priceMode message createdAt');
 
     if (!booking) throw new NotFoundError("Booking not found");
 
-    const payment = await Payment.findOne({ booking: booking._id });
+    const [payment, dispute, review] = await Promise.all([
+        Payment.findOne({ booking: booking._id }).lean(),
+        Dispute.findOne({ booking: booking._id }).lean(),
+        Review.findOne({ booking: booking._id }).lean(),
+    ]);
 
     return successResponse(res, 200, "Booking fetched successfully", {
         ...booking.toObject(),
-        payment
+        payment,
+        dispute,
+        review,
     });
 });
 

@@ -10,7 +10,7 @@ import logger from "../config/logger";
 export const cleanupOrphanedUploads = async () => {
     logger.info("Starting orphaned uploads cleanup process...");
 
-    const folders = ["/profiles", "/workers/profile-images", "/workers/cnic"];
+    const folders = ["/profiles", "/workers/profile-images", "/workers/cnic", "/workers/certificates"];
     const now = new Date();
     const threshold = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
@@ -44,7 +44,8 @@ export const cleanupOrphanedUploads = async () => {
                         $or: [
                             { profileImage: file.url },
                             { cnicFrontImage: file.url },
-                            { cnicBackImage: file.url }
+                            { cnicBackImage: file.url },
+                            { "certificates.certificateUrl": file.url }
                         ]
                     })
                 ]);

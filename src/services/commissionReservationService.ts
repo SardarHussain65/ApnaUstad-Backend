@@ -52,7 +52,7 @@ export const reserveCommission = async (
     );
 
     if (!updatedWallet) {
-        const error = new Error('Wallet balance is no longer sufficient to reserve the platform commission.');
+        const error = new Error('Not enough wallet balance to cover the app fee for this job. Please add balance first.');
         (error as any).statusCode = 402;
         throw error;
     }
@@ -151,7 +151,7 @@ export const settleCommissionReservation = async (
         amount,
         balanceBefore,
         balanceAfter,
-        description: `Commission deduction for booking ID: ${bookingId}`,
+        description: `App fee for job #${String(bookingId).slice(-6).toUpperCase()}`,
         reference: {
             booking: toObjectId(bookingId),
             payment: toObjectId(paymentId)

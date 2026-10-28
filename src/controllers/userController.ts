@@ -196,9 +196,25 @@ export const registerUser = asyncHandler(async (req, res) => {
 
     // 4. Create user object - create entry in db
     // Note: Password hashing is handled by the pre-save hook in User model
+    const normalizedEmail = email && String(email).trim() ? String(email).trim().toLowerCase() : undefined;
+    try {
+        await User.updateMany(
+            { email: { $in: [null, ""] } },
+            { $unset: { email: 1 } }
+        );
+        const indexes = await User.collection.indexes();
+        for (const idx of indexes) {
+            if ((idx.name === "email_1" || idx.name === "phone_1") && !idx.sparse && idx.name !== "phone_1") {
+                await User.collection.dropIndex(idx.name);
+            }
+        }
+    } catch {
+        // Ignore index cleanup errors
+    }
+
     const user = await User.create({
         fullName: fullName,
-        email: email || null,
+        ...(normalizedEmail ? { email: normalizedEmail } : {}),
         password,
         phone,
         profileImage: profileImageUrl,
@@ -626,14 +642,13 @@ export const googleAuthUser = asyncHandler(async (req, res) => {
             refreshToken: refreshToken
         });
     } else {
-        // User does NOT exist -> Automatically register them
-        const placeholderPhone = `G-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        // User does NOT exist -> Automatically register them without dummy phone
         const randomPassword = Math.random().toString(36).slice(-10);
 
         const newUser = await User.create({
             fullName: name || "Google User",
             email: email,
-            phone: placeholderPhone,
+            phone: null,
             password: randomPassword,
             profileImage: picture || "",
             location: {

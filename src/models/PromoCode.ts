@@ -13,6 +13,8 @@ export interface IPromoCode extends Document {
   usageCount: number;
   userUsageLimit: number;
   isActive: boolean;
+  firstTimeOnly?: boolean;
+  city?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -74,6 +76,15 @@ const promoCodeSchema = new Schema<IPromoCode>(
       type: Boolean, 
       default: true,
       index: true 
+    },
+    firstTimeOnly: {
+      type: Boolean,
+      default: false
+    },
+    city: {
+      type: String,
+      trim: true,
+      default: 'all'
     }
   },
   { timestamps: true }

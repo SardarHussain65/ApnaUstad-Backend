@@ -322,3 +322,36 @@ export const getWorkerOnboardingQueue = asyncHandler(async (req: AdminAuthReques
 
     return paginatedResponse(res, 200, 'Worker onboarding queue fetched successfully', rows, page, limit, total);
 });
+
+/**
+ * Admin: Review worker certificate (Verify or Reject)
+ * @route PATCH /api/v1/admin/workers/:id/certificates/:certId/review
+ */
+export const reviewWorkerCertificate = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const { id, certId } = req.params;
+    const { verificationStatus, rejectionReason } = req.body;
+
+    if (!['verified', 'rejected'].includes(verificationStatus)) {
+        throw new BadRequestError("verificationStatus must be either 'verified' or 'rejected'");
+    }
+
+    const worker = await Worker.findById(id);
+    if (!worker) {
+        throw new NotFoundError('Worker not found');
+    }
+
+    const certificate = (worker.certificates as any)?.id?.(certId) || worker.certificates?.find((c: any) => c._id?.toString() === certId);
+    if (!certificate) {
+        throw new NotFoundError('Certificate not found');
+    }
+
+    certificate.verificationStatus = verificationStatus;
+    certificate.verifiedAt = new Date();
+    certificate.verifiedBy = req.admin?._id;
+    certificate.rejectionReason = verificationStatus === 'rejected' ? (rejectionReason || 'Rejected by admin') : '';
+
+    await worker.save();
+
+    return successResponse(res, 200, `Certificate marked as ${verificationStatus}`, certificate);
+});
+

@@ -57,6 +57,38 @@ export const getVerificationRequests = asyncHandler(async (req: AdminAuthRequest
 });
 
 /**
+ * Get a single identity verification request with worker context & prior history
+ * @route GET /api/v1/admin/verification/requests/:id
+ */
+export const getVerificationRequestDetails = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const request = await VerificationRequest.findById(req.params.id)
+        .populate('worker', 'fullName phone email profileImage category city address isVerified isActive createdAt averageRating totalReviews')
+        .populate('reviewedBy', 'fullName email')
+        .lean();
+
+    if (!request) {
+        throw new NotFoundError("Verification request not found");
+    }
+
+    const workerId = (request.worker as any)?._id || request.worker;
+    const history = workerId
+        ? await VerificationRequest.find({
+              worker: workerId,
+              _id: { $ne: request._id },
+          })
+              .populate('reviewedBy', 'fullName email')
+              .sort({ createdAt: -1 })
+              .limit(10)
+              .lean()
+        : [];
+
+    return successResponse(res, 200, "Verification request fetched successfully", {
+        ...request,
+        history,
+    });
+});
+
+/**
  * Review a pending identity verification request
  * @route PATCH /api/v1/admin/verification/requests/:id/review
  */

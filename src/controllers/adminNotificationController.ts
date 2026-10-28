@@ -13,7 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
  * @route POST /api/v1/admin/notifications/global
  */
 export const sendGlobalNotification = asyncHandler(async (_req: AdminAuthRequest, res) => {
-    const { target = 'all', title, body, type, recipientId, scheduledAt } = (_req as any).body || {};
+    const { target = 'all', title, body, type, recipientId, scheduledAt, city } = (_req as any).body || {};
 
     if (!title || !body) {
         return res.status(400).json({
@@ -44,12 +44,20 @@ export const sendGlobalNotification = asyncHandler(async (_req: AdminAuthRequest
             }
             recipients.push({ id: recipientId, type: target as 'user' | 'worker' });
         } else {
+            const userQuery: any = { isActive: true };
+            const workerQuery: any = { isActive: true };
+            if (city && city !== 'all') {
+                const cityRegex = new RegExp(`^${String(city).trim()}$`, 'i');
+                userQuery.city = cityRegex;
+                workerQuery.city = cityRegex;
+            }
+
             if (target === 'users' || target === 'all') {
-                const users = await User.find({ isActive: true }, { _id: 1 }).lean();
+                const users = await User.find(userQuery, { _id: 1 }).lean();
                 users.forEach(u => recipients.push({ id: u._id.toString(), type: 'user' }));
             }
             if (target === 'workers' || target === 'all') {
-                const workers = await Worker.find({ isActive: true }, { _id: 1 }).lean();
+                const workers = await Worker.find(workerQuery, { _id: 1 }).lean();
                 workers.forEach(w => recipients.push({ id: w._id.toString(), type: 'worker' }));
             }
         }
@@ -112,7 +120,8 @@ export const sendGlobalNotification = asyncHandler(async (_req: AdminAuthRequest
         target: target as BroadcastTarget,
         title,
         body,
-        type: type || 'general'
+        type: type || 'general',
+        city
     });
 
     return successResponse(res, 200, "Broadcast queued", result);

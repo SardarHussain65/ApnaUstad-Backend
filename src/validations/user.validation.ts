@@ -3,7 +3,10 @@ import { z } from "zod";
 
 const registerUserSchema = z.object({
     fullName: z.string({ error: "Full name is required" }).min(3, "Full name must be at least 3 characters long"),
-    email: z.string({ error: "Email is required" }).email("Invalid email address"),
+    email: z.preprocess(
+        (val) => (typeof val === "string" && val.trim() === "" ? undefined : val),
+        z.string({ error: "Email must be a string" }).email("Invalid email address").optional()
+    ),
     password: z.string({ error: "Password is required" }).min(6, "Password must be at least 6 characters long"),
     phone: z.string({ error: "Phone number is required" }).min(10, "Phone number must be at least 10 digits long"),
     address: z.string().min(3, "Address must be at least 3 characters long").optional(),

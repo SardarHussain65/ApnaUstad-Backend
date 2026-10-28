@@ -4,6 +4,7 @@ import {
     uploadWorkerProfileImage,
     uploadWorkerCnicFront,
     uploadWorkerCnicBack,
+    uploadWorkerCertificate,
     loginWorker,
     getWorkerById,
     updateWorkerProfile,
@@ -20,12 +21,14 @@ import {
     getVerificationStatus,
     getMyWorkerAccountStatus
 } from "../controllers/workerController";
+import { createPublicProfessionRequest } from "../controllers/adminProfessionRequestController";
 import validate from "../middlewares/validate.middleware";
 import { loginWorkerSchema, registerWorkerSchema } from "../validations/worker.validation";
 import {
     handleWorkerProfileImageUpload,
     handleWorkerCnicFrontUpload,
     handleWorkerCnicBackUpload,
+    handleWorkerCertificateUpload,
 } from "../middlewares/multer.middleware";
 import { workerAuthMiddleware } from "../middlewares/jwt.middleware";
 import { uploadRateLimiter } from "../middlewares/rateLimiter.middleware";
@@ -58,6 +61,18 @@ router.route("/upload-cnic-front").post(uploadRateLimiter, handleWorkerCnicFront
  * @access Public
  */
 router.route("/upload-cnic-back").post(uploadRateLimiter, handleWorkerCnicBackUpload, uploadWorkerCnicBack);
+
+/**
+ * @description Upload worker certificate or degree → /workers/certificates/ on ImageKit
+ * @access Public
+ */
+router.route("/upload-certificate").post(uploadRateLimiter, handleWorkerCertificateUpload, uploadWorkerCertificate);
+
+/**
+ * @description Submit new profession request
+ * @access Public
+ */
+router.route("/profession-request").post(authLimiter, createPublicProfessionRequest);
 
 /**
  * @description Check if worker exists by phone

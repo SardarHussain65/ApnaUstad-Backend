@@ -15,19 +15,19 @@ export const getBookingJobAmount = (booking: any) => (
 );
 
 export const DISPUTE_REASON_LABELS: Record<IDispute['reason'], string> = {
-    incomplete_work: 'Work not completed',
-    unfair_pricing: 'Overcharged / unfair price',
-    no_show: 'Ustad did not show up',
-    poor_quality: 'Poor workmanship',
+    incomplete_work: 'Work not finished',
+    unfair_pricing: 'Asked for extra money',
+    no_show: 'Ustad did not arrive',
+    poor_quality: 'Work not done properly',
     payment_issue: 'Cash payment issue',
-    other: 'Other problem',
+    other: 'Other issue',
 };
 
 export const getDisputeStatusLabel = (status: IDispute['status'] | null) => {
     switch (status) {
         case 'open': return 'Report received';
-        case 'under_review': return 'Under investigation';
-        case 'resolved': return 'Resolved in customer favour';
+        case 'under_review': return 'Being checked';
+        case 'resolved': return 'Solved in customer favor';
         case 'dismissed': return 'Closed — Ustad cleared';
         default: return '';
     }
@@ -36,13 +36,13 @@ export const getDisputeStatusLabel = (status: IDispute['status'] | null) => {
 export const getDisputeNextStep = (status: IDispute['status'] | null) => {
     switch (status) {
         case 'open':
-            return 'ApnaUstad team will review your report and may contact both parties.';
+            return 'Our team will check your report and may call both sides if needed.';
         case 'under_review':
-            return 'Our moderators are checking details. Cash payment stays on hold until a decision.';
+            return 'Our team is checking the details. Cash payment stays paused until we finish checking.';
         case 'resolved':
-            return 'Decision is final. Check notifications for wallet or payment updates.';
+            return 'This issue is closed. Check your notifications or wallet for any balance updates.';
         case 'dismissed':
-            return 'Complaint was not upheld. Normal booking payment can continue.';
+            return 'Complaint closed. Normal cash payment for the job can continue.';
         default:
             return '';
     }
