@@ -7,6 +7,8 @@ import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import { recordAdminAction } from "../services/adminAuditLog";
 import { getWalletSettings } from "../services/walletSettingsService";
+import { rechargeWallet } from "../services/workerWalletService";
+import { sendNotificationToRecipient } from "../services/notificationHelper";
 import {
     applyMatchedSpecialtyProfileToWorkerPayload,
     approveFreeSpecialtiesForVerifiedWorker,
@@ -92,6 +94,38 @@ export const verifyWorker = asyncHandler(async (req: AdminAuthRequest, res) => {
     }
     if (isVerified) {
         await approveFreeSpecialtiesForVerifiedWorker(worker);
+
+        if (!worker.hasReceivedStarterBonus) {
+            try {
+                const walletSettings = await getWalletSettings();
+                const bonusAmount = Number(walletSettings.cnicVerificationBonus ?? 500);
+                if (bonusAmount > 0) {
+                    await rechargeWallet(
+                        worker._id,
+                        bonusAmount,
+                        { actor: req.admin?._id || worker._id, actorType: 'admin' },
+                        'CNIC Verification Starter Bonus'
+                    );
+                    worker.hasReceivedStarterBonus = true;
+                    await worker.save();
+
+                    try {
+                        await sendNotificationToRecipient(
+                            worker._id,
+                            'worker',
+                            '🎉 CNIC Verified!',
+                            `Your CNIC has been verified! A starter bonus of Rs. ${bonusAmount.toLocaleString('en-PK')} has been credited to your wallet.`,
+                            { type: 'worker_verified', bonus: String(bonusAmount) },
+                            { type: 'worker_verified' }
+                        );
+                    } catch (notifErr: any) {
+                        console.warn('Failed to send verification notification:', notifErr.message);
+                    }
+                }
+            } catch (walletErr: any) {
+                console.error('Failed to credit starter bonus in verifyWorker:', walletErr);
+            }
+        }
     }
 
     await recordAdminAction(req, {
@@ -240,20 +274,23 @@ const buildOnboardingStatus = (worker: any, walletBalance: number, minBalance: n
     const pendingSpecialty = (worker.specialties || []).some(
         (specialty: any) => specialty.approvalStatus === 'pending'
     );
-    const cnicStatus = worker.isVerified ? 'complete' : pendingVerification ? 'pending' : 'missing';
+    const pendingCertificate = (worker.certificates || []).some(
+        (cert: any) => cert.verificationStatus === 'pending'
+    );
+    const cnicStatus = worker.isVerified ? 'complete' : pendingVerification ? 'pending' : 'not_submitted';
     const specialtyStatus = pendingSpecialty ? 'pending' : 'complete';
-    const walletStatus = walletBalance >= minBalance ? 'complete' : 'blocked';
-    const blockers: string[] = [];
-    if (cnicStatus !== 'complete') blockers.push('CNIC verification');
-    if (specialtyStatus === 'pending') blockers.push('Specialty approval');
-    if (walletStatus === 'blocked') blockers.push('Minimum wallet balance');
+    const walletStatus = walletBalance >= minBalance ? 'complete' : 'pending';
+    const pendingReviews: string[] = [];
+    if (pendingVerification) pendingReviews.push('CNIC verification pending');
+    if (pendingSpecialty) pendingReviews.push('Specialty approval pending');
+    if (pendingCertificate) pendingReviews.push('Certificate verification pending');
 
     return {
         cnic: cnicStatus,
         specialty: specialtyStatus,
         wallet: walletStatus,
-        isReady: blockers.length === 0,
-        blockers,
+        isReady: worker.isActive !== false,
+        blockers: pendingReviews,
         walletBalance,
         minimumWalletBalance: minBalance,
     };
@@ -269,10 +306,14 @@ export const getWorkerOnboardingQueue = asyncHandler(async (req: AdminAuthReques
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     const walletSettings = await getWalletSettings();
 
+    const pendingVerificationRecords = await VerificationRequest.find({ status: 'pending' }).select('worker').lean();
+    const pendingWorkerIds = pendingVerificationRecords.map((r) => r.worker);
+
     const query: any = {
         $or: [
-            { isVerified: false },
-            { specialties: { $elemMatch: { approvalStatus: 'pending' } } },
+            { _id: { $in: pendingWorkerIds } },
+            { specialties: { $elemMatch: { priority: { $gt: 1 }, approvalStatus: 'pending' } } },
+            { certificates: { $elemMatch: { verificationStatus: 'pending' } } },
         ],
     };
 

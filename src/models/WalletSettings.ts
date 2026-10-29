@@ -6,6 +6,7 @@ export interface IWalletSettings extends Document {
     minimumWalletBalance: number;
     additionalCategoryMonthlyFee: number;
     commissionEnabled: boolean;
+    cnicVerificationBonus: number;
     updatedBy?: mongoose.Types.ObjectId | null;
     createdAt: Date;
     updatedAt: Date;
@@ -18,6 +19,7 @@ const walletSettingsSchema = new Schema<IWalletSettings>(
         minimumWalletBalance: { type: Number, required: true, min: 0, default: 500 },
         additionalCategoryMonthlyFee: { type: Number, required: true, min: 0, default: 500 },
         commissionEnabled: { type: Boolean, default: true },
+        cnicVerificationBonus: { type: Number, required: true, min: 0, default: 500 },
         updatedBy: { type: Schema.Types.ObjectId, ref: 'Admin', default: null },
     },
     { timestamps: true }

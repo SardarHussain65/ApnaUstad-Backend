@@ -4,15 +4,17 @@ import Worker from '../models/Workers';
 import WorkerWallet from '../models/WorkerWallet';
 import WalletTransaction from '../models/WalletTransaction';
 import { type IDispute } from '../models/Dispute';
-import { creditUserWallet } from './userWalletService';
 import { sendNotificationToRecipient } from './notificationHelper';
 import { recordAdminAction } from './adminAuditLog';
 import { type AdminAuthRequest } from '../middlewares/admin.middleware';
+import { refundCommissionToWorker } from './commissionReservationService';
 
 export type DisputeModerationInput = {
     warnCustomer?: boolean;
     warnWorker?: boolean;
     workerPenalty?: number;
+    refundWorkerCommission?: boolean;
+    workerCommissionRefund?: number;
     blockCustomer?: boolean;
     blockWorker?: boolean;
     blockReason?: string;
@@ -22,6 +24,7 @@ export type DisputeModerationApplied = {
     warnedCustomer: boolean;
     warnedWorker: boolean;
     workerPenalty: number;
+    workerCommissionRefund: number;
     customerRefund: number;
     customerBlocked: boolean;
     workerBlocked: boolean;
@@ -60,55 +63,70 @@ const deductWorkerWallet = async (
     }], { session });
 };
 
+/**
+ * Applies dispute wallet actions:
+ * 1. Commission refund to worker (if requested)
+ * 2. Penalty deduction from worker (if worker misconducted)
+ * Note: Customer pays in cash; there is NO customer wallet refund.
+ */
 export const applyDisputeWalletActions = async ({
     dispute,
     booking,
-    refundAmount,
-    workerPenalty,
+    workerPenalty = 0,
+    refundWorkerCommission = false,
+    workerCommissionRefund = 0,
     adminId,
     resolutionDetails,
     session,
 }: {
     dispute: IDispute;
     booking: any;
-    refundAmount: number;
-    workerPenalty: number;
+    workerPenalty?: number;
+    refundWorkerCommission?: boolean;
+    workerCommissionRefund?: number;
     adminId?: mongoose.Types.ObjectId | undefined;
     resolutionDetails?: string;
     session: mongoose.ClientSession;
 }) => {
-    const jobCap = Number(dispute.amountDisputed || 0);
-    const normalizedRefund = Math.min(Math.max(0, refundAmount), jobCap);
-    const normalizedPenalty = Math.max(0, workerPenalty);
-    const totalWorkerDebit = normalizedRefund + normalizedPenalty;
+    const bookingCommission = Number(booking.agreement?.commissionAmount ?? booking.platformFee ?? 0);
+    let normalizedCommissionRefund = 0;
 
-    if (totalWorkerDebit > 0) {
+    if (refundWorkerCommission || workerCommissionRefund > 0) {
+        normalizedCommissionRefund = workerCommissionRefund > 0
+            ? Math.min(workerCommissionRefund, bookingCommission > 0 ? bookingCommission : workerCommissionRefund)
+            : bookingCommission;
+    }
+
+    if (normalizedCommissionRefund > 0) {
+        await refundCommissionToWorker({
+            workerId: dispute.worker,
+            bookingId: booking._id,
+            amount: normalizedCommissionRefund,
+            adminId,
+            reason: resolutionDetails,
+            session,
+        });
+    }
+
+    const normalizedPenalty = Math.max(0, workerPenalty);
+    if (normalizedPenalty > 0) {
         const bookingRef = String(booking._id).slice(-6).toUpperCase();
         await deductWorkerWallet(
             dispute.worker,
-            totalWorkerDebit,
+            normalizedPenalty,
             adminId,
-            `Complaint adjustment on job #${bookingRef}${resolutionDetails ? `: ${resolutionDetails}` : ''}`,
+            `Penalty for complaint on job #${bookingRef}${resolutionDetails ? `: ${resolutionDetails}` : ''}`,
             booking._id,
             dispute._id as mongoose.Types.ObjectId,
             session,
         );
     }
 
-    if (normalizedRefund > 0) {
-        const actorId = adminId || new mongoose.Types.ObjectId();
-        const bookingRef = String(booking._id).slice(-6).toUpperCase();
-        await creditUserWallet(
-            dispute.customer,
-            normalizedRefund,
-            { actor: actorId, actorType: 'admin' },
-            `Refund for job #${bookingRef}${resolutionDetails ? `: ${resolutionDetails}` : ''}`,
-            { booking: booking._id, dispute: dispute._id },
-            session,
-        );
-    }
-
-    return { customerRefund: normalizedRefund, workerPenalty: normalizedPenalty };
+    return {
+        workerCommissionRefund: normalizedCommissionRefund,
+        workerPenalty: normalizedPenalty,
+        customerRefund: 0,
+    };
 };
 
 export const applyDisputeModerationAfterResolve = async ({
@@ -130,6 +148,7 @@ export const applyDisputeModerationAfterResolve = async ({
         warnedCustomer: false,
         warnedWorker: false,
         workerPenalty: Number(moderation.workerPenalty || 0),
+        workerCommissionRefund: 0,
         customerRefund: 0,
         customerBlocked: false,
         workerBlocked: false,
@@ -142,8 +161,8 @@ export const applyDisputeModerationAfterResolve = async ({
         await sendNotificationToRecipient(
             dispute.customer,
             'user',
-            'Official warning — ApnaUstad',
-            `Warning regarding complaint on booking #${bookingRef}. ${warnMessage}`,
+            'Official notice — ApnaUstad',
+            `Notice regarding booking #${bookingRef}: ${warnMessage}`,
             { type: 'general', bookingId },
             { type: 'general', icon: 'alert', color: '#FF9F0A', bookingId, idempotencyKey: `dispute-warn-customer/${dispute._id}` },
         );
@@ -155,7 +174,7 @@ export const applyDisputeModerationAfterResolve = async ({
             dispute.worker,
             'worker',
             'Official warning — ApnaUstad',
-            `Warning regarding complaint on booking #${bookingRef}. ${warnMessage}`,
+            `Warning regarding complaint on booking #${bookingRef}: ${warnMessage}`,
             { type: 'general', bookingId },
             { type: 'general', icon: 'alert', color: '#FF9F0A', bookingId, idempotencyKey: `dispute-warn-worker/${dispute._id}` },
         );
@@ -163,7 +182,7 @@ export const applyDisputeModerationAfterResolve = async ({
     }
 
     if (moderation.blockCustomer) {
-        const reason = moderation.blockReason || `Blocked after complaint review #${bookingRef}`;
+        const reason = moderation.blockReason || `Suspended after complaint review on booking #${bookingRef}`;
         const user = await User.findByIdAndUpdate(
             dispute.customer,
             {
@@ -187,14 +206,14 @@ export const applyDisputeModerationAfterResolve = async ({
                 dispute.customer,
                 'user',
                 'Account suspended',
-                `Your ApnaUstad account was suspended after a complaint review. Reason: ${reason}`,
+                `Your ApnaUstad account was suspended after complaint review. Reason: ${reason}`,
                 { type: 'general' },
             );
         }
     }
 
     if (moderation.blockWorker) {
-        const reason = moderation.blockReason || `Blocked after complaint review #${bookingRef}`;
+        const reason = moderation.blockReason || `Suspended after complaint review on booking #${bookingRef}`;
         const worker = await Worker.findByIdAndUpdate(
             dispute.worker,
             {
@@ -221,7 +240,7 @@ export const applyDisputeModerationAfterResolve = async ({
                 dispute.worker,
                 'worker',
                 'Ustad account suspended',
-                `Your ApnaUstad Ustad account was suspended after a complaint review. Reason: ${reason}`,
+                `Your ApnaUstad Ustad account was suspended after complaint review. Reason: ${reason}`,
                 { type: 'general' },
             );
         }
@@ -234,7 +253,7 @@ export const buildModerationSummary = (applied: DisputeModerationApplied) => {
     const parts: string[] = [];
     if (applied.warnedCustomer) parts.push('customer warned');
     if (applied.warnedWorker) parts.push('Ustad warned');
-    if (applied.customerRefund > 0) parts.push(`Rs. ${applied.customerRefund.toLocaleString()} refunded`);
+    if (applied.workerCommissionRefund > 0) parts.push(`Rs. ${applied.workerCommissionRefund.toLocaleString()} commission refunded to Ustad`);
     if (applied.workerPenalty > 0) parts.push(`Rs. ${applied.workerPenalty.toLocaleString()} Ustad penalty`);
     if (applied.customerBlocked) parts.push('customer blocked');
     if (applied.workerBlocked) parts.push('Ustad blocked');

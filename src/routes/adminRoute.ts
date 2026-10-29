@@ -121,7 +121,11 @@ router.patch('/wallet-topups/:id/approve', requirePermission('wallets'), adminWa
 router.patch('/wallet-topups/:id/reject', requirePermission('wallets'), adminWalletTopUpController.rejectWalletTopUp);
 
 router.get('/disputes', requirePermission('disputes'), adminDisputeController.getAllDisputes);
+router.get('/disputes/stats', requirePermission('disputes'), adminDisputeController.getDisputeStats);
 router.get('/disputes/:id', requirePermission('disputes'), adminDisputeController.getDisputeDetails);
+router.get('/disputes/:id/messages', requirePermission('disputes'), adminDisputeController.getAdminDisputeMessages);
+router.post('/disputes/:id/messages', requirePermission('disputes'), adminDisputeController.sendAdminDisputeMessage);
+router.post('/disputes/:id/read', requirePermission('disputes'), adminDisputeController.markAdminDisputeRead);
 router.patch('/disputes/:id/resolve', requirePermission('disputes'), adminDisputeController.resolveDispute);
 
 router.get('/promos', requirePermission('promos'), adminPromoController.getAllPromoCodes);

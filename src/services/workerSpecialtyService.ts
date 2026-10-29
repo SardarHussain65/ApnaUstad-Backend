@@ -135,12 +135,24 @@ export const resolveCategoryByName = async (categoryName: string, includeInactiv
 };
 
 export const ensureLegacyPrimarySpecialty = async (worker: IWorker) => {
-    if (worker.specialties?.length || !worker.category) return worker;
+    if (worker.specialties?.length) {
+        const primary = worker.specialties.find((s: any) => s.priority === 1);
+        if (primary && (primary.approvalStatus !== 'approved' || !primary.isActive)) {
+            primary.approvalStatus = 'approved';
+            primary.isActive = true;
+            primary.subscriptionStatus = 'free';
+            primary.approvedAt = primary.approvedAt || new Date();
+            await syncLegacyCategory(worker);
+            await worker.save();
+        }
+        return worker;
+    }
+
+    if (!worker.category) return worker;
 
     const category = await resolveCategoryByName(worker.category, true);
     if (!category) return worker;
 
-    const isApproved = worker.isVerified === true;
     const initialCerts = Array.isArray(worker.certificates)
         ? worker.certificates
               .filter((c: any) => c && c.certificateUrl)
@@ -156,13 +168,13 @@ export const ensureLegacyPrimarySpecialty = async (worker: IWorker) => {
         priority: 1,
         ...buildProfileFromWorker(worker),
         certificates: initialCerts,
-        isActive: isApproved,
-        approvalStatus: isApproved ? 'approved' : 'pending',
+        isActive: true,
+        approvalStatus: 'approved',
         subscriptionStatus: 'free',
         monthlyFeeSnapshot: 0,
         autoRenew: true,
         requestedAt: worker.createdAt || new Date(),
-        approvedAt: isApproved ? new Date() : null
+        approvedAt: new Date()
     });
     worker.category = category.name;
     await worker.save();
@@ -172,7 +184,7 @@ export const ensureLegacyPrimarySpecialty = async (worker: IWorker) => {
 export const createPrimarySpecialtyFromLegacyCategory = async ({
     categoryName,
     profile,
-    isApproved = false,
+    isApproved = true,
 }: {
     categoryName: string;
     profile: SpecialtyProfileInput;
@@ -230,7 +242,7 @@ const recalculateSubscriptionStates = async (worker: IWorker) => {
 export const setWorkerPrimarySpecialtyFromLegacyCategory = async ({
     worker,
     categoryName,
-    approveImmediately = false,
+    approveImmediately = true,
     adminId,
 }: {
     worker: IWorker;
@@ -315,17 +327,19 @@ export const requestWorkerSpecialty = async (
               }))
         : [];
 
+    const isFree = (worker.specialties.length + 1) <= FREE_SPECIALTY_LIMIT;
     (worker.specialties as any).push({
         categoryId: category._id,
         priority: worker.specialties.length + 1,
         ...profile,
         certificates: formattedCertificates,
-        isActive: false,
-        approvalStatus: 'pending',
-        subscriptionStatus: 'pending_activation',
-        monthlyFeeSnapshot: 0,
+        isActive: isFree,
+        approvalStatus: 'approved',
+        subscriptionStatus: isFree ? 'free' : 'pending_activation',
+        monthlyFeeSnapshot: isFree ? 0 : additionalCategoryMonthlyFee,
         autoRenew: true,
-        requestedAt: new Date()
+        requestedAt: new Date(),
+        approvedAt: isFree ? new Date() : null,
     });
 
     if (formattedCertificates.length > 0) {
@@ -377,9 +391,6 @@ export const reviewWorkerSpecialty = async ({
     specialty.isActive = false;
 
     if (approvalStatus === 'approved') {
-        if (!worker.isVerified) {
-            throw Object.assign(new Error('Verify the worker identity before approving specialty requests'), { statusCode: 400 });
-        }
         if (!category.isActive) {
             throw Object.assign(new Error('Category is currently inactive and cannot be approved'), { statusCode: 400 });
         }
@@ -620,7 +631,7 @@ export const workerCanPerformCategory = async (
     categoryId?: string | mongoose.Types.ObjectId
 ) => {
     const categoryFilter = await buildWorkerSpecialtyCategoryFilter(categoryName, categoryId);
-    return Boolean(await Worker.exists({ _id: workerId, isActive: true, isVerified: true, ...categoryFilter }));
+    return Boolean(await Worker.exists({ _id: workerId, isActive: true, ...categoryFilter }));
 };
 
 export const getWorkerMatchedSpecialtyProfile = async (

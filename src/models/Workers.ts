@@ -79,6 +79,7 @@ export interface IWorker extends Document {
     isInstantAvailable: boolean;
     isScheduledAvailable: boolean;
     isVerified: boolean;
+    hasReceivedStarterBonus?: boolean;
     isActive: boolean;
     rating: number;
     totalReviews: number;
@@ -190,6 +191,7 @@ const workerSchema = new Schema<IWorker>(
         isInstantAvailable: { type: Boolean, default: true },
         isScheduledAvailable: { type: Boolean, default: true },
         isVerified: { type: Boolean, default: false },
+        hasReceivedStarterBonus: { type: Boolean, default: false },
         isActive: { type: Boolean, default: true },
         rating: { type: Number, default: 0, min: 0, max: 5 },
         totalReviews: { type: Number, default: 0 },

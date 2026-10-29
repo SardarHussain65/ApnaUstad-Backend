@@ -281,6 +281,9 @@ const handleWalletProofUpload = createUploadMiddleware("proof", "workers/wallet-
 // Chat
 const handleChatAudioUpload = createChatAudioUploadMiddleware("audio", "messages/audio");
 
+// Disputes — evidence photos for both customers and Ustads (max 3 per upload)
+const handleDisputeEvidenceUpload = createMultipleUploadMiddleware("images", "disputes/evidence", 3);
+
 // Worker — 3 separate upload endpoints, all CNIC images go to the same /workers/cnic folder
 const handleWorkerProfileImageUpload = createUploadMiddleware("profileImage",   "workers/profile-images");
 const handleWorkerCnicFrontUpload    = createUploadMiddleware("cnicFrontImage", "workers/cnic");
@@ -292,6 +295,7 @@ export {
     handleJobImagesUpload,
     handleWalletProofUpload,
     handleChatAudioUpload,
+    handleDisputeEvidenceUpload,
     handleWorkerProfileImageUpload,
     handleWorkerCnicFrontUpload,
     handleWorkerCnicBackUpload,

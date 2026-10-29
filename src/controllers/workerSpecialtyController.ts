@@ -116,7 +116,14 @@ export const deleteSpecialty = asyncHandler(async (req: AuthRequest, res) => {
 export const getPendingSpecialtyRequests = asyncHandler(async (req: AdminAuthRequest, res) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-    const query = { specialties: { $elemMatch: { approvalStatus: 'pending' } } };
+    const query = {
+        specialties: {
+            $elemMatch: {
+                priority: { $gt: 1 },
+                approvalStatus: 'pending'
+            }
+        }
+    };
     const [workers, total] = await Promise.all([
         Worker.find(query)
             .select('fullName phone email profileImage category specialties certificates')

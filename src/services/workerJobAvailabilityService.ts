@@ -8,14 +8,13 @@ export const getWorkerJobAvailabilityField = (jobType: WorkerJobType) =>
  * Once a worker changes a toggle, both values are persisted explicitly.
  */
 export const workerAcceptsJobType = (worker: any, jobType: WorkerJobType) => {
-    if (!worker || worker.isActive === false || worker.isVerified !== true || worker.isAvailable === false) return false;
+    if (!worker || worker.isActive === false || worker.isAvailable === false) return false;
     return worker[getWorkerJobAvailabilityField(jobType)] !== false;
 };
 
 export const buildAvailableWorkerFilterForJobType = (jobType: WorkerJobType) => ({
     isAvailable: true,
     isActive: true,
-    isVerified: true,
     [getWorkerJobAvailabilityField(jobType)]: { $ne: false },
 });
 

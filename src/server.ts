@@ -8,6 +8,7 @@
  */
 
 import mongoose from "mongoose";
+import Workers from './models/Workers';
 
 
 import { validateEnv, getConfig } from './config/env';
@@ -37,6 +38,23 @@ const startServer = async () => {
 
         // Connect to MongoDB
         await connectDB();
+
+        // Auto-heal primary specialties so all registered workers' primary service is immediately live
+        try {
+            await Workers.updateMany(
+                { 'specialties.priority': 1, 'specialties.approvalStatus': 'pending' },
+                { 
+                    $set: { 
+                        'specialties.$[elem].approvalStatus': 'approved',
+                        'specialties.$[elem].isActive': true,
+                        'specialties.$[elem].subscriptionStatus': 'free'
+                    } 
+                },
+                { arrayFilters: [{ 'elem.priority': 1 }] }
+            );
+        } catch (healErr: any) {
+            logger.warn(`Primary specialty auto-heal notice: ${healErr?.message || healErr}`);
+        }
 
         // Create HTTP server
         const httpServer = http.createServer(app);

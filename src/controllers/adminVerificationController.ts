@@ -6,6 +6,9 @@ import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import { recordAdminAction } from "../services/adminAuditLog";
 import { reviewVerificationSchema } from "../validations/admin.validation";
+import { getWalletSettings } from "../services/walletSettingsService";
+import { rechargeWallet } from "../services/workerWalletService";
+import { sendNotificationToRecipient } from "../services/notificationHelper";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -134,7 +137,47 @@ export const reviewVerificationRequest = asyncHandler(async (req: AdminAuthReque
         worker.cnicNumber = verificationRequest.cnicNumber;
         worker.cnicFrontImage = verificationRequest.cnicFrontImage;
         worker.cnicBackImage = verificationRequest.cnicBackImage;
+
+        // Auto-grant Global Starter Bonus on verified CNIC if not already claimed
+        let bonusAwarded = 0;
+        if (!worker.hasReceivedStarterBonus) {
+            try {
+                const walletSettings = await getWalletSettings();
+                const bonusAmount = Number(walletSettings.cnicVerificationBonus ?? 500);
+                if (bonusAmount > 0) {
+                    await rechargeWallet(
+                        worker._id,
+                        bonusAmount,
+                        { actor: adminId, actorType: 'admin' },
+                        'CNIC Verification Starter Bonus'
+                    );
+                    worker.hasReceivedStarterBonus = true;
+                    bonusAwarded = bonusAmount;
+                }
+            } catch (walletErr: any) {
+                console.error('Failed to credit starter bonus on CNIC verification:', walletErr);
+            }
+        }
+
         await worker.save();
+
+        // Send push notification to worker
+        try {
+            const bodyMessage = bonusAwarded > 0
+                ? `Your CNIC has been verified! A starter bonus of Rs. ${bonusAwarded.toLocaleString('en-PK')} has been credited to your wallet.`
+                : "Your CNIC verification has been approved! You now have the Verified Ustad badge.";
+
+            await sendNotificationToRecipient(
+                worker._id,
+                'worker',
+                '🎉 CNIC Verified!',
+                bodyMessage,
+                { type: 'worker_verified', bonus: String(bonusAwarded) },
+                { type: 'worker_verified' }
+            );
+        } catch (notifErr: any) {
+            console.warn('Failed to send verification notification:', notifErr.message);
+        }
     } else if (status === 'rejected') {
         if (!rejectionReason || rejectionReason.trim() === '') {
             throw new BadRequestError("Rejection reason is required when rejecting verification requests");
@@ -145,6 +188,20 @@ export const reviewVerificationRequest = asyncHandler(async (req: AdminAuthReque
         // but preserve other details so they can correct them later.
         worker.isVerified = false;
         await worker.save();
+
+        // Send push notification to worker about rejection
+        try {
+            await sendNotificationToRecipient(
+                worker._id,
+                'worker',
+                '⚠️ CNIC Verification Update',
+                rejectionReason || "Your CNIC verification was not approved. Please review and re-upload.",
+                { type: 'worker_verified', status: 'rejected' },
+                { type: 'general' }
+            );
+        } catch (notifErr: any) {
+            console.warn('Failed to send verification rejection notification:', notifErr.message);
+        }
     }
 
     await verificationRequest.save();
