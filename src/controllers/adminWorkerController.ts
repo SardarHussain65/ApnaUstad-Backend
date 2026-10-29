@@ -13,6 +13,7 @@ import {
     applyMatchedSpecialtyProfileToWorkerPayload,
     approveFreeSpecialtiesForVerifiedWorker,
     buildWorkerSpecialtyCategoryFilter,
+    ensureLegacyPrimarySpecialty,
     setWorkerPrimarySpecialtyFromLegacyCategory
 } from "../services/workerSpecialtyService";
 
@@ -214,11 +215,15 @@ export const toggleWorkerStatus = asyncHandler(async (req: AdminAuthRequest, res
  * @route GET /api/v1/admin/workers/:id
  */
 export const getWorkerDetails = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const worker = await Worker.findById(req.params.id)
-        .populate('specialties.categoryId', 'name icon color isActive additionalCategoryMonthlyFee additionalCategoryGraceDays');
+    let worker = await Worker.findById(req.params.id);
     if (!worker) {
         throw new NotFoundError("Worker not found");
     }
+    await ensureLegacyPrimarySpecialty(worker);
+
+    worker = await Worker.findById(req.params.id)
+        .populate('specialties.categoryId', 'name icon color isActive additionalCategoryMonthlyFee additionalCategoryGraceDays');
+
     return successResponse(res, 200, "Worker details fetched successfully", worker);
 });
 

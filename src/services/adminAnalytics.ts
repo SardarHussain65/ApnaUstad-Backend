@@ -8,6 +8,7 @@ import Dispute from '../models/Dispute';
 import WalletTopUpRequest from '../models/WalletTopUpRequest';
 import SupportRequest from '../models/SupportRequest';
 import VerificationRequest from '../models/VerificationRequest';
+import ProfessionRequest from '../models/ProfessionRequest';
 import {
   ADMIN_TZ,
   DateRange,
@@ -257,6 +258,7 @@ export const getActionCounts = async () => {
     underReviewDisputes,
     pendingVerifications,
     specialtyAgg,
+    pendingProfessionRequests,
   ] = await Promise.all([
     SupportRequest.countDocuments({ status: 'open' }),
     JobPost.countDocuments({ status: 'open' }),
@@ -272,6 +274,7 @@ export const getActionCounts = async () => {
       { $match: { 'specialties.approvalStatus': 'pending' } },
       { $count: 'n' },
     ]),
+    ProfessionRequest.countDocuments({ status: 'pending' }),
   ]);
 
   return {
@@ -283,7 +286,8 @@ export const getActionCounts = async () => {
     openDisputes,
     underReviewDisputes,
     pendingVerifications,
-    pendingSpecialties: specialtyAgg[0]?.n ?? 0,
+    pendingSpecialties: (specialtyAgg[0]?.n ?? 0) + pendingProfessionRequests,
+    pendingProfessionRequests,
     generatedAt: new Date().toISOString(),
   };
 };

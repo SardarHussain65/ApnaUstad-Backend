@@ -5,6 +5,7 @@ import { BadRequestError, NotFoundError } from '../utils/ApiError';
 import { successResponse, paginatedResponse } from '../utils/ApiResponse';
 import Worker from '../models/Workers';
 import Category from '../models/Category';
+import ProfessionRequest from '../models/ProfessionRequest';
 import { recordAdminAction } from '../services/adminAuditLog';
 import { sendNotificationToRecipient } from '../services/notificationHelper';
 import {
@@ -63,8 +64,14 @@ const buildSpecialtyResponse = async (worker: any) => {
                 tier: getSpecialtyTier(specialty.priority)
             };
         });
+    const pendingCustomRequests = await ProfessionRequest.find({
+        worker: worker._id,
+        status: { $in: ['pending', 'rejected'] }
+    }).sort({ createdAt: -1 }).lean();
+
     return {
         specialties,
+        pendingCustomRequests,
         maxSpecialties: MAX_WORKER_SPECIALTIES,
         freeSpecialtyLimit: FREE_SPECIALTY_LIMIT,
         additionalCategoryMonthlyFee

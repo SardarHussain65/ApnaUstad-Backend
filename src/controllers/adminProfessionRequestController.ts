@@ -3,10 +3,16 @@ import mongoose from 'mongoose';
 import ProfessionRequest from '../models/ProfessionRequest';
 import Category from '../models/Category';
 import Workers from '../models/Workers';
+import Admin from '../models/Admin';
 import { asyncHandler } from '../utils/asyncHandler';
 import { BadRequestError, NotFoundError } from '../utils/ApiError';
 import { successResponse, paginatedResponse } from '../utils/ApiResponse';
 import { AdminAuthRequest } from '../middlewares/admin.middleware';
+import {
+    ensureLegacyPrimarySpecialty,
+    getAdditionalCategoryMonthlyFee,
+    FREE_SPECIALTY_LIMIT
+} from '../services/workerSpecialtyService';
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -182,38 +188,75 @@ export const reviewProfessionRequest = asyncHandler(async (req: AdminAuthRequest
         if (request.worker) {
             const worker = await Workers.findById(request.worker);
             if (worker) {
-                worker.category = targetCategory.name;
-                worker.isCustomProfessionRequested = false;
+                await ensureLegacyPrimarySpecialty(worker);
 
-                // Ensure primary specialty exists for this category
+                // Ensure specialty exists for this category
                 const existingSpecialty = worker.specialties?.find(
                     (s: any) => s.categoryId?.toString() === targetCategory?._id?.toString()
                 );
 
                 if (!existingSpecialty) {
-                    worker.specialties.push({
+                    const hasPrimary = worker.specialties?.some((s: any) => Number(s.priority) === 1);
+                    const isFree = !hasPrimary || (worker.specialties?.length || 0) < FREE_SPECIALTY_LIMIT;
+                    const maxPriority = (worker.specialties || []).reduce(
+                        (max: number, s: any) => Math.max(max, Number(s.priority) || 0),
+                        0
+                    );
+                    const priority = isFree ? 1 : maxPriority + 1;
+                    const additionalCategoryMonthlyFee = await getAdditionalCategoryMonthlyFee();
+
+                    const formattedCertificates = (request.certificates || []).map((c: any) => ({
+                        title: c.title || 'Certificate',
+                        issuingOrg: c.issuingOrg || '',
+                        issueYear: c.issueYear || '',
+                        certificateUrl: c.certificateUrl,
+                    }));
+
+                    const newSpecialty: any = {
                         categoryId: targetCategory._id,
-                        priority: 1,
-                        skills: worker.skills?.length ? worker.skills : (request.skills || []),
-                        hourlyRate: worker.hourlyRate || request.hourlyRate || 500,
-                        experience: worker.experience || request.experience || 1,
-                        bio: worker.bio || request.description || '',
-                        isActive: true,
+                        priority,
+                        skills: request.skills?.length ? request.skills : (worker.skills || []),
+                        hourlyRate: request.hourlyRate || worker.hourlyRate || 500,
+                        experience: request.experience ?? worker.experience ?? 1,
+                        bio: request.description || worker.bio || '',
+                        certificates: formattedCertificates,
+                        isActive: isFree,
                         approvalStatus: 'approved',
-                        subscriptionStatus: 'free',
-                        monthlyFeeSnapshot: 0,
+                        subscriptionStatus: isFree ? 'free' : 'pending_activation',
+                        monthlyFeeSnapshot: isFree ? 0 : additionalCategoryMonthlyFee,
                         autoRenew: true,
-                        requestedAt: new Date(),
+                        requestedAt: request.createdAt || new Date(),
                         approvedAt: new Date(),
                         approvedBy: req.admin?._id,
-                    } as any);
+                    };
+
+                    if (isFree) {
+                        worker.category = targetCategory.name;
+                    }
+
+                    worker.specialties.push(newSpecialty);
+
+                    if (formattedCertificates.length > 0) {
+                        const existingUrls = new Set((worker.certificates || []).map((c: any) => c.certificateUrl));
+                        formattedCertificates.forEach((cert: any) => {
+                            if (!existingUrls.has(cert.certificateUrl)) {
+                                worker.certificates.push({
+                                    ...cert,
+                                    categoryName: targetCategory.name,
+                                    verificationStatus: 'verified',
+                                    verifiedAt: new Date(),
+                                    verifiedBy: req.admin?._id,
+                                } as any);
+                            }
+                        });
+                    }
                 } else {
                     existingSpecialty.approvalStatus = 'approved';
-                    existingSpecialty.isActive = true;
                     existingSpecialty.approvedAt = new Date();
                     existingSpecialty.approvedBy = req.admin?._id;
                 }
 
+                worker.isCustomProfessionRequested = false;
                 await worker.save();
             }
         }
@@ -222,4 +265,20 @@ export const reviewProfessionRequest = asyncHandler(async (req: AdminAuthRequest
     await request.save();
 
     return successResponse(res, 200, 'Profession request approved successfully', request);
+});
+
+/**
+ * Worker: Delete / cancel own profession request
+ * @route DELETE /api/v1/workers/profession-request/:id
+ */
+export const deleteWorkerProfessionRequest = asyncHandler(async (req: any, res: Response) => {
+    const { id } = req.params;
+    const workerId = req.tokenPayload?.id;
+    if (!workerId) throw new BadRequestError('Worker identity required');
+
+    const request = await ProfessionRequest.findOne({ _id: id, worker: workerId });
+    if (!request) throw new NotFoundError('Profession request not found');
+
+    await ProfessionRequest.findByIdAndDelete(id);
+    return successResponse(res, 200, 'Profession request removed successfully');
 });

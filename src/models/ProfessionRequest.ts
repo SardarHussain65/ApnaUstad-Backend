@@ -31,7 +31,7 @@ export interface IProfessionRequest extends Document {
 
 const ProfessionRequestSchema = new Schema<IProfessionRequest>(
   {
-    worker: { type: Schema.Types.ObjectId, ref: 'Workers' },
+    worker: { type: Schema.Types.ObjectId, ref: 'Worker' },
     professionName: { type: String, required: true, trim: true },
     categoryDomain: { type: String, trim: true, default: '' },
     requirements: { type: String, trim: true, default: '' },

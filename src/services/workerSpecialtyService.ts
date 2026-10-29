@@ -136,12 +136,63 @@ export const resolveCategoryByName = async (categoryName: string, includeInactiv
 
 export const ensureLegacyPrimarySpecialty = async (worker: IWorker) => {
     if (worker.specialties?.length) {
+        let modified = false;
+
+        // Check if there are duplicate priorities or multiple free specialties
+        const priorities = worker.specialties.map((s: any) => Number(s.priority) || 1);
+        const hasDuplicatePriorities = new Set(priorities).size !== priorities.length;
+        const freeCount = worker.specialties.filter((s: any) => s.subscriptionStatus === 'free' || Number(s.priority) === 1).length;
+
+        if (hasDuplicatePriorities || freeCount > FREE_SPECIALTY_LIMIT) {
+            const additionalCategoryMonthlyFee = await getAdditionalCategoryMonthlyFee();
+
+            // Order so the primary category (matching worker.category or existing priority 1 with earliest date) comes first
+            worker.specialties.sort((a: any, b: any) => {
+                const aIsPrimaryCategory = worker.category && a.categoryId?.name === worker.category;
+                const bIsPrimaryCategory = worker.category && b.categoryId?.name === worker.category;
+                if (aIsPrimaryCategory && !bIsPrimaryCategory) return -1;
+                if (!aIsPrimaryCategory && bIsPrimaryCategory) return 1;
+
+                const aPriority = Number(a.priority) || 999;
+                const bPriority = Number(b.priority) || 999;
+                if (aPriority !== bPriority) return aPriority - bPriority;
+
+                const aDate = new Date(a.requestedAt || a.approvedAt || 0).getTime();
+                const bDate = new Date(b.requestedAt || b.approvedAt || 0).getTime();
+                return aDate - bDate;
+            });
+
+            worker.specialties.forEach((specialty: any, index: number) => {
+                const priority = index + 1;
+                specialty.priority = priority;
+
+                if (priority <= FREE_SPECIALTY_LIMIT) {
+                    specialty.subscriptionStatus = 'free';
+                    specialty.monthlyFeeSnapshot = 0;
+                    specialty.approvalStatus = 'approved';
+                    specialty.isActive = true;
+                } else {
+                    specialty.monthlyFeeSnapshot = additionalCategoryMonthlyFee;
+                    // Demote mistakenly granted 'free' subscriptions to pending_activation
+                    if (specialty.subscriptionStatus === 'free') {
+                        specialty.subscriptionStatus = 'pending_activation';
+                        specialty.isActive = false;
+                    }
+                }
+            });
+            modified = true;
+        }
+
         const primary = worker.specialties.find((s: any) => s.priority === 1);
         if (primary && (primary.approvalStatus !== 'approved' || !primary.isActive)) {
             primary.approvalStatus = 'approved';
             primary.isActive = true;
             primary.subscriptionStatus = 'free';
             primary.approvedAt = primary.approvedAt || new Date();
+            modified = true;
+        }
+
+        if (modified) {
             await syncLegacyCategory(worker);
             await worker.save();
         }
