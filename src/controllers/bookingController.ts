@@ -49,7 +49,7 @@ const DEFAULT_BOOKING_STATUS_META = { label: 'Waiting', tone: 'warning', accentC
 
 const BOOKING_STATUS_META: Record<string, { label: string; tone: string; accentColor: string; actionLabel: string }> = {
     pending: DEFAULT_BOOKING_STATUS_META,
-    accepted: { label: 'Confirmed', tone: 'info', accentColor: '#00F5FF', actionLabel: 'Open job' },
+    accepted: { label: 'Confirmed', tone: 'info', accentColor: '#0284C7', actionLabel: 'Open job' },
     ongoing: { label: 'In Progress', tone: 'info', accentColor: '#BF5AF2', actionLabel: 'Track live' },
     completed: { label: 'Completed', tone: 'success', accentColor: '#34C759', actionLabel: 'View details' },
     cancelled: { label: 'Cancelled', tone: 'danger', accentColor: '#FF3B30', actionLabel: 'View details' },
