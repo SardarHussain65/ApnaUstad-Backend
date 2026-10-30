@@ -9,6 +9,7 @@ import { UploadRequest } from "../middlewares/multer.middleware";
 import { generateToken, generateRefreshToken, verifyRefreshToken, AuthRequest, blacklistToken } from "../middlewares/jwt.middleware";
 import {
     createPrimarySpecialtyFromLegacyCategory,
+    ensureLegacyPrimarySpecialty,
     normalizeSpecialtyProfileInput,
     setWorkerPrimarySpecialtyFromLegacyCategory
 } from "../services/workerSpecialtyService";
@@ -349,10 +350,13 @@ export const getWorkerById = asyncHandler(async (req: AuthRequest, res) => {
         throw new ForbiddenError("You are not authorized to view this profile");
     }
 
-    const worker = await Workers.findById(id).select("-password -fcmToken");
+    let worker = await Workers.findById(id).select("-password -fcmToken");
     if (!worker) {
         throw new BadRequestError("Worker not found");
     }
+    await ensureLegacyPrimarySpecialty(worker);
+    worker = await Workers.findById(id).select("-password -fcmToken");
+
     return successResponse(res, 200, "Worker fetched successfully", worker);
 });
 

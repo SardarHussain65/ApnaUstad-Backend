@@ -149,7 +149,7 @@ export const getWalletSettingsController = asyncHandler(async (_req: AdminAuthRe
  * @route PATCH /api/v1/admin/wallet-settings
  */
 export const updateWalletSettingsController = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const { platformFeePercentage, minimumWalletBalance, additionalCategoryMonthlyFee, commissionEnabled = true } = req.body;
+    const { platformFeePercentage, minimumWalletBalance, additionalCategoryMonthlyFee, commissionEnabled = true, cnicVerificationBonus } = req.body;
 
     if (platformFeePercentage === undefined || minimumWalletBalance === undefined) {
         throw new BadRequestError("Commission percentage and minimum wallet balance are required");
@@ -160,6 +160,7 @@ export const updateWalletSettingsController = asyncHandler(async (req: AdminAuth
         minimumWalletBalance: Number(minimumWalletBalance),
         ...(additionalCategoryMonthlyFee !== undefined ? { additionalCategoryMonthlyFee: Number(additionalCategoryMonthlyFee) } : {}),
         commissionEnabled: commissionEnabled !== false,
+        ...(cnicVerificationBonus !== undefined ? { cnicVerificationBonus: Number(cnicVerificationBonus) } : {}),
         ...(req.admin?._id ? { adminId: req.admin._id } : {}),
     });
 

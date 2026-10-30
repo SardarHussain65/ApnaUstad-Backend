@@ -21,6 +21,9 @@ const toObjectId = (value: string | mongoose.Types.ObjectId) => (
     typeof value === 'string' ? new mongoose.Types.ObjectId(value) : value
 );
 
+/**
+ * Deducts platform commission immediately from worker wallet upon job assignment.
+ */
 export const reserveCommission = async (
     input: ReserveCommissionInput,
     options: ReservationOptions = {}
@@ -36,26 +39,58 @@ export const reserveCommission = async (
     }
 
     const wallet = await getOrCreateWallet(input.workerId, session);
+    const bookingRef = String(input.bookingId).slice(-6).toUpperCase();
+
+    // Check if worker has sufficient balance to pay commission upfront
+    const balanceBefore = Number(wallet.balance || 0);
+    if (balanceBefore < amount) {
+        const error = new Error(`Insufficient wallet balance to accept this job. Commission of Rs. ${Math.round(amount)} is deducted upon assignment.`);
+        (error as any).statusCode = 402;
+        (error as any).requiredBalance = amount;
+        (error as any).currentBalance = balanceBefore;
+        throw error;
+    }
+
+    // Cut commission directly from worker wallet balance
     const updatedWallet = await WorkerWallet.findOneAndUpdate(
         {
             _id: wallet._id,
             isActive: true,
-            $expr: {
-                $gte: [
-                    { $subtract: ['$balance', { $ifNull: ['$reservedBalance', 0] }] },
-                    amount
-                ]
+            balance: { $gte: amount }
+        },
+        {
+            $inc: {
+                balance: -amount,
+                totalCommissionDeducted: amount
             }
         },
-        { $inc: { reservedBalance: amount } },
         { new: true, ...(session ? { session } : {}) }
     );
 
     if (!updatedWallet) {
-        const error = new Error('Not enough wallet balance to cover the app fee for this job. Please add balance first.');
+        const error = new Error(`Insufficient wallet balance to accept this job. Commission of Rs. ${Math.round(amount)} is deducted upon assignment.`);
         (error as any).statusCode = 402;
         throw error;
     }
+
+    // Record commission deduction ledger transaction
+    await WalletTransaction.create([{
+        wallet: updatedWallet._id,
+        worker: toObjectId(input.workerId),
+        type: 'commission_deduction',
+        amount,
+        balanceBefore,
+        balanceAfter: balanceBefore - amount,
+        description: `Commission for job #${bookingRef} (deducted upon assignment)`,
+        reference: {
+            booking: toObjectId(input.bookingId),
+            ...(input.jobPostId ? { jobPost: toObjectId(input.jobPostId) } : {}),
+        },
+        performedBy: {
+            actor: toObjectId(input.workerId),
+            actorType: 'worker'
+        }
+    }], session ? { session } : {});
 
     try {
         const [reservation] = await CommissionReservation.create([{
@@ -66,16 +101,18 @@ export const reserveCommission = async (
             ...(input.bidId ? { bid: toObjectId(input.bidId) } : {}),
             amount,
             commissionRateSnapshot: Number(input.commissionRateSnapshot || 0),
-            status: 'held'
+            status: 'settled',
+            settledAt: new Date()
         }], session ? { session } : {});
 
         if (reservation) reservation.$locals.createdByReserveCall = true;
         return reservation || null;
     } catch (error: any) {
         if (!session) {
+            // Revert deduction on race condition error
             await WorkerWallet.updateOne(
                 { _id: updatedWallet._id },
-                { $inc: { reservedBalance: -amount } }
+                { $inc: { balance: amount, totalCommissionDeducted: -amount } }
             );
         }
         if (error?.code === 11000 && !session) {
@@ -87,28 +124,71 @@ export const reserveCommission = async (
     }
 };
 
+/**
+ * Refunds commission back to worker if booking is cancelled before completion.
+ */
 export const releaseCommissionReservation = async (
     bookingId: string | mongoose.Types.ObjectId,
     options: ReservationOptions = {}
 ) => {
     const { session } = options;
-    const reservation = await CommissionReservation.findOneAndUpdate(
-        { booking: bookingId, status: 'held' },
-        { $set: { status: 'released', releasedAt: new Date() } },
-        { new: true, ...(session ? { session } : {}) }
-    );
-    if (!reservation) {
-        return CommissionReservation.findOne({ booking: bookingId }).session(session ?? null);
+    const reservation = await CommissionReservation.findOne({ booking: bookingId }).session(session ?? null);
+    if (!reservation) return null;
+
+    if (reservation.status === 'released') {
+        return reservation;
     }
 
-    await WorkerWallet.updateOne(
-        { _id: reservation.wallet },
-        { $inc: { reservedBalance: -reservation.amount } },
-        session ? { session } : {}
-    );
+    const bookingRef = String(bookingId).slice(-6).toUpperCase();
+    const amount = Number(reservation.amount || 0);
+
+    // If commission was cut upon assignment, refund it back to worker wallet
+    if (amount > 0) {
+        const wallet = await WorkerWallet.findById(reservation.wallet).session(session ?? null);
+        if (wallet) {
+            const balanceBefore = Number(wallet.balance || 0);
+            const balanceAfter = balanceBefore + amount;
+
+            await WorkerWallet.updateOne(
+                { _id: wallet._id },
+                {
+                    $inc: {
+                        balance: amount,
+                        totalCommissionDeducted: -Math.min(wallet.totalCommissionDeducted, amount)
+                    }
+                },
+                session ? { session } : {}
+            );
+
+            await WalletTransaction.create([{
+                wallet: wallet._id,
+                worker: reservation.worker,
+                type: 'refund',
+                amount,
+                balanceBefore,
+                balanceAfter,
+                description: `Commission refund for cancelled job #${bookingRef}`,
+                reference: {
+                    booking: toObjectId(bookingId),
+                },
+                performedBy: {
+                    actor: reservation.worker,
+                    actorType: 'system'
+                }
+            }], session ? { session } : {});
+        }
+    }
+
+    reservation.status = 'released';
+    reservation.releasedAt = new Date();
+    await reservation.save(session ? { session } : {});
     return reservation;
 };
 
+/**
+ * Finalizes commission ledger on job completion.
+ * If commission was already deducted upon assignment, it avoids double-deduction.
+ */
 export const settleCommissionReservation = async (
     workerId: string | mongoose.Types.ObjectId,
     bookingId: string | mongoose.Types.ObjectId,
@@ -117,12 +197,29 @@ export const settleCommissionReservation = async (
     options: ReservationOptions = {}
 ) => {
     const { session } = options;
+
+    // Check if commission was already deducted for this booking
     const existingTransaction = await WalletTransaction.findOne({
         type: 'commission_deduction',
-        'reference.payment': paymentId
+        $or: [
+            { 'reference.booking': toObjectId(bookingId) },
+            { 'reference.payment': toObjectId(paymentId) }
+        ]
     }).session(session ?? null);
-    if (existingTransaction) return existingTransaction;
 
+    if (existingTransaction) {
+        // Already deducted upon assignment - just make sure payment reference is linked
+        if (!existingTransaction.reference?.payment) {
+            existingTransaction.reference = {
+                ...existingTransaction.reference,
+                payment: toObjectId(paymentId)
+            };
+            await existingTransaction.save(session ? { session } : {});
+        }
+        return existingTransaction;
+    }
+
+    // Fallback for legacy bookings where commission was not cut on assignment
     const reservation = await CommissionReservation.findOne({ booking: bookingId }).session(session ?? null);
     const amount = Number(reservation?.amount ?? fallbackAmount ?? 0);
     if (amount <= 0) return null;
@@ -169,4 +266,59 @@ export const settleCommissionReservation = async (
     }
 
     return transaction || null;
+};
+
+/**
+ * Dispute & Admin refund helper: refunds commission directly to worker wallet
+ */
+export const refundCommissionToWorker = async ({
+    workerId,
+    bookingId,
+    amount,
+    adminId,
+    reason,
+    session
+}: {
+    workerId: string | mongoose.Types.ObjectId;
+    bookingId: string | mongoose.Types.ObjectId;
+    amount: number;
+    adminId?: string | mongoose.Types.ObjectId | undefined;
+    reason?: string | undefined;
+    session?: mongoose.ClientSession | undefined;
+}) => {
+    if (amount <= 0) return null;
+    const wallet = await getOrCreateWallet(workerId, session);
+    const bookingRef = String(bookingId).slice(-6).toUpperCase();
+    const balanceBefore = Number(wallet.balance || 0);
+    const balanceAfter = balanceBefore + amount;
+
+    await WorkerWallet.updateOne(
+        { _id: wallet._id },
+        {
+            $inc: {
+                balance: amount,
+                totalCommissionDeducted: -Math.min(wallet.totalCommissionDeducted, amount)
+            }
+        },
+        session ? { session } : {}
+    );
+
+    const [tx] = await WalletTransaction.create([{
+        wallet: wallet._id,
+        worker: toObjectId(workerId),
+        type: 'refund',
+        amount,
+        balanceBefore,
+        balanceAfter,
+        description: `Commission refund for disputed job #${bookingRef}${reason ? `: ${reason}` : ''}`,
+        reference: {
+            booking: toObjectId(bookingId)
+        },
+        performedBy: {
+            actor: adminId ? toObjectId(adminId) : toObjectId(workerId),
+            actorType: adminId ? 'admin' : 'system'
+        }
+    }], session ? { session } : {});
+
+    return tx;
 };

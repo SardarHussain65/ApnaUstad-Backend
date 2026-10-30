@@ -7,6 +7,7 @@ export type WalletSettingsPayload = {
     minimumWalletBalance: number;
     additionalCategoryMonthlyFee: number;
     commissionEnabled: boolean;
+    cnicVerificationBonus: number;
     updatedAt?: Date;
 };
 
@@ -17,6 +18,7 @@ const getFallbackSettings = (): WalletSettingsPayload => ({
     minimumWalletBalance: getConfig().minimumWalletBalance || 500,
     additionalCategoryMonthlyFee: 500,
     commissionEnabled: true,
+    cnicVerificationBonus: 500,
 });
 
 export const getWalletSettings = async (): Promise<WalletSettingsPayload> => {
@@ -32,6 +34,7 @@ export const getWalletSettings = async (): Promise<WalletSettingsPayload> => {
         minimumWalletBalance: Number(settings.minimumWalletBalance ?? fallback.minimumWalletBalance),
         additionalCategoryMonthlyFee: Number(settings.additionalCategoryMonthlyFee ?? fallback.additionalCategoryMonthlyFee),
         commissionEnabled: settings.commissionEnabled !== false,
+        cnicVerificationBonus: Number(settings.cnicVerificationBonus ?? fallback.cnicVerificationBonus),
         updatedAt: settings.updatedAt,
     };
 };
@@ -41,24 +44,31 @@ export const updateWalletSettings = async ({
     minimumWalletBalance,
     additionalCategoryMonthlyFee,
     commissionEnabled,
+    cnicVerificationBonus,
     adminId,
 }: {
     platformFeePercentage: number;
     minimumWalletBalance: number;
     additionalCategoryMonthlyFee?: number;
     commissionEnabled: boolean;
+    cnicVerificationBonus?: number;
     adminId?: string | mongoose.Types.ObjectId;
 }) => {
     const nextPlatformFeePercentage = clampNumber(Number(platformFeePercentage), 0, 100);
     const nextMinimumWalletBalance = Math.max(0, Number(minimumWalletBalance));
     const fallback = getFallbackSettings();
-    const currentSettings = additionalCategoryMonthlyFee === undefined
+    const currentSettings = (additionalCategoryMonthlyFee === undefined || cnicVerificationBonus === undefined)
         ? await WalletSettings.findOne({ key: 'default' }).lean()
         : null;
     const nextAdditionalCategoryMonthlyFee = Math.max(0, Number(
         additionalCategoryMonthlyFee
         ?? currentSettings?.additionalCategoryMonthlyFee
         ?? fallback.additionalCategoryMonthlyFee
+    ));
+    const nextCnicVerificationBonus = Math.max(0, Number(
+        cnicVerificationBonus
+        ?? currentSettings?.cnicVerificationBonus
+        ?? fallback.cnicVerificationBonus
     ));
 
     if (!Number.isFinite(nextPlatformFeePercentage)) {
@@ -87,6 +97,7 @@ export const updateWalletSettings = async ({
                 minimumWalletBalance: nextMinimumWalletBalance,
                 additionalCategoryMonthlyFee: nextAdditionalCategoryMonthlyFee,
                 commissionEnabled: commissionEnabled !== false,
+                cnicVerificationBonus: nextCnicVerificationBonus,
                 updatedBy: adminId ? new mongoose.Types.ObjectId(adminId) : null,
             }
         },
@@ -98,6 +109,7 @@ export const updateWalletSettings = async ({
         minimumWalletBalance: Number(settings.minimumWalletBalance),
         additionalCategoryMonthlyFee: Number(settings.additionalCategoryMonthlyFee),
         commissionEnabled: settings.commissionEnabled !== false,
+        cnicVerificationBonus: Number(settings.cnicVerificationBonus ?? fallback.cnicVerificationBonus),
         updatedAt: settings.updatedAt,
     };
 };

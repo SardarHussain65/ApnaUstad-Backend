@@ -21,7 +21,7 @@ import {
     getVerificationStatus,
     getMyWorkerAccountStatus
 } from "../controllers/workerController";
-import { createPublicProfessionRequest } from "../controllers/adminProfessionRequestController";
+import { createPublicProfessionRequest, deleteWorkerProfessionRequest } from "../controllers/adminProfessionRequestController";
 import validate from "../middlewares/validate.middleware";
 import { loginWorkerSchema, registerWorkerSchema } from "../validations/worker.validation";
 import {
@@ -122,6 +122,7 @@ router.route("/specialties/priorities").patch(reorderSpecialties);
 router.route("/specialties/:categoryId/activate").patch(activateSpecialty);
 router.route("/specialties/:categoryId/auto-renew").patch(updateSpecialtyAutoRenew);
 router.route("/specialties/:categoryId").delete(deleteSpecialty);
+router.route("/profession-request/:id").delete(deleteWorkerProfessionRequest);
 
 /**
  * @description Logout worker and revoke session

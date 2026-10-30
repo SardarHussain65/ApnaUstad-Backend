@@ -135,12 +135,75 @@ export const resolveCategoryByName = async (categoryName: string, includeInactiv
 };
 
 export const ensureLegacyPrimarySpecialty = async (worker: IWorker) => {
-    if (worker.specialties?.length || !worker.category) return worker;
+    if (worker.specialties?.length) {
+        let modified = false;
+
+        // Check if there are duplicate priorities or multiple free specialties
+        const priorities = worker.specialties.map((s: any) => Number(s.priority) || 1);
+        const hasDuplicatePriorities = new Set(priorities).size !== priorities.length;
+        const freeCount = worker.specialties.filter((s: any) => s.subscriptionStatus === 'free' || Number(s.priority) === 1).length;
+
+        if (hasDuplicatePriorities || freeCount > FREE_SPECIALTY_LIMIT) {
+            const additionalCategoryMonthlyFee = await getAdditionalCategoryMonthlyFee();
+
+            // Order so the primary category (matching worker.category or existing priority 1 with earliest date) comes first
+            worker.specialties.sort((a: any, b: any) => {
+                const aIsPrimaryCategory = worker.category && a.categoryId?.name === worker.category;
+                const bIsPrimaryCategory = worker.category && b.categoryId?.name === worker.category;
+                if (aIsPrimaryCategory && !bIsPrimaryCategory) return -1;
+                if (!aIsPrimaryCategory && bIsPrimaryCategory) return 1;
+
+                const aPriority = Number(a.priority) || 999;
+                const bPriority = Number(b.priority) || 999;
+                if (aPriority !== bPriority) return aPriority - bPriority;
+
+                const aDate = new Date(a.requestedAt || a.approvedAt || 0).getTime();
+                const bDate = new Date(b.requestedAt || b.approvedAt || 0).getTime();
+                return aDate - bDate;
+            });
+
+            worker.specialties.forEach((specialty: any, index: number) => {
+                const priority = index + 1;
+                specialty.priority = priority;
+
+                if (priority <= FREE_SPECIALTY_LIMIT) {
+                    specialty.subscriptionStatus = 'free';
+                    specialty.monthlyFeeSnapshot = 0;
+                    specialty.approvalStatus = 'approved';
+                    specialty.isActive = true;
+                } else {
+                    specialty.monthlyFeeSnapshot = additionalCategoryMonthlyFee;
+                    // Demote mistakenly granted 'free' subscriptions to pending_activation
+                    if (specialty.subscriptionStatus === 'free') {
+                        specialty.subscriptionStatus = 'pending_activation';
+                        specialty.isActive = false;
+                    }
+                }
+            });
+            modified = true;
+        }
+
+        const primary = worker.specialties.find((s: any) => s.priority === 1);
+        if (primary && (primary.approvalStatus !== 'approved' || !primary.isActive)) {
+            primary.approvalStatus = 'approved';
+            primary.isActive = true;
+            primary.subscriptionStatus = 'free';
+            primary.approvedAt = primary.approvedAt || new Date();
+            modified = true;
+        }
+
+        if (modified) {
+            await syncLegacyCategory(worker);
+            await worker.save();
+        }
+        return worker;
+    }
+
+    if (!worker.category) return worker;
 
     const category = await resolveCategoryByName(worker.category, true);
     if (!category) return worker;
 
-    const isApproved = worker.isVerified === true;
     const initialCerts = Array.isArray(worker.certificates)
         ? worker.certificates
               .filter((c: any) => c && c.certificateUrl)
@@ -156,13 +219,13 @@ export const ensureLegacyPrimarySpecialty = async (worker: IWorker) => {
         priority: 1,
         ...buildProfileFromWorker(worker),
         certificates: initialCerts,
-        isActive: isApproved,
-        approvalStatus: isApproved ? 'approved' : 'pending',
+        isActive: true,
+        approvalStatus: 'approved',
         subscriptionStatus: 'free',
         monthlyFeeSnapshot: 0,
         autoRenew: true,
         requestedAt: worker.createdAt || new Date(),
-        approvedAt: isApproved ? new Date() : null
+        approvedAt: new Date()
     });
     worker.category = category.name;
     await worker.save();
@@ -172,7 +235,7 @@ export const ensureLegacyPrimarySpecialty = async (worker: IWorker) => {
 export const createPrimarySpecialtyFromLegacyCategory = async ({
     categoryName,
     profile,
-    isApproved = false,
+    isApproved = true,
 }: {
     categoryName: string;
     profile: SpecialtyProfileInput;
@@ -230,7 +293,7 @@ const recalculateSubscriptionStates = async (worker: IWorker) => {
 export const setWorkerPrimarySpecialtyFromLegacyCategory = async ({
     worker,
     categoryName,
-    approveImmediately = false,
+    approveImmediately = true,
     adminId,
 }: {
     worker: IWorker;
@@ -315,17 +378,19 @@ export const requestWorkerSpecialty = async (
               }))
         : [];
 
+    const isFree = (worker.specialties.length + 1) <= FREE_SPECIALTY_LIMIT;
     (worker.specialties as any).push({
         categoryId: category._id,
         priority: worker.specialties.length + 1,
         ...profile,
         certificates: formattedCertificates,
-        isActive: false,
-        approvalStatus: 'pending',
-        subscriptionStatus: 'pending_activation',
-        monthlyFeeSnapshot: 0,
+        isActive: isFree,
+        approvalStatus: 'approved',
+        subscriptionStatus: isFree ? 'free' : 'pending_activation',
+        monthlyFeeSnapshot: isFree ? 0 : additionalCategoryMonthlyFee,
         autoRenew: true,
-        requestedAt: new Date()
+        requestedAt: new Date(),
+        approvedAt: isFree ? new Date() : null,
     });
 
     if (formattedCertificates.length > 0) {
@@ -377,9 +442,6 @@ export const reviewWorkerSpecialty = async ({
     specialty.isActive = false;
 
     if (approvalStatus === 'approved') {
-        if (!worker.isVerified) {
-            throw Object.assign(new Error('Verify the worker identity before approving specialty requests'), { statusCode: 400 });
-        }
         if (!category.isActive) {
             throw Object.assign(new Error('Category is currently inactive and cannot be approved'), { statusCode: 400 });
         }
@@ -620,7 +682,7 @@ export const workerCanPerformCategory = async (
     categoryId?: string | mongoose.Types.ObjectId
 ) => {
     const categoryFilter = await buildWorkerSpecialtyCategoryFilter(categoryName, categoryId);
-    return Boolean(await Worker.exists({ _id: workerId, isActive: true, isVerified: true, ...categoryFilter }));
+    return Boolean(await Worker.exists({ _id: workerId, isActive: true, ...categoryFilter }));
 };
 
 export const getWorkerMatchedSpecialtyProfile = async (

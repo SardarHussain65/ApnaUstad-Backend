@@ -5,6 +5,7 @@ import { BadRequestError, NotFoundError } from '../utils/ApiError';
 import { successResponse, paginatedResponse } from '../utils/ApiResponse';
 import Worker from '../models/Workers';
 import Category from '../models/Category';
+import ProfessionRequest from '../models/ProfessionRequest';
 import { recordAdminAction } from '../services/adminAuditLog';
 import { sendNotificationToRecipient } from '../services/notificationHelper';
 import {
@@ -63,8 +64,14 @@ const buildSpecialtyResponse = async (worker: any) => {
                 tier: getSpecialtyTier(specialty.priority)
             };
         });
+    const pendingCustomRequests = await ProfessionRequest.find({
+        worker: worker._id,
+        status: { $in: ['pending', 'rejected'] }
+    }).sort({ createdAt: -1 }).lean();
+
     return {
         specialties,
+        pendingCustomRequests,
         maxSpecialties: MAX_WORKER_SPECIALTIES,
         freeSpecialtyLimit: FREE_SPECIALTY_LIMIT,
         additionalCategoryMonthlyFee
@@ -116,7 +123,14 @@ export const deleteSpecialty = asyncHandler(async (req: AuthRequest, res) => {
 export const getPendingSpecialtyRequests = asyncHandler(async (req: AdminAuthRequest, res) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-    const query = { specialties: { $elemMatch: { approvalStatus: 'pending' } } };
+    const query = {
+        specialties: {
+            $elemMatch: {
+                priority: { $gt: 1 },
+                approvalStatus: 'pending'
+            }
+        }
+    };
     const [workers, total] = await Promise.all([
         Worker.find(query)
             .select('fullName phone email profileImage category specialties certificates')

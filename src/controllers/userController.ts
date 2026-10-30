@@ -74,9 +74,8 @@ export const getWorkers = asyncHandler(async (req, res) => {
     // Build filter object
     const filter: any = {};
 
-    // Public discovery only returns trusted active workers.
+    // Public discovery returns active workers.
     filter.isActive = true;
-    filter.isVerified = true;
 
     // Filter by isAvailable
     if (req.query.isAvailable !== undefined) {
@@ -144,7 +143,7 @@ export const getWorkers = asyncHandler(async (req, res) => {
 export const getWorkerById = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
-    const worker = await Workers.findOne({ _id: id, isActive: true, isVerified: true })
+    const worker = await Workers.findOne({ _id: id, isActive: true })
         .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -phone -email");
     if (!worker) {
         throw new BadRequestError("Worker not found");

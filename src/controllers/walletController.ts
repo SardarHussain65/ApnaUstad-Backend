@@ -24,9 +24,11 @@ export const getMyWallet = async (req: AuthRequest, res: Response) => {
             return res.status(401).json({ success: false, message: "Unauthorized. Worker access only." });
         }
 
-        const wallet = await walletService.getOrCreateWallet(workerId);
-        const requiredBalance = await walletService.getRequiredWalletBalance();
-        const walletSettings = await getWalletSettings();
+        const [wallet, walletSettings] = await Promise.all([
+            walletService.getOrCreateWallet(workerId),
+            getWalletSettings(),
+        ]);
+        const requiredBalance = Math.max(walletSettings.minimumWalletBalance, 0);
         const reservedBalance = Number(wallet.reservedBalance || 0);
         const availableBalance = Number(wallet.balance || 0) - reservedBalance;
 

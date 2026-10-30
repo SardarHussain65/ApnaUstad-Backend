@@ -27,8 +27,9 @@ export const getDisputeStatusLabel = (status: IDispute['status'] | null) => {
     switch (status) {
         case 'open': return 'Report received';
         case 'under_review': return 'Being checked';
-        case 'resolved': return 'Solved in customer favor';
+        case 'resolved': return 'Closed — Customer favoured';
         case 'dismissed': return 'Closed — Ustad cleared';
+        case 'withdrawn': return 'Closed — Settled by both sides';
         default: return '';
     }
 };
@@ -36,13 +37,15 @@ export const getDisputeStatusLabel = (status: IDispute['status'] | null) => {
 export const getDisputeNextStep = (status: IDispute['status'] | null) => {
     switch (status) {
         case 'open':
-            return 'Our team will check your report and may call both sides if needed.';
+            return 'Open the complaint chat to talk with the other side and ApnaUstad Team.';
         case 'under_review':
             return 'Our team is checking the details. Cash payment stays paused until we finish checking.';
         case 'resolved':
             return 'This issue is closed. Check your notifications or wallet for any balance updates.';
         case 'dismissed':
             return 'Complaint closed. Normal cash payment for the job can continue.';
+        case 'withdrawn':
+            return 'Complaint withdrawn after both sides agreed. Normal cash payment can continue.';
         default:
             return '';
     }
@@ -101,7 +104,9 @@ export const buildDisputeMeta = (
             disputeId: String(dispute._id),
             disputeStatus: dispute.status,
             canRaiseDispute: false,
-            canRaiseDisputeReason: 'A complaint is already open on this booking.',
+            canRaiseDisputeReason: (ACTIVE_DISPUTE_STATUSES as readonly string[]).includes(dispute.status)
+                ? 'A complaint is already open on this booking.'
+                : 'A complaint for this booking was already closed. Check it in My Complaints → History.',
             bookingAmount,
             amountDisputed: dispute.amountDisputed,
             raisedByType: dispute.raisedByType,
@@ -130,17 +135,6 @@ export const buildDisputeMeta = (
             disputeStatus: null,
             canRaiseDispute: false,
             canRaiseDisputeReason: 'You can report a problem after an Ustad is assigned to this job.',
-            bookingAmount,
-        };
-    }
-
-    if (booking.status === 'completed' || booking.status === 'cancelled') {
-        return {
-            hasDispute: false,
-            disputeId: null,
-            disputeStatus: null,
-            canRaiseDispute: false,
-            canRaiseDisputeReason: 'For issues after job completion, please use Help Center in your profile.',
             bookingAmount,
         };
     }

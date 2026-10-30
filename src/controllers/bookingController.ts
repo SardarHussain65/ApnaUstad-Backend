@@ -49,7 +49,7 @@ const DEFAULT_BOOKING_STATUS_META = { label: 'Waiting', tone: 'warning', accentC
 
 const BOOKING_STATUS_META: Record<string, { label: string; tone: string; accentColor: string; actionLabel: string }> = {
     pending: DEFAULT_BOOKING_STATUS_META,
-    accepted: { label: 'Confirmed', tone: 'info', accentColor: '#00F5FF', actionLabel: 'Open job' },
+    accepted: { label: 'Confirmed', tone: 'info', accentColor: '#0284C7', actionLabel: 'Open job' },
     ongoing: { label: 'In Progress', tone: 'info', accentColor: '#BF5AF2', actionLabel: 'Track live' },
     completed: { label: 'Completed', tone: 'success', accentColor: '#34C759', actionLabel: 'View details' },
     cancelled: { label: 'Cancelled', tone: 'danger', accentColor: '#FF3B30', actionLabel: 'View details' },
@@ -394,21 +394,26 @@ export const getUserBookings = async (req: AuthRequest, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 10;
         const skip = (page - 1) * limit;
 
-        const bookings = await Booking.find({ customer: customerId })
-            .populate('worker', 'fullName phone email profileImage category rating totalJobs totalReviews hourlyRate experience city address isVerified isAvailable')
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
+        const [bookings, total] = await Promise.all([
+            Booking.find({ customer: customerId })
+                .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
+                .populate('worker', 'fullName profileImage category rating city isVerified')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Booking.countDocuments({ customer: customerId }),
+        ]);
 
         const bookingIds = bookings.map(b => b._id);
-        const disputes = await Dispute.find({ booking: { $in: bookingIds } }).lean();
+        const disputes = bookingIds.length > 0
+            ? await Dispute.find({ booking: { $in: bookingIds } }).select('booking status').lean()
+            : [];
         const disputeMap = new Map(disputes.map(d => [d.booking.toString(), d]));
 
         const responseBookings = bookings.map((booking) =>
             buildBookingCardPayload(booking, 'user', disputeMap.get(booking._id.toString()), customerId)
         );
-
-        const total = await Booking.countDocuments({ customer: customerId });
 
         res.status(200).json({
             success: true,
@@ -442,22 +447,29 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
         const customerObjectId = new Types.ObjectId(customerId);
         const activeStatuses = ['accepted', 'ongoing'];
 
-        const [recentBookings, total, completed, active, spentSummary] = await Promise.all([
+        // Fast parallel fetch: lightweight lean bookings projection + single-pass aggregate for all stats
+        const [recentBookings, [statsSummary]] = await Promise.all([
             Booking.find({ customer: customerId })
-                .populate('worker', 'fullName phone email profileImage category rating totalJobs totalReviews hourlyRate experience city address isVerified isAvailable')
+                .select('category description bookingType scheduledDate scheduledTime address status totalAmount agreement customer worker createdAt')
+                .populate('worker', 'fullName profileImage rating category city isVerified')
                 .sort({ createdAt: -1 })
-                .limit(recentLimit),
-            Booking.countDocuments({ customer: customerId }),
-            Booking.countDocuments({ customer: customerId, status: 'completed' }),
-            Booking.countDocuments({ customer: customerId, status: { $in: activeStatuses } }),
+                .limit(recentLimit)
+                .lean(),
             Booking.aggregate([
-                { $match: { customer: customerObjectId, status: 'completed' } },
+                { $match: { customer: customerObjectId } },
                 {
                     $group: {
                         _id: null,
+                        total: { $sum: 1 },
+                        completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+                        active: { $sum: { $cond: [{ $in: ['$status', activeStatuses] }, 1, 0] } },
                         totalSpent: {
                             $sum: {
-                                $ifNull: ['$agreement.cashDue', { $ifNull: ['$totalAmount', 0] }]
+                                $cond: [
+                                    { $eq: ['$status', 'completed'] },
+                                    { $ifNull: ['$agreement.cashDue', { $ifNull: ['$totalAmount', 0] }] },
+                                    0
+                                ]
                             }
                         }
                     }
@@ -465,11 +477,16 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
             ])
         ]);
 
+        const total = statsSummary?.total || 0;
+        const completed = statsSummary?.completed || 0;
+        const active = statsSummary?.active || 0;
+        const totalSpent = Number(statsSummary?.totalSpent || 0);
         const successRate = total > 0 ? completed / total : 0;
-        const totalSpent = Number(spentSummary[0]?.totalSpent || 0);
 
         const bookingIds = recentBookings.map(b => b._id);
-        const disputes = await Dispute.find({ booking: { $in: bookingIds } }).lean();
+        const disputes = bookingIds.length > 0
+            ? await Dispute.find({ booking: { $in: bookingIds } }).select('booking status').lean()
+            : [];
         const disputeMap = new Map(disputes.map(d => [d.booking.toString(), d]));
 
         const responseRecent = recentBookings.map((booking) =>
@@ -513,27 +530,48 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
         const workerObjectId = new Types.ObjectId(workerId);
         const operationalActiveStatuses = ['accepted', 'ongoing'];
 
-        const [recentBookings, total, completed, active, earningSummary, workerProfile] = await Promise.all([
+        // Fast parallel fetch: lightweight lean bookings projection + single-pass aggregate + worker profile
+        const [recentBookings, [statsSummary], workerProfile] = await Promise.all([
             Booking.find({ worker: workerId })
-                .populate('customer', 'fullName phone email profileImage address city createdAt isActive')
+                .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
+                .populate('customer', 'fullName profileImage city')
                 .sort({ createdAt: -1 })
-                .limit(recentLimit),
-            Booking.countDocuments({ worker: workerId }),
-            Booking.countDocuments({ worker: workerId, status: 'completed' }),
-            Booking.countDocuments({ worker: workerId, status: { $in: operationalActiveStatuses } }),
+                .limit(recentLimit)
+                .lean(),
             Booking.aggregate([
-                { $match: { worker: workerObjectId, status: 'completed' } },
-                { $group: { _id: null, revenue: { $sum: { $ifNull: ['$workerEarning', 0] } } } }
+                { $match: { worker: workerObjectId } },
+                {
+                    $group: {
+                        _id: null,
+                        total: { $sum: 1 },
+                        completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
+                        active: { $sum: { $cond: [{ $in: ['$status', operationalActiveStatuses] }, 1, 0] } },
+                        revenue: {
+                            $sum: {
+                                $cond: [
+                                    { $eq: ['$status', 'completed'] },
+                                    { $ifNull: ['$workerEarning', 0] },
+                                    0
+                                ]
+                            }
+                        }
+                    }
+                }
             ]),
             Worker.findById(workerId).select('rating totalEarnings').lean(),
         ]);
 
+        const total = statsSummary?.total || 0;
+        const completed = statsSummary?.completed || 0;
+        const active = statsSummary?.active || 0;
         const successRate = total > 0 ? completed / total : 0;
-        const calculatedRevenue = Number(earningSummary[0]?.revenue || 0);
+        const calculatedRevenue = Number(statsSummary?.revenue || 0);
         const profileRevenue = Number((workerProfile as any)?.totalEarnings || 0);
 
         const bookingIds = recentBookings.map(b => b._id);
-        const disputes = await Dispute.find({ booking: { $in: bookingIds } }).lean();
+        const disputes = bookingIds.length > 0
+            ? await Dispute.find({ booking: { $in: bookingIds } }).select('booking status').lean()
+            : [];
         const disputeMap = new Map(disputes.map(d => [d.booking.toString(), d]));
 
         const responseRecent = recentBookings.map((booking) =>
@@ -585,28 +623,77 @@ export const getWorkerEarningsAnalytics = async (req: AuthRequest, res: Response
         const currentMonthStart = startOfPakistanMonth(now);
         const sixMonthsAgo = addPakistanMonths(currentMonthStart, -5);
 
-        const dailyAgg = await Booking.aggregate([
-            {
-                $match: {
-                    worker: workerObjectId,
-                    status: 'completed',
-                    $expr: { $gte: [completedAtExpression, sevenDaysAgo] },
-                },
-            },
-            {
-                $group: {
-                    _id: {
-                        $dateToString: {
-                            format: '%Y-%m-%d',
-                            date: completedAtExpression,
-                            timezone: 'Asia/Karachi',
-                        },
+        // Run daily, weekly, and monthly aggregations concurrently in parallel
+        const [dailyAgg, weeklyDailyAgg, monthlyAgg] = await Promise.all([
+            Booking.aggregate([
+                {
+                    $match: {
+                        worker: workerObjectId,
+                        status: 'completed',
+                        $expr: { $gte: [completedAtExpression, sevenDaysAgo] },
                     },
-                    earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
-                    jobs: { $sum: 1 },
                 },
-            },
-            { $sort: { _id: 1 } },
+                {
+                    $group: {
+                        _id: {
+                            $dateToString: {
+                                format: '%Y-%m-%d',
+                                date: completedAtExpression,
+                                timezone: 'Asia/Karachi',
+                            },
+                        },
+                        earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
+                        jobs: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]),
+            Booking.aggregate([
+                {
+                    $match: {
+                        worker: workerObjectId,
+                        status: 'completed',
+                        $expr: { $gte: [completedAtExpression, fourWeeksAgo] },
+                    },
+                },
+                {
+                    $group: {
+                        _id: {
+                            $dateToString: {
+                                format: '%Y-%m-%d',
+                                date: completedAtExpression,
+                                timezone: 'Asia/Karachi',
+                            },
+                        },
+                        earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
+                        jobs: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]),
+            Booking.aggregate([
+                {
+                    $match: {
+                        worker: workerObjectId,
+                        status: 'completed',
+                        $expr: { $gte: [completedAtExpression, sixMonthsAgo] },
+                    },
+                },
+                {
+                    $group: {
+                        _id: {
+                            $dateToString: {
+                                format: '%Y-%m',
+                                date: completedAtExpression,
+                                timezone: 'Asia/Karachi',
+                            },
+                        },
+                        earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
+                        jobs: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]),
         ]);
 
         const dailyMap = new Map(dailyAgg.map((d: any) => [d._id, d]));
@@ -622,30 +709,6 @@ export const getWorkerEarningsAnalytics = async (req: AuthRequest, res: Response
                 jobs: existing ? Number(existing.jobs) : 0,
             });
         }
-
-        const weeklyDailyAgg = await Booking.aggregate([
-            {
-                $match: {
-                    worker: workerObjectId,
-                    status: 'completed',
-                    $expr: { $gte: [completedAtExpression, fourWeeksAgo] },
-                },
-            },
-            {
-                $group: {
-                    _id: {
-                        $dateToString: {
-                            format: '%Y-%m-%d',
-                            date: completedAtExpression,
-                            timezone: 'Asia/Karachi',
-                        },
-                    },
-                    earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
-                    jobs: { $sum: 1 },
-                },
-            },
-            { $sort: { _id: 1 } },
-        ]);
 
         const weeklyDayMap = new Map(weeklyDailyAgg.map((d: any) => [d._id, d]));
         const weekly = Array.from({ length: 4 }, (_, weekIndex) => {
@@ -668,30 +731,6 @@ export const getWorkerEarningsAnalytics = async (req: AuthRequest, res: Response
                 jobs,
             };
         });
-
-        const monthlyAgg = await Booking.aggregate([
-            {
-                $match: {
-                    worker: workerObjectId,
-                    status: 'completed',
-                    $expr: { $gte: [completedAtExpression, sixMonthsAgo] },
-                },
-            },
-            {
-                $group: {
-                    _id: {
-                        $dateToString: {
-                            format: '%Y-%m',
-                            date: completedAtExpression,
-                            timezone: 'Asia/Karachi',
-                        },
-                    },
-                    earnings: { $sum: { $ifNull: ['$workerEarning', 0] } },
-                    jobs: { $sum: 1 },
-                },
-            },
-            { $sort: { _id: 1 } },
-        ]);
 
         const monthlyMap = new Map(monthlyAgg.map((m: any) => [m._id, m]));
         const monthly: any[] = [];
@@ -784,21 +823,26 @@ export const getWorkerBookings = async (req: AuthRequest, res: Response) => {
             query.status = { $in: statuses };
         }
 
-        const bookings = await Booking.find(query)
-            .populate('customer', 'fullName phone email profileImage address city createdAt isActive')
-            .sort({ createdAt: -1 }) // Newest first — ensures cancelled/recent bookings are always visible
-            .skip(skip)
-            .limit(limit);
+        const [bookings, total] = await Promise.all([
+            Booking.find(query)
+                .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
+                .populate('customer', 'fullName profileImage city')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Booking.countDocuments(query),
+        ]);
 
         const bookingIds = bookings.map(b => b._id);
-        const disputes = await Dispute.find({ booking: { $in: bookingIds } }).lean();
+        const disputes = bookingIds.length > 0
+            ? await Dispute.find({ booking: { $in: bookingIds } }).select('booking status').lean()
+            : [];
         const disputeMap = new Map(disputes.map(d => [d.booking.toString(), d]));
 
         const responseBookings = bookings.map((booking) =>
             buildBookingCardPayload(booking, 'worker', disputeMap.get(booking._id.toString()), workerId)
         );
-
-        const total = await Booking.countDocuments(query);
 
         res.status(200).json({
             success: true,

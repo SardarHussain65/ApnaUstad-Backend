@@ -409,7 +409,7 @@ const buildJobPostDetailPayload = async (
                 ? { value: job.status, label: 'Offers received', tone: 'warning', accentColor: '#FF8C00' }
                 : job.status === 'closed'
                     ? { value: job.status, label: 'Closed', tone: 'neutral', accentColor: '#8E8E93' }
-                    : { value: job.status, label: 'Finding Ustads', tone: 'info', accentColor: '#00F5FF' };
+                    : { value: job.status, label: 'Finding Ustads', tone: 'info', accentColor: '#0284C7' };
     const budget = Number(job.amount || 0);
 
     return {

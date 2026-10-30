@@ -8,6 +8,8 @@
  */
 
 import mongoose from "mongoose";
+import Workers from './models/Workers';
+import { ensureLegacyPrimarySpecialty } from './services/workerSpecialtyService';
 
 
 import { validateEnv, getConfig } from './config/env';
@@ -37,6 +39,34 @@ const startServer = async () => {
 
         // Connect to MongoDB
         await connectDB();
+
+        // Auto-heal primary specialties so all registered workers' primary service is immediately live
+        try {
+            await Workers.updateMany(
+                { 'specialties.priority': 1, 'specialties.approvalStatus': 'pending' },
+                { 
+                    $set: { 
+                        'specialties.$[elem].approvalStatus': 'approved',
+                        'specialties.$[elem].isActive': true,
+                        'specialties.$[elem].subscriptionStatus': 'free'
+                    } 
+                },
+                { arrayFilters: [{ 'elem.priority': 1 }] }
+            );
+
+            // Auto-heal any workers with duplicate priorities or multiple free specialties
+            const multiSpecialtyWorkers = await Workers.find({ 'specialties.1': { $exists: true } });
+            for (const w of multiSpecialtyWorkers) {
+                const freeCount = (w.specialties || []).filter((s: any) => s.subscriptionStatus === 'free' || Number(s.priority) === 1).length;
+                const priorities = (w.specialties || []).map((s: any) => Number(s.priority) || 1);
+                const hasDuplicates = new Set(priorities).size !== priorities.length;
+                if (freeCount > 1 || hasDuplicates) {
+                    await ensureLegacyPrimarySpecialty(w);
+                }
+            }
+        } catch (healErr: any) {
+            logger.warn(`Primary specialty auto-heal notice: ${healErr?.message || healErr}`);
+        }
 
         // Create HTTP server
         const httpServer = http.createServer(app);
