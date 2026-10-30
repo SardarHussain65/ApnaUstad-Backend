@@ -310,12 +310,15 @@ export const getTransactionHistory = async (
 ) => {
     const skip = (page - 1) * limit;
     
-    const transactions = await WalletTransaction.find({ worker: workerId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit);
-
-    const total = await WalletTransaction.countDocuments({ worker: workerId });
+    const [transactions, total] = await Promise.all([
+        WalletTransaction.find({ worker: workerId })
+            .select('wallet worker type amount balanceBefore balanceAfter description reference createdAt')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .lean(),
+        WalletTransaction.countDocuments({ worker: workerId }),
+    ]);
 
     return {
         transactions,
