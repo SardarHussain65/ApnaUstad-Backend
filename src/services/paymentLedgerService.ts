@@ -27,21 +27,23 @@ const buildLedgerPayload = (booking: any) => ({
 export const ensurePaymentForBooking = async (booking: any, session?: mongoose.ClientSession) => {
     const payload = buildLedgerPayload(booking);
 
-    return Payment.findOneAndUpdate(
-        { booking: booking._id },
-        {
-            $setOnInsert: {
-                status: 'pending',
-                workerLedgerApplied: false,
-            },
-            $set: payload,
-        },
-        { new: true, upsert: true, setDefaultsOnInsert: true, ...(session ? { session } : {}) }
-    );
+    let payment = await Payment.findOne({ booking: booking._id }).session(session ?? null);
+    if (!payment) {
+        const [createdPayment] = await Payment.create([{
+            ...payload,
+            status: 'pending',
+            workerLedgerApplied: false,
+        }], session ? { session } : {});
+        return createdPayment;
+    }
+
+    Object.assign(payment, payload);
+    return payment.save(session ? { session } : {});
 };
 
 export const syncPaymentForBookingStatus = async (booking: any, session?: mongoose.ClientSession) => {
     const payment = await ensurePaymentForBooking(booking, session);
+    if (!payment) return null;
 
     if (payment.status === 'paid') {
         return payment;
@@ -61,9 +63,13 @@ export const syncPaymentForBookingStatus = async (booking: any, session?: mongoo
         return payment.save(session ? { session } : {});
     }
 
-    payment.status = 'pending';
-    payment.bookingStatusSnapshot = booking.status || 'pending';
-    return payment.save(session ? { session } : {});
+    if (payment.status !== 'pending' || payment.bookingStatusSnapshot !== (booking.status || 'pending')) {
+        payment.status = 'pending';
+        payment.bookingStatusSnapshot = booking.status || 'pending';
+        return payment.save(session ? { session } : {});
+    }
+
+    return payment;
 };
 
 export const confirmCashPaymentForBooking = async (
