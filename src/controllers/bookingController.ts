@@ -530,11 +530,11 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
         const workerObjectId = new Types.ObjectId(workerId);
         const operationalActiveStatuses = ['accepted', 'ongoing'];
 
-        // Fast parallel fetch: lightweight lean bookings projection + single-pass aggregate + worker profile
-        const [recentBookings, [statsSummary], workerProfile] = await Promise.all([
+        // Fast parallel fetch: lightweight lean bookings projection + single-pass aggregate + worker profile + active booking
+        const [recentBookings, [statsSummary], workerProfile, currentActiveBooking] = await Promise.all([
             Booking.find({ worker: workerId })
                 .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
-                .populate('customer', 'fullName profileImage city')
+                .populate('customer', 'fullName profileImage city phone')
                 .sort({ createdAt: -1 })
                 .limit(recentLimit)
                 .lean(),
@@ -559,6 +559,14 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
                 }
             ]),
             Worker.findById(workerId).select('rating totalEarnings').lean(),
+            Booking.findOne({
+                worker: workerId,
+                status: { $in: operationalActiveStatuses }
+            })
+            .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
+            .populate('customer', 'fullName profileImage city phone')
+            .sort({ updatedAt: -1 })
+            .lean(),
         ]);
 
         const total = statsSummary?.total || 0;
@@ -578,9 +586,16 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
             buildBookingCardPayload(booking, 'worker', disputeMap.get(booking._id.toString()), workerId)
         );
 
+        let responseActive: any = null;
+        if (currentActiveBooking) {
+            const activeDispute = await Dispute.findOne({ booking: currentActiveBooking._id }).select('booking status').lean();
+            responseActive = buildBookingCardPayload(currentActiveBooking, 'worker', activeDispute, workerId);
+        }
+
         res.status(200).json({
             success: true,
             data: {
+                activeBooking: responseActive,
                 stats: {
                     revenue: Math.max(profileRevenue, calculatedRevenue),
                     rating: Number((workerProfile as any)?.rating || 0),

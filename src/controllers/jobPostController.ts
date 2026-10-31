@@ -1095,10 +1095,7 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
 
         const longitude = Number.isFinite(queryLongitude) ? queryLongitude : savedLongitude;
         const latitude = Number.isFinite(queryLatitude) ? queryLatitude : savedLatitude;
-
-        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
-            return res.status(400).json({ success: false, message: "Worker location coordinates are required" });
-        }
+        const hasValidCoordinates = Number.isFinite(longitude) && Number.isFinite(latitude);
 
         const requestedCategory = req.query.category as string | undefined;
         const activeWorkerCategories = await getWorkerActiveSpecialtyNames(worker);
@@ -1119,13 +1116,16 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
         const query: any = {
             status: 'open',
             expiresAt: { $gt: new Date() },
-            location: {
+        };
+
+        if (hasValidCoordinates) {
+            query.location = {
                 $near: {
                     $geometry: { type: "Point", coordinates: [longitude, latitude] },
                     $maxDistance: maxDistance
                 }
-            }
-        };
+            };
+        }
 
         if (workerCategories.length) query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
         query.urgency = { $in: enabledJobTypes };
