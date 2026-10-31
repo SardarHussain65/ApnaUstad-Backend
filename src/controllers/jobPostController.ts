@@ -543,12 +543,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             scheduledDate = now;
             scheduledTime = now.toTimeString().split(' ')[0]?.substring(0, 5) || "00:00";
         } else {
-            if (!Number.isFinite(clientOffer) || clientOffer <= 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: "A positive client offer is required so workers can make an informed decision."
-                });
-            }
+            finalAmount = Number.isFinite(clientOffer) && clientOffer > 0 ? clientOffer : 0;
             if (!scheduledDate || !scheduledTime) {
                 return res.status(400).json({ success: false, message: "Scheduled date and time are required for scheduled jobs" });
             }
@@ -1113,9 +1108,13 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
             ? Math.min(parseInt(req.query.radius as string, 10) || DEFAULT_JOB_RADIUS_METERS, DEFAULT_JOB_RADIUS_METERS)
             : DEFAULT_JOB_RADIUS_METERS;
 
+        // Find jobs the worker has already bid on (to exclude them from nearby discoveries)
+        const existingBidJobIds = await JobBid.find({ worker: workerId }).distinct('jobPost');
+
         const query: any = {
             status: 'open',
             expiresAt: { $gt: new Date() },
+            _id: { $nin: existingBidJobIds },
         };
 
         if (hasValidCoordinates) {
