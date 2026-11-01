@@ -543,12 +543,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             scheduledDate = now;
             scheduledTime = now.toTimeString().split(' ')[0]?.substring(0, 5) || "00:00";
         } else {
-            if (!Number.isFinite(clientOffer) || clientOffer <= 0) {
-                return res.status(400).json({
-                    success: false,
-                    message: "A positive client offer is required so workers can make an informed decision."
-                });
-            }
+            finalAmount = Number.isFinite(clientOffer) && clientOffer > 0 ? clientOffer : 0;
             if (!scheduledDate || !scheduledTime) {
                 return res.status(400).json({ success: false, message: "Scheduled date and time are required for scheduled jobs" });
             }
@@ -800,7 +795,7 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
     try {
         const customerId = req.tokenPayload?.id;
         const { bidId } = req.params;
-        const { promoCode } = req.body;
+        const { promoCode } = req.body || {};
         let bid: any = null;
         let jobPost: any = null;
         let booking: any = null;
@@ -906,26 +901,47 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
                 promoId = promo._id as mongoose.Types.ObjectId;
             }
 
-            const [createdBooking] = await Booking.create([{
-                jobPost: jobPost._id,
-                acceptedBid: bid._id,
-                customer: customerId,
-                worker: bid.worker,
-                category: jobPost.category,
-                description: jobPost.description,
-                scheduledDate: jobPost.scheduledDate,
-                scheduledTime: jobPost.scheduledTime,
-                estimatedHours: 1,
-                hourlyRate: workerProfile ? workerProfile.hourlyRate : 0,
-                subtotal: agreedPrice,
-                platformFee: commissionAmount,
-                totalAmount: agreedPrice - discountAmount,
-                workerEarning: workerNetIncome,
-                agreement: {
+            const workerHourlyRate = Number(
+                workerProfile?.hourlyRate ??
+                workerProfile?.specialties?.find((s: any) => s.category?.toString() === jobPost.category || s.skills?.includes(jobPost.category))?.hourlyRate ??
+                agreedPrice ??
+                0
+            );
+
+            const now = new Date();
+            const bookingScheduledDate = jobPost.scheduledDate ? new Date(jobPost.scheduledDate) : now;
+            const bookingScheduledTime = (jobPost.scheduledTime && String(jobPost.scheduledTime).trim())
+                ? String(jobPost.scheduledTime).trim()
+                : (now.toTimeString().split(' ')[0]?.substring(0, 5) || "00:00");
+
+            const bookingLocation = (jobPost.location && Array.isArray(jobPost.location.coordinates) && jobPost.location.coordinates.length === 2)
+                ? { type: 'Point' as const, coordinates: [Number(jobPost.location.coordinates[0]), Number(jobPost.location.coordinates[1])] }
+                : { type: 'Point' as const, coordinates: [0, 0] };
+
+            const resolvedBookingType = (jobPost.urgency === 'instant' || jobPost.urgency === 'scheduled')
+                ? jobPost.urgency
+                : 'scheduled';
+
+            const resolvedPriceSource: 'accepted_offer' | 'counter_offer' | 'direct_rate' =
+                bid.priceMode === 'accepted_offer' ? 'accepted_offer'
+                : bid.priceMode === 'counter_offer' ? 'counter_offer'
+                : agreedPrice === clientOffer ? 'accepted_offer' : 'counter_offer';
+
+            // Check if a booking already exists for this job post to avoid duplicate key errors
+            const existingBooking = await Booking.findOne({ jobPost: jobPost._id }).session(session);
+            if (existingBooking) {
+                existingBooking.acceptedBid = bid._id;
+                existingBooking.worker = bid.worker;
+                existingBooking.status = 'accepted';
+                existingBooking.subtotal = agreedPrice;
+                existingBooking.platformFee = commissionAmount;
+                existingBooking.totalAmount = agreedPrice - discountAmount;
+                existingBooking.workerEarning = workerNetIncome;
+                existingBooking.agreement = {
                     clientOffer,
                     agreedPrice,
                     cashDue: agreedPrice - discountAmount,
-                    priceSource: bid.priceMode || (agreedPrice === clientOffer ? 'accepted_offer' : 'counter_offer'),
+                    priceSource: resolvedPriceSource,
                     commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
                     commissionAmount,
                     workerNetIncome,
@@ -933,18 +949,51 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
                     discountAmount,
                     lockedAt: new Date(),
                     pricingVersion: 2
-                },
-                address: jobPost.address,
-                location: jobPost.location,
-                imageUrls: jobPost.imageUrls || [],
-                videoUrls: jobPost.videoUrls || [],
-                audioUrls: jobPost.audioUrls || [],
-                bookingType: jobPost.urgency,
-                status: 'accepted',
-                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-            }], { session });
-            if (!createdBooking) throw new Error("Unable to create booking");
-            booking = createdBooking;
+                };
+                await existingBooking.save({ session });
+                booking = existingBooking;
+            } else {
+                const [createdBooking] = await Booking.create([{
+                    jobPost: jobPost._id,
+                    acceptedBid: bid._id,
+                    customer: customerId,
+                    worker: bid.worker,
+                    category: jobPost.category,
+                    description: jobPost.description,
+                    scheduledDate: bookingScheduledDate,
+                    scheduledTime: bookingScheduledTime,
+                    estimatedHours: Number(jobPost.estimatedHours) || 1,
+                    hourlyRate: Number.isFinite(workerHourlyRate) ? workerHourlyRate : 0,
+                    subtotal: agreedPrice,
+                    platformFee: commissionAmount,
+                    totalAmount: agreedPrice - discountAmount,
+                    workerEarning: workerNetIncome,
+                    agreement: {
+                        clientOffer,
+                        agreedPrice,
+                        cashDue: agreedPrice - discountAmount,
+                        priceSource: resolvedPriceSource,
+                        commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
+                        commissionAmount,
+                        workerNetIncome,
+                        promoCode: promoCode ? promoCode.trim().toUpperCase() : undefined,
+                        discountAmount,
+                        lockedAt: new Date(),
+                        pricingVersion: 2
+                    },
+                    address: jobPost.address || '',
+                    location: bookingLocation,
+                    imageUrls: jobPost.imageUrls || [],
+                    videoUrls: jobPost.videoUrls || [],
+                    audioUrls: jobPost.audioUrls || [],
+                    bookingType: resolvedBookingType,
+                    status: 'accepted',
+                    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+                }], { session });
+
+                if (!createdBooking) throw new Error("Unable to create booking");
+                booking = createdBooking;
+            }
 
             // Track promo usage
             if (promoId) {
@@ -982,12 +1031,28 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
         });
 
         // Populate customer details for the worker notification
-        const populatedBooking = await Booking.findById(booking._id)
-            .populate('customer', 'fullName profileImage phone');
+        let populatedBooking = booking;
+        try {
+            const populated = await Booking.findById(booking._id)
+                .populate('customer', 'fullName profileImage phone');
+            if (populated) populatedBooking = populated;
+        } catch (popErr) {
+            logger.warn("Could not populate customer details for booking notification (non-fatal):", popErr);
+        }
 
-        // Notify winner and losers via sockets and push notifications
-        const io = getIO();
-        io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking || booking });
+        // Notify winner and losers via sockets safely
+        try {
+            const io = getIO();
+            if (io) {
+                io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
+                const otherBids = await JobBid.find({ jobPost: jobPost._id, _id: { $ne: bid._id } });
+                otherBids.forEach(ob => {
+                    io.to(`worker:${ob.worker.toString()}`).emit('bid:lost', { jobPost });
+                });
+            }
+        } catch (sockErr) {
+            logger.warn("Socket broadcast failed in acceptBid (non-fatal):", sockErr);
+        }
 
         sendNotificationToRecipient(
             bid.worker,
@@ -996,11 +1061,6 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             `The customer accepted your rate for "${jobPost.category}" and booked you!`,
             { bookingId: booking._id.toString(), type: 'bid_won' }
         ).catch(err => logger.error(`Failed to send bid acceptance push notification to worker ${bid.worker}:`, err));
-
-        const otherBids = await JobBid.find({ jobPost: jobPost._id, _id: { $ne: bid._id } });
-        otherBids.forEach(ob => {
-            io.to(`worker:${ob.worker.toString()}`).emit('bid:lost', { jobPost });
-        });
 
         res.status(200).json({
             success: true,
@@ -1095,10 +1155,7 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
 
         const longitude = Number.isFinite(queryLongitude) ? queryLongitude : savedLongitude;
         const latitude = Number.isFinite(queryLatitude) ? queryLatitude : savedLatitude;
-
-        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
-            return res.status(400).json({ success: false, message: "Worker location coordinates are required" });
-        }
+        const hasValidCoordinates = Number.isFinite(longitude) && Number.isFinite(latitude);
 
         const requestedCategory = req.query.category as string | undefined;
         const activeWorkerCategories = await getWorkerActiveSpecialtyNames(worker);
@@ -1116,16 +1173,23 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
             ? Math.min(parseInt(req.query.radius as string, 10) || DEFAULT_JOB_RADIUS_METERS, DEFAULT_JOB_RADIUS_METERS)
             : DEFAULT_JOB_RADIUS_METERS;
 
+        // Find jobs the worker has already bid on (to exclude them from nearby discoveries)
+        const existingBidJobIds = await JobBid.find({ worker: workerId }).distinct('jobPost');
+
         const query: any = {
             status: 'open',
             expiresAt: { $gt: new Date() },
-            location: {
+            _id: { $nin: existingBidJobIds },
+        };
+
+        if (hasValidCoordinates) {
+            query.location = {
                 $near: {
                     $geometry: { type: "Point", coordinates: [longitude, latitude] },
                     $maxDistance: maxDistance
                 }
-            }
-        };
+            };
+        }
 
         if (workerCategories.length) query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
         query.urgency = { $in: enabledJobTypes };
@@ -1511,16 +1575,21 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
                 .populate('worker', WORKER_BID_PROFILE_SELECT)
                 .populate('customer', 'fullName profileImage phone');
 
-            // Sockets and Push Notifications
-            const io = getIO();
-            
-            // 1. Emit job:auto_assigned to Customer
-            const clientRoomName = `user:${jobPost.customer.toString()}`;
-            logger.info(`📡 [Urgent Auto-Assign] Emitting job:auto_assigned to room ${clientRoomName} for booking ${booking._id}`);
-            io.to(clientRoomName).emit('job:auto_assigned', populatedBooking);
+            // Sockets and Push Notifications safely
+            try {
+                const io = getIO();
+                if (io) {
+                    // 1. Emit job:auto_assigned to Customer
+                    const clientRoomName = `user:${jobPost.customer.toString()}`;
+                    logger.info(`📡 [Urgent Auto-Assign] Emitting job:auto_assigned to room ${clientRoomName} for booking ${booking._id}`);
+                    io.to(clientRoomName).emit('job:auto_assigned', populatedBooking);
 
-            // 2. Emit bid:won to Worker
-            io.to(`worker:${workerId.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
+                    // 2. Emit bid:won to Worker
+                    io.to(`worker:${workerId.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
+                }
+            } catch (sockErr) {
+                logger.warn("Socket broadcast failed in acceptInstantJob (non-fatal):", sockErr);
+            }
 
             // 3. Send Push Notifications
             sendNotificationToRecipient(
