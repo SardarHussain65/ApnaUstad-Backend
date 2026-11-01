@@ -30,7 +30,7 @@ import {
     getWorkerActiveSpecialtyNames,
     workerCanPerformCategory
 } from "../services/workerSpecialtyService";
-import { calculateUrgentPrice, scheduleEscalation, manuallyEscalateJobPrice } from "../services/urgentPricingService";
+import { scheduleEscalation, manuallyEscalateJobPrice } from "../services/urgentPricingService";
 
 const MAX_BIDS = 5;
 const DEFAULT_JOB_RADIUS_METERS = 100000;
@@ -532,18 +532,13 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         const clientOffer = Number(amount);
         const isInstant = urgency === 'instant';
 
-        let finalAmount = clientOffer;
-        let finalEstimatedHours = Number(req.body.estimatedHours) || 2;
+        const finalAmount = Number.isFinite(clientOffer) && clientOffer > 0 ? clientOffer : 0;
 
         if (isInstant) {
-            const urgentPrice = await calculateUrgentPrice(category, finalEstimatedHours);
-            finalAmount = urgentPrice.fixedPrice;
-            
             const now = new Date();
             scheduledDate = now;
             scheduledTime = now.toTimeString().split(' ')[0]?.substring(0, 5) || "00:00";
         } else {
-            finalAmount = Number.isFinite(clientOffer) && clientOffer > 0 ? clientOffer : 0;
             if (!scheduledDate || !scheduledTime) {
                 return res.status(400).json({ success: false, message: "Scheduled date and time are required for scheduled jobs" });
             }
@@ -575,8 +570,7 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             videoUrls,
             audioUrls,
             amount: finalAmount,
-            isFixedPrice: isInstant,
-            estimatedHours: isInstant ? finalEstimatedHours : undefined,
+            isFixedPrice: false,
             urgencyPricingVersion: isInstant ? 1 : undefined,
             pricing: {
                 clientOffer: finalAmount,
@@ -1752,21 +1746,15 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
 };
 
 export const getUrgentPriceEstimate = async (req: AuthRequest, res: Response) => {
-    try {
-        const { category, estimatedHours } = req.query;
-        if (!category) {
-            return res.status(400).json({ success: false, message: "Category is required" });
+    return res.status(200).json({
+        success: true,
+        data: {
+            fixedPrice: 0,
+            baseRate: 0,
+            estimatedHours: 0,
+            breakdown: "Dynamic market rate"
         }
-        const hours = Number(estimatedHours) || 2;
-        const estimate = await calculateUrgentPrice(String(category), hours);
-        return res.status(200).json({
-            success: true,
-            data: estimate
-        });
-    } catch (error: any) {
-        logger.error("Error in getUrgentPriceEstimate:", error);
-        return res.status(500).json({ success: false, message: "Internal server error" });
-    }
+    });
 };
 
 /**

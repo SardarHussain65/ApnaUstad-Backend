@@ -1,6 +1,5 @@
 import JobPost from '../models/JobPost';
 import Worker from '../models/Workers';
-import { getUrgentRateForCategory } from './platformSettingsService';
 import { getIO } from '../sockets/socketManager';
 import logger from '../config/logger';
 import { buildWorkerSpecialtyCategoryFilter } from './workerSpecialtyService';
@@ -9,35 +8,10 @@ import { sendNotificationToRecipient } from './notificationHelper';
 
 const DEFAULT_JOB_RADIUS_METERS = 100000;
 
-export interface PriceEstimate {
-    fixedPrice: number;
-    baseRate: number;
-    estimatedHours: number;
-    breakdown: string;
-}
-
-export async function calculateUrgentPrice(category: string, estimatedHours: number): Promise<PriceEstimate> {
-    const rateInfo = await getUrgentRateForCategory(category);
-    const baseRate = rateInfo.baseRatePerHour;
-    const minPrice = rateInfo.minimumPrice;
-    
-    let calculated = baseRate * estimatedHours;
-    if (calculated < minPrice) {
-        calculated = minPrice;
-    }
-    
-    return {
-        fixedPrice: calculated,
-        baseRate,
-        estimatedHours,
-        breakdown: `Rs ${baseRate}/hr × ${estimatedHours} hrs = Rs ${calculated.toLocaleString()}`
-    };
-}
-
 export async function escalateJobPrice(jobId: string): Promise<void> {
     try {
         const job = await JobPost.findById(jobId);
-        if (!job || job.status !== 'open' || job.urgency !== 'instant' || !job.isFixedPrice) {
+        if (!job || job.status !== 'open' || job.urgency !== 'instant') {
             return;
         }
 
@@ -90,7 +64,7 @@ export async function manuallyEscalateJobPrice(jobId: string): Promise<{ success
     if (!job) {
         throw new Error("Job post not found");
     }
-    if (job.status !== 'open' || job.urgency !== 'instant' || !job.isFixedPrice) {
+    if (job.status !== 'open' || job.urgency !== 'instant') {
         throw new Error("Rate cannot be increased for this job right now");
     }
     if (job.urgencyPricingVersion !== 1) {

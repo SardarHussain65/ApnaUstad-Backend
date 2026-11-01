@@ -1,13 +1,7 @@
 import mongoose from 'mongoose';
-import PlatformSettings, { UrgentPricingRate } from '../models/PlatformSettings';
-import {
-  URGENT_PRICING_RATES,
-  DEFAULT_URGENT_RATE,
-} from '../data/urgentPricingRates';
+import PlatformSettings from '../models/PlatformSettings';
 
 export type PlatformSettingsPayload = {
-  urgentPricingRates: Record<string, UrgentPricingRate>;
-  defaultUrgentRate: UrgentPricingRate;
   instantJobInitialRadiusKm: number;
   instantJobExpandedRadiusKm: number;
   instantJobExpansionMinutes: number;
@@ -16,8 +10,6 @@ export type PlatformSettingsPayload = {
 };
 
 const getFallbackSettings = (): PlatformSettingsPayload => ({
-  urgentPricingRates: { ...URGENT_PRICING_RATES },
-  defaultUrgentRate: { ...DEFAULT_URGENT_RATE },
   instantJobInitialRadiusKm: 10,
   instantJobExpandedRadiusKm: 25,
   instantJobExpansionMinutes: 5,
@@ -33,11 +25,6 @@ export const getPlatformSettings = async (): Promise<PlatformSettingsPayload> =>
   }
 
   return {
-    urgentPricingRates: {
-      ...fallback.urgentPricingRates,
-      ...(settings.urgentPricingRates || {}),
-    },
-    defaultUrgentRate: settings.defaultUrgentRate || fallback.defaultUrgentRate,
     instantJobInitialRadiusKm: Number(settings.instantJobInitialRadiusKm ?? fallback.instantJobInitialRadiusKm),
     instantJobExpandedRadiusKm: Number(settings.instantJobExpandedRadiusKm ?? fallback.instantJobExpandedRadiusKm),
     instantJobExpansionMinutes: Number(settings.instantJobExpansionMinutes ?? fallback.instantJobExpansionMinutes),
@@ -46,28 +33,13 @@ export const getPlatformSettings = async (): Promise<PlatformSettingsPayload> =>
   };
 };
 
-export const getUrgentRateForCategory = async (category: string): Promise<UrgentPricingRate> => {
-  const settings = await getPlatformSettings();
-  const keys = Object.keys(settings.urgentPricingRates);
-  const matchedKey = keys.find((key) => key.toLowerCase() === category.toLowerCase());
-  if (matchedKey) {
-    const rate = settings.urgentPricingRates[matchedKey];
-    if (rate) return rate;
-  }
-  return settings.defaultUrgentRate;
-};
-
 export const updatePlatformSettings = async ({
-  urgentPricingRates,
-  defaultUrgentRate,
   instantJobInitialRadiusKm,
   instantJobExpandedRadiusKm,
   instantJobExpansionMinutes,
   instantJobTimeoutMinutes,
   adminId,
 }: {
-  urgentPricingRates?: Record<string, UrgentPricingRate>;
-  defaultUrgentRate?: UrgentPricingRate;
   instantJobInitialRadiusKm?: number;
   instantJobExpandedRadiusKm?: number;
   instantJobExpansionMinutes?: number;
@@ -76,8 +48,6 @@ export const updatePlatformSettings = async ({
 }) => {
   const current = await getPlatformSettings();
   const next = {
-    urgentPricingRates: urgentPricingRates ?? current.urgentPricingRates,
-    defaultUrgentRate: defaultUrgentRate ?? current.defaultUrgentRate,
     instantJobInitialRadiusKm: Math.max(1, Number(instantJobInitialRadiusKm ?? current.instantJobInitialRadiusKm)),
     instantJobExpandedRadiusKm: Math.max(1, Number(instantJobExpandedRadiusKm ?? current.instantJobExpandedRadiusKm)),
     instantJobExpansionMinutes: Math.max(1, Number(instantJobExpansionMinutes ?? current.instantJobExpansionMinutes)),
