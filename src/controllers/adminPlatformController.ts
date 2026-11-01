@@ -16,24 +16,13 @@ export const getPlatformSettingsController = asyncHandler(async (_req: AdminAuth
 
 export const updatePlatformSettingsController = asyncHandler(async (req: AdminAuthRequest, res: Response) => {
   const {
-    urgentPricingRates,
-    defaultUrgentRate,
     instantJobInitialRadiusKm,
     instantJobExpandedRadiusKm,
     instantJobExpansionMinutes,
     instantJobTimeoutMinutes,
   } = req.body;
 
-  if (
-    urgentPricingRates !== undefined
-    && (typeof urgentPricingRates !== 'object' || Array.isArray(urgentPricingRates))
-  ) {
-    throw new BadRequestError('urgentPricingRates must be an object');
-  }
-
   const settings = await updatePlatformSettings({
-    urgentPricingRates,
-    defaultUrgentRate,
     instantJobInitialRadiusKm,
     instantJobExpandedRadiusKm,
     instantJobExpansionMinutes,
