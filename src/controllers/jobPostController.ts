@@ -24,6 +24,7 @@ import {
 import { reserveCommission } from "../services/commissionReservationService";
 import { getWalletSettings } from "../services/walletSettingsService";
 import { getIO } from "../sockets/socketManager";
+import { emitBookingEvent } from "../sockets/handlers/booking.handler";
 import {
     buildWorkerSpecialtyCategoryFilter,
     getWorkerMatchedSpecialtyProfile,
@@ -626,6 +627,10 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
                 { jobId: jobPost._id.toString(), type: 'new_job' }
             ).catch(err => logger.error(`Failed to send job post push notification to worker ${worker._id}:`, err));
         }));
+
+        // Broadcast to Admin and Customer rooms for real-time reactivity
+        io.to('admin').emit('job:new', signalPayload);
+        io.to(`user:${customerId}`).emit('job:created', signalPayload);
 
         res.status(201).json({
             success: true,
@@ -1592,6 +1597,13 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
 
                     // 2. Emit bid:won to Worker
                     io.to(`worker:${workerId.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
+
+                    // 3. Emit booking lifecycle event to update customer, worker, and admin rooms
+                    emitBookingEvent(io, populatedBooking, 'booking:accepted');
+
+                    // 4. Global broadcast so other workers remove this job from their incoming radar
+                    io.emit('job:assigned', { jobId: jobPost._id.toString(), bookingId: booking._id.toString() });
+                    io.to('admin').emit('job:assigned', { jobId: jobPost._id.toString(), booking: populatedBooking });
                 }
             } catch (sockErr) {
                 logger.warn("Socket broadcast failed in acceptInstantJob (non-fatal):", sockErr);
@@ -1737,13 +1749,22 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
 
         const io = getIO();
 
+        const cancelPayload = {
+            jobId: jobPost._id.toString(),
+            status: 'cancelled',
+            cancelledBy: 'customer',
+            reason
+        };
+
         // Broadcast cancellation to all workers who had pending bids
         bids.forEach(bid => {
             io.to(`worker:${bid.worker.toString()}`).emit('bid:lost', { jobPost });
         });
 
-        // Broadcast to general workers (if they are on the radar)
-        io.emit('job:cancelled', { jobId: jobPost._id });
+        // Broadcast to customer room, admin room, and all connected clients
+        io.to(`user:${customerId}`).emit('job:cancelled', cancelPayload);
+        io.to('admin').emit('job:cancelled', cancelPayload);
+        io.emit('job:cancelled', cancelPayload);
 
         res.status(200).json({
             success: true,

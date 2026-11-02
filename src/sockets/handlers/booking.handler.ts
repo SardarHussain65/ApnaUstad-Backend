@@ -11,31 +11,52 @@ export const registerBookingHandlers = (io: SocketIOServer, socket: Socket) => {
  */
 export const emitBookingEvent = (io: SocketIOServer, booking: any, eventType: string) => {
     try {
-        const customerRoom = `user:${booking.customer}`;
-        const workerRoom = `worker:${booking.worker}`;
+        const rawCustomer = booking?.customer;
+        const rawWorker = booking?.worker;
+        const customerId = (rawCustomer?._id || rawCustomer)?.toString?.() || '';
+        const workerId = (rawWorker?._id || rawWorker)?.toString?.() || '';
+        const bookingId = (booking?._id || booking?.id)?.toString?.() || '';
+
+        const customerRoom = customerId ? `user:${customerId}` : null;
+        const workerRoom = workerId ? `worker:${workerId}` : null;
+
+        // Target rooms: customer, worker, and admin room
+        const emitter = io;
 
         switch (eventType) {
             case 'booking:new':
-                // Only to worker
-                io.to(workerRoom).emit('booking:new', booking);
+                // Send to worker and admin
+                if (workerRoom) emitter.to(workerRoom).emit('booking:new', booking);
+                emitter.to('admin').emit('booking:new', booking);
                 break;
             case 'booking:accepted':
             case 'booking:ongoing':
             case 'booking:completed':
             case 'booking:cancelled':
             case 'booking:paid':
-                // To both
-                io.to(customerRoom).to(workerRoom).emit(eventType, booking);
+                // Send to both parties and admin
+                if (customerRoom) emitter.to(customerRoom).emit(eventType, booking);
+                if (workerRoom) emitter.to(workerRoom).emit(eventType, booking);
+                emitter.to('admin').emit(eventType, booking);
                 break;
             default:
                 logger.warn(`Unknown booking event type: ${eventType}`);
         }
 
-        // Always emit a generic status update for UI refetching
-        io.to(customerRoom).to(workerRoom).emit('booking:status', { 
-            bookingId: booking._id, 
-            status: booking.status 
-        });
+        // Always emit a generic status update for surgical UI refetching
+        const statusPayload = { 
+            bookingId, 
+            status: booking?.status,
+            customerId,
+            workerId,
+            eventType
+        };
+
+        if (customerRoom) emitter.to(customerRoom).emit('booking:status', statusPayload);
+        if (workerRoom) emitter.to(workerRoom).emit('booking:status', statusPayload);
+        emitter.to('admin').emit('booking:status', statusPayload);
+
+        logger.info(`📡 [emitBookingEvent] Emitted ${eventType} and booking:status for booking ${bookingId}`);
     } catch (error) {
         logger.error(`Error emitting booking event ${eventType}:`, error);
     }
