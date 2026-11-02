@@ -170,7 +170,17 @@ export const cancelJob = asyncHandler(async (req: AdminAuthRequest, res) => {
 
     try {
         const io = getIO();
-        io.emit('job:cancelled', { jobId: job._id, reason });
+        const cancelPayload = {
+            jobId: job._id.toString(),
+            status: 'cancelled',
+            reason,
+            cancelledBy: 'admin'
+        };
+        io.emit('job:cancelled', cancelPayload);
+        io.to('admin').emit('job:cancelled', cancelPayload);
+        if (job.customer) {
+            io.to(`user:${job.customer.toString()}`).emit('job:cancelled', cancelPayload);
+        }
     } catch (error) {
         // Ignore socket errors
     }
@@ -220,6 +230,30 @@ export const updateJobStatus = asyncHandler(async (req: AdminAuthRequest, res) =
             { jobPost: job._id, status: 'pending' },
             { $set: { status: 'rejected' } }
         );
+    }
+
+    try {
+        const io = getIO();
+        const statusPayload = {
+            jobId: job._id.toString(),
+            status: nextStatus,
+            reason,
+            updatedBy: 'admin'
+        };
+        io.emit('job:status', statusPayload);
+        io.to('admin').emit('job:status', statusPayload);
+        if (nextStatus === 'cancelled') {
+            io.emit('job:cancelled', statusPayload);
+            io.to('admin').emit('job:cancelled', statusPayload);
+        }
+        if (job.customer) {
+            io.to(`user:${job.customer.toString()}`).emit('job:status', statusPayload);
+            if (nextStatus === 'cancelled') {
+                io.to(`user:${job.customer.toString()}`).emit('job:cancelled', statusPayload);
+            }
+        }
+    } catch (error) {
+        // Ignore socket errors
     }
 
     await recordAdminAction(req, {

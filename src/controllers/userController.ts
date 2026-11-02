@@ -3,6 +3,7 @@ import User from "../models/User";
 import Workers from "../models/Workers";
 import Category from "../models/Category";
 import Booking from "../models/Booking";
+import PushToken from "../models/PushToken";
 import { asyncHandler } from "../utils/asyncHandler";
 import { BadRequestError, ConflictError, InternalServerError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
@@ -441,6 +442,9 @@ export const deleteUser = asyncHandler(async (req: AuthRequest, res) => {
 
     const user = await User.findById(id);
     if (!user) throw new BadRequestError("User not found");
+    try {
+        await (PushToken as any).deleteMany({ user: id });
+    } catch (e) {}
     await user.deleteOne();
     return successResponse(res, 200, "User deleted successfully", {});
 });

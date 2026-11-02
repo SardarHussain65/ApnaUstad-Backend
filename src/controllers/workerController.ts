@@ -1,6 +1,7 @@
 import Workers from "../models/Workers";
 import VerificationRequest from "../models/VerificationRequest";
 import ProfessionRequest from "../models/ProfessionRequest";
+import PushToken from "../models/PushToken";
 import { requestVerificationSchema } from "../validations/worker.validation";
 import { ConflictError, InternalServerError, BadRequestError, ForbiddenError, UnauthorizedError } from "../utils/ApiError";
 import { successResponse } from "../utils/ApiResponse";
@@ -471,6 +472,9 @@ export const deleteWorker = asyncHandler(async (req: AuthRequest, res) => {
 
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");
+    try {
+        await (PushToken as any).deleteMany({ user: id });
+    } catch (e) {}
     await worker.deleteOne();
     return successResponse(res, 200, "Worker deleted successfully", {});
 });

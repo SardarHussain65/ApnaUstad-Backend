@@ -24,6 +24,7 @@ import {
 import { reserveCommission } from "../services/commissionReservationService";
 import { getWalletSettings } from "../services/walletSettingsService";
 import { getIO } from "../sockets/socketManager";
+import { emitBookingEvent } from "../sockets/handlers/booking.handler";
 import {
     buildWorkerSpecialtyCategoryFilter,
     getWorkerMatchedSpecialtyProfile,
@@ -332,51 +333,59 @@ const buildJobPostCardPayloadsBatch = async (jobsDoc: any[]) => {
 };
 
 const reconcileAssignedJobPost = async (jobDoc: any) => {
-    if (jobDoc.status !== 'assigned') return jobDoc;
+    if (jobDoc.status === 'closed' || jobDoc.status === 'cancelled') return jobDoc;
+
+    const customerId = jobDoc.customer?._id || jobDoc.customer;
+
+    // Check for any linked booking, or matching booking created for this customer & category
+    const booking = await Booking.findOne({
+        $or: [
+            { jobPost: jobDoc._id },
+            {
+                customer: customerId,
+                category: jobDoc.category,
+                createdAt: { $gte: new Date(new Date(jobDoc.createdAt).getTime() - 24 * 60 * 60 * 1000) }
+            }
+        ]
+    }).sort({ createdAt: -1 });
+
+    if (booking) {
+        if (!booking.jobPost) {
+            booking.jobPost = jobDoc._id;
+            await booking.save();
+        }
+
+        let targetStatus = jobDoc.status;
+        if (booking.status === 'completed') {
+            targetStatus = 'closed';
+        } else if (booking.status === 'cancelled') {
+            targetStatus = 'cancelled';
+        } else if (['accepted', 'ongoing'].includes(booking.status)) {
+            targetStatus = 'assigned';
+        }
+
+        if (jobDoc.status !== targetStatus) {
+            jobDoc.status = targetStatus;
+            await jobDoc.save();
+        }
+
+        if (targetStatus === 'closed') {
+            await JobBid.updateMany(
+                { jobPost: jobDoc._id, status: 'pending' },
+                { $set: { status: 'rejected' } }
+            );
+        }
+
+        return jobDoc;
+    }
 
     const acceptedBid = await JobBid.findOne({
         jobPost: jobDoc._id,
         status: 'accepted'
     }).select('worker');
 
-    if (!acceptedBid) return jobDoc;
-
-    const responseWindowEnd = new Date(jobDoc.expiresAt);
-    responseWindowEnd.setMinutes(responseWindowEnd.getMinutes() + 5);
-    const createdAtWindow = Number.isNaN(responseWindowEnd.getTime())
-        ? { $gte: jobDoc.createdAt }
-        : { $gte: jobDoc.createdAt, $lte: responseWindowEnd };
-    const legacyBookingMatch = {
-        customer: jobDoc.customer?._id || jobDoc.customer,
-        worker: acceptedBid.worker,
-        category: jobDoc.category,
-        description: jobDoc.description,
-        address: jobDoc.address,
-        bookingType: jobDoc.urgency,
-        createdAt: createdAtWindow
-    };
-
-    const booking = await Booking.findOne({
-        $or: [
-            { jobPost: jobDoc._id },
-            {
-                $and: [
-                    { $or: [{ jobPost: { $exists: false } }, { jobPost: null }] },
-                    legacyBookingMatch
-                ]
-            }
-        ]
-    }).sort({ createdAt: 1 });
-
-    if (!booking) return jobDoc;
-
-    if (!booking.jobPost) {
-        booking.jobPost = jobDoc._id;
-        await booking.save();
-    }
-
-    if (booking.status === 'completed' || booking.status === 'cancelled') {
-        jobDoc.status = booking.status === 'completed' ? 'closed' : 'cancelled';
+    if (acceptedBid && jobDoc.status !== 'assigned') {
+        jobDoc.status = 'assigned';
         await jobDoc.save();
     }
 
@@ -397,9 +406,7 @@ const buildJobPostDetailPayload = async (
         JobBid.countDocuments({ jobPost: job._id }),
         JobBid.countDocuments({ jobPost: job._id, status: 'pending' }),
         JobBid.countDocuments({ jobPost: job._id, status: 'accepted' }),
-        job.status === 'assigned' || job.status === 'ongoing' || job.status === 'completed'
-            ? mongoose.model('Booking').findOne({ jobPost: job._id }).populate('worker', WORKER_BID_PROFILE_SELECT)
-            : Promise.resolve(null),
+        Booking.findOne({ jobPost: job._id }).populate('worker', WORKER_BID_PROFILE_SELECT),
     ]);
     const statusInfo = job.status === 'cancelled'
         ? { value: job.status, label: 'Cancelled', tone: 'danger', accentColor: '#FF3B30' }
@@ -627,6 +634,10 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             ).catch(err => logger.error(`Failed to send job post push notification to worker ${worker._id}:`, err));
         }));
 
+        // Broadcast to Admin and Customer rooms for real-time reactivity
+        io.to('admin').emit('job:new', signalPayload);
+        io.to(`user:${customerId}`).emit('job:created', signalPayload);
+
         res.status(201).json({
             success: true,
             data: signalPayload,
@@ -670,7 +681,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "This job is no longer open for bids" });
         }
 
-        if (jobPost.expiresAt < new Date()) {
+        if (jobPost.urgency !== 'instant' && jobPost.expiresAt < new Date()) {
             return res.status(400).json({ success: false, message: "This job post has expired" });
         }
         if (!await workerCanPerformCategory(workerId, jobPost.category)) {
@@ -1034,10 +1045,20 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             logger.warn("Could not populate customer details for booking notification (non-fatal):", popErr);
         }
 
-        // Notify winner and losers via sockets safely
+        // Notify winner, losers, and customer via sockets safely
         try {
             const io = getIO();
             if (io) {
+                const customerRoomId = (jobPost.customer?._id || jobPost.customer || customerId)?.toString();
+                if (customerRoomId) {
+                    io.to(`user:${customerRoomId}`).emit('job:status', {
+                        jobId: jobPost._id,
+                        status: 'assigned',
+                        bookingId: booking._id
+                    });
+                    io.to(`user:${customerRoomId}`).emit('booking:accepted', populatedBooking);
+                }
+
                 io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
                 const otherBids = await JobBid.find({ jobPost: jobPost._id, _id: { $ne: bid._id } });
                 otherBids.forEach(ob => {
@@ -1172,7 +1193,10 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
 
         const query: any = {
             status: 'open',
-            expiresAt: { $gt: new Date() },
+            $or: [
+                { urgency: 'instant' },
+                { expiresAt: { $gt: new Date() } }
+            ],
             _id: { $nin: existingBidJobIds },
         };
 
@@ -1188,9 +1212,15 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
         if (workerCategories.length) query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
         query.urgency = { $in: enabledJobTypes };
 
-        const jobs = await JobPost.find(query)
-            .populate('customer', 'fullName profileImage phone')
-            .sort({ createdAt: -1 });
+        let jobsQuery = JobPost.find(query)
+            .populate('customer', 'fullName profileImage phone');
+
+        // When $near is used, MongoDB automatically sorts by ascending distance and forbids specifying sort()
+        if (!hasValidCoordinates) {
+            jobsQuery = jobsQuery.sort({ createdAt: -1 });
+        }
+
+        const jobs = await jobsQuery;
 
         const customerStats = await buildCustomerStatsById(jobs);
         const payload = await Promise.all(jobs.map(job => buildPersonalizedWorkerJobSignalPayload(job, customerStats, worker)));
@@ -1241,7 +1271,10 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
 
         const query: any = {
             status: 'open',
-            expiresAt: { $gt: new Date() },
+            $or: [
+                { urgency: 'instant' },
+                { expiresAt: { $gt: new Date() } }
+            ],
             createdAt: { $gt: since },
             _id: { $nin: existingBidJobIds },
             urgency: { $in: enabledJobTypes },
@@ -1259,9 +1292,9 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
         }
         query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
 
+        // When $near is used, MongoDB automatically sorts by ascending distance and forbids specifying sort()
         const jobs = await JobPost.find(query)
             .populate('customer', 'fullName profileImage phone')
-            .sort({ createdAt: -1 })
             .limit(20);
 
         const customerStats = await buildCustomerStatsById(jobs);
@@ -1433,7 +1466,7 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "Job is already taken or closed." });
         }
 
-        if (jobPost.expiresAt < new Date()) {
+        if (jobPost.urgency !== 'instant' && jobPost.expiresAt < new Date()) {
             return res.status(400).json({ success: false, message: "This job post has expired" });
         }
 
@@ -1580,6 +1613,13 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
 
                     // 2. Emit bid:won to Worker
                     io.to(`worker:${workerId.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
+
+                    // 3. Emit booking lifecycle event to update customer, worker, and admin rooms
+                    emitBookingEvent(io, populatedBooking, 'booking:accepted');
+
+                    // 4. Global broadcast so other workers remove this job from their incoming radar
+                    io.emit('job:assigned', { jobId: jobPost._id.toString(), bookingId: booking._id.toString() });
+                    io.to('admin').emit('job:assigned', { jobId: jobPost._id.toString(), booking: populatedBooking });
                 }
             } catch (sockErr) {
                 logger.warn("Socket broadcast failed in acceptInstantJob (non-fatal):", sockErr);
@@ -1725,13 +1765,22 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
 
         const io = getIO();
 
+        const cancelPayload = {
+            jobId: jobPost._id.toString(),
+            status: 'cancelled',
+            cancelledBy: 'customer',
+            reason
+        };
+
         // Broadcast cancellation to all workers who had pending bids
         bids.forEach(bid => {
             io.to(`worker:${bid.worker.toString()}`).emit('bid:lost', { jobPost });
         });
 
-        // Broadcast to general workers (if they are on the radar)
-        io.emit('job:cancelled', { jobId: jobPost._id });
+        // Broadcast to customer room, admin room, and all connected clients
+        io.to(`user:${customerId}`).emit('job:cancelled', cancelPayload);
+        io.to('admin').emit('job:cancelled', cancelPayload);
+        io.emit('job:cancelled', cancelPayload);
 
         res.status(200).json({
             success: true,
@@ -1778,11 +1827,24 @@ export const escalateJobPostManually = async (req: AuthRequest, res: Response) =
             return res.status(403).json({ success: false, message: "Forbidden: You are not the owner of this job post." });
         }
 
-        const result = await manuallyEscalateJobPrice(jobId);
+        const { newPrice, amountToAdd, additionalMinutes } = req.body || {};
+        const currentPrice = Number(jobPost.amount || 0);
+        let resolvedPrice: number | undefined = undefined;
+
+        if (newPrice && Number(newPrice) > 0) {
+            resolvedPrice = Number(newPrice);
+        } else if (amountToAdd && Number(amountToAdd) > 0) {
+            resolvedPrice = currentPrice + Number(amountToAdd);
+        }
+
+        const result = await manuallyEscalateJobPrice(jobId, {
+            newPrice: resolvedPrice,
+            additionalMinutes: additionalMinutes ? Number(additionalMinutes) : 10,
+        });
         return res.status(200).json({
             success: true,
             data: result,
-            message: "Job pricing escalated successfully."
+            message: "Job search updated successfully."
         });
     } catch (error: any) {
         logger.error("Error in escalateJobPostManually:", error);
