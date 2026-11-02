@@ -80,7 +80,8 @@ const formatDisplayDate = (date?: Date | string) => {
 const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker', disputeDoc?: any, userId?: string) => {
     const booking = toPlainObject(bookingDoc);
     const person = viewerRole === 'worker' ? booking.customer : booking.worker;
-    const isCommunicationLocked = booking.status === 'completed' || booking.status === 'cancelled';
+    const isPaymentPending = booking.status === 'completed' && booking.paymentStatus !== 'paid';
+    const isCommunicationLocked = booking.status === 'cancelled' || (booking.status === 'completed' && booking.paymentStatus === 'paid');
     const sanitizePerson = (profile: any) => {
         if (!profile || typeof profile !== 'object') return profile;
         return {
@@ -93,7 +94,12 @@ const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker',
     const amount = viewerRole === 'worker'
         ? Number(booking.agreement?.workerNetIncome ?? booking.workerEarning ?? 0)
         : Number(booking.agreement?.cashDue ?? booking.totalAmount ?? 0);
-    const statusMeta = BOOKING_STATUS_META[booking.status] || DEFAULT_BOOKING_STATUS_META;
+    let statusMeta = BOOKING_STATUS_META[booking.status] || DEFAULT_BOOKING_STATUS_META;
+    if (isPaymentPending) {
+        statusMeta = viewerRole === 'worker'
+            ? { label: 'Awaiting Payment', tone: 'warning', accentColor: '#F59E0B', actionLabel: 'View details' }
+            : { label: 'Payment Due', tone: 'warning', accentColor: '#F59E0B', actionLabel: 'Pay Cash' };
+    }
     const dateMeta = formatDisplayDate(booking.scheduledDate);
     const missionKindLabel = booking.bookingType === 'instant' ? 'Urgent visit' : 'Scheduled visit';
     const mediaImages = Array.isArray(booking.imageUrls) ? booking.imageUrls : [];
@@ -109,6 +115,7 @@ const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker',
         disputeMeta,
         cardMeta: {
             source: 'booking',
+            isPaymentPending,
             title: booking.category,
             description: booking.description,
             missionKind: booking.bookingType,
@@ -396,7 +403,7 @@ export const getUserBookings = async (req: AuthRequest, res: Response) => {
 
         const [bookings, total] = await Promise.all([
             Booking.find({ customer: customerId })
-                .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
+                .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount workerEarning agreement customer worker createdAt')
                 .populate('worker', 'fullName profileImage category rating city isVerified')
                 .sort({ createdAt: -1 })
                 .skip(skip)
@@ -450,7 +457,7 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
         // Fast parallel fetch: lightweight lean bookings projection + single-pass aggregate for all stats + active booking
         const [recentBookings, [statsSummary], currentActiveBooking] = await Promise.all([
             Booking.find({ customer: customerId })
-                .select('category description bookingType scheduledDate scheduledTime address status totalAmount agreement customer worker createdAt')
+                .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount agreement customer worker createdAt')
                 .populate('worker', 'fullName profileImage rating category city isVerified phone')
                 .sort({ createdAt: -1 })
                 .limit(recentLimit)
@@ -461,12 +468,48 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
                     $group: {
                         _id: null,
                         total: { $sum: 1 },
-                        completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
-                        active: { $sum: { $cond: [{ $in: ['$status', activeStatuses] }, 1, 0] } },
+                        completed: {
+                            $sum: {
+                                $cond: [
+                                    {
+                                        $and: [
+                                            { $eq: ['$status', 'completed'] },
+                                            { $eq: ['$paymentStatus', 'paid'] }
+                                        ]
+                                    },
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
+                        active: {
+                            $sum: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $in: ['$status', activeStatuses] },
+                                            {
+                                                $and: [
+                                                    { $eq: ['$status', 'completed'] },
+                                                    { $ne: ['$paymentStatus', 'paid'] }
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
                         totalSpent: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$status', 'completed'] },
+                                    {
+                                        $and: [
+                                            { $eq: ['$status', 'completed'] },
+                                            { $eq: ['$paymentStatus', 'paid'] }
+                                        ]
+                                    },
                                     { $ifNull: ['$agreement.cashDue', { $ifNull: ['$totalAmount', 0] }] },
                                     0
                                 ]
@@ -477,9 +520,12 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
             ]),
             Booking.findOne({
                 customer: customerId,
-                status: { $in: activeStatuses }
+                $or: [
+                    { status: { $in: activeStatuses } },
+                    { status: 'completed', paymentStatus: { $ne: 'paid' } }
+                ]
             })
-            .select('category description bookingType scheduledDate scheduledTime address status totalAmount agreement customer worker createdAt')
+            .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount agreement customer worker createdAt')
             .populate('worker', 'fullName profileImage rating category city isVerified phone')
             .sort({ updatedAt: -1 })
             .lean(),
@@ -548,7 +594,7 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
         // Fast parallel fetch: lightweight lean bookings projection + single-pass aggregate + worker profile + active booking
         const [recentBookings, [statsSummary], workerProfile, currentActiveBooking] = await Promise.all([
             Booking.find({ worker: workerId })
-                .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
+                .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount workerEarning agreement customer worker createdAt')
                 .populate('customer', 'fullName profileImage city phone')
                 .sort({ createdAt: -1 })
                 .limit(recentLimit)
@@ -559,12 +605,48 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
                     $group: {
                         _id: null,
                         total: { $sum: 1 },
-                        completed: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
-                        active: { $sum: { $cond: [{ $in: ['$status', operationalActiveStatuses] }, 1, 0] } },
+                        completed: {
+                            $sum: {
+                                $cond: [
+                                    {
+                                        $and: [
+                                            { $eq: ['$status', 'completed'] },
+                                            { $eq: ['$paymentStatus', 'paid'] }
+                                        ]
+                                    },
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
+                        active: {
+                            $sum: {
+                                $cond: [
+                                    {
+                                        $or: [
+                                            { $in: ['$status', operationalActiveStatuses] },
+                                            {
+                                                $and: [
+                                                    { $eq: ['$status', 'completed'] },
+                                                    { $ne: ['$paymentStatus', 'paid'] }
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    1,
+                                    0
+                                ]
+                            }
+                        },
                         revenue: {
                             $sum: {
                                 $cond: [
-                                    { $eq: ['$status', 'completed'] },
+                                    {
+                                        $and: [
+                                            { $eq: ['$status', 'completed'] },
+                                            { $eq: ['$paymentStatus', 'paid'] }
+                                        ]
+                                    },
                                     { $ifNull: ['$workerEarning', 0] },
                                     0
                                 ]
@@ -576,9 +658,12 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
             Worker.findById(workerId).select('rating totalEarnings').lean(),
             Booking.findOne({
                 worker: workerId,
-                status: { $in: operationalActiveStatuses }
+                $or: [
+                    { status: { $in: operationalActiveStatuses } },
+                    { status: 'completed', paymentStatus: { $ne: 'paid' } }
+                ]
             })
-            .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
+            .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount workerEarning agreement customer worker createdAt')
             .populate('customer', 'fullName profileImage city phone')
             .sort({ updatedAt: -1 })
             .lean(),
@@ -855,7 +940,7 @@ export const getWorkerBookings = async (req: AuthRequest, res: Response) => {
 
         const [bookings, total] = await Promise.all([
             Booking.find(query)
-                .select('category description bookingType scheduledDate scheduledTime address status totalAmount workerEarning agreement customer worker createdAt')
+                .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount workerEarning agreement customer worker createdAt')
                 .populate('customer', 'fullName profileImage city')
                 .sort({ createdAt: -1 })
                 .skip(skip)

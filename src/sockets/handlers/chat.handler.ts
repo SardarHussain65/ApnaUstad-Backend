@@ -38,7 +38,7 @@ export const registerChatHandlers = (io: Server, socket: Socket) => {
                 return socket.emit('chat:error', { message: "Unauthorized to chat in this booking" });
             }
 
-            if (booking.status === 'completed' || booking.status === 'cancelled') {
+            if (booking.status === 'cancelled' || (booking.status === 'completed' && booking.paymentStatus === 'paid')) {
                 return socket.emit('chat:error', { message: "Chat is closed because this booking has ended" });
             }
 
