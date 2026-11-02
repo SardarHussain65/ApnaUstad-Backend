@@ -670,7 +670,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "This job is no longer open for bids" });
         }
 
-        if (jobPost.expiresAt < new Date()) {
+        if (jobPost.urgency !== 'instant' && jobPost.expiresAt < new Date()) {
             return res.status(400).json({ success: false, message: "This job post has expired" });
         }
         if (!await workerCanPerformCategory(workerId, jobPost.category)) {
@@ -1172,7 +1172,10 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
 
         const query: any = {
             status: 'open',
-            expiresAt: { $gt: new Date() },
+            $or: [
+                { urgency: 'instant' },
+                { expiresAt: { $gt: new Date() } }
+            ],
             _id: { $nin: existingBidJobIds },
         };
 
@@ -1247,7 +1250,10 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
 
         const query: any = {
             status: 'open',
-            expiresAt: { $gt: new Date() },
+            $or: [
+                { urgency: 'instant' },
+                { expiresAt: { $gt: new Date() } }
+            ],
             createdAt: { $gt: since },
             _id: { $nin: existingBidJobIds },
             urgency: { $in: enabledJobTypes },
@@ -1439,7 +1445,7 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ success: false, message: "Job is already taken or closed." });
         }
 
-        if (jobPost.expiresAt < new Date()) {
+        if (jobPost.urgency !== 'instant' && jobPost.expiresAt < new Date()) {
             return res.status(400).json({ success: false, message: "This job post has expired" });
         }
 

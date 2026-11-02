@@ -16,21 +16,24 @@ export async function escalateJobPrice(jobId: string): Promise<void> {
         }
 
         const currentVersion = job.urgencyPricingVersion || 1;
-        const now = Date.now();
-        const expiresTime = job.expiresAt ? new Date(job.expiresAt).getTime() : 0;
 
-        // When 10 minutes expire: stop silent auto-extending and notify customer to make a decision
-        if (now >= expiresTime - 3000) {
-            logger.info(`⚡ [Urgent Timeout] Job ${jobId} 10-minute search window expired. Waiting for customer decision.`);
+        // Keep the job active and discoverable: extend expiresAt by 10 minutes so workers can always accept
+        job.expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+        await job.save();
 
-            const io = getIO();
-            io.to(`user:${job.customer.toString()}`).emit('job:search_extended', {
-                jobId: job._id.toString(),
-                timeout: true,
-                expired: true,
-                urgencyPricingVersion: currentVersion
-            });
-        }
+        logger.info(`⚡ [Urgent Search] Job ${jobId} 10-minute round elapsed. Prompting customer for rate boost; search remains active.`);
+
+        const io = getIO();
+        io.to(`user:${job.customer.toString()}`).emit('job:search_extended', {
+            jobId: job._id.toString(),
+            suggestEscalation: true,
+            urgencyPricingVersion: currentVersion,
+            amount: job.amount,
+            expiresAt: job.expiresAt
+        });
+
+        // Automatically re-schedule next 10-minute reminder if job is still open
+        scheduleEscalation(jobId, 10 * 60 * 1000);
     } catch (error) {
         logger.error(`Error in escalateJobPrice for job ${jobId}:`, error);
     }
