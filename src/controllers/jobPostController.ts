@@ -333,51 +333,59 @@ const buildJobPostCardPayloadsBatch = async (jobsDoc: any[]) => {
 };
 
 const reconcileAssignedJobPost = async (jobDoc: any) => {
-    if (jobDoc.status !== 'assigned') return jobDoc;
+    if (jobDoc.status === 'closed' || jobDoc.status === 'cancelled') return jobDoc;
+
+    const customerId = jobDoc.customer?._id || jobDoc.customer;
+
+    // Check for any linked booking, or matching booking created for this customer & category
+    const booking = await Booking.findOne({
+        $or: [
+            { jobPost: jobDoc._id },
+            {
+                customer: customerId,
+                category: jobDoc.category,
+                createdAt: { $gte: new Date(new Date(jobDoc.createdAt).getTime() - 24 * 60 * 60 * 1000) }
+            }
+        ]
+    }).sort({ createdAt: -1 });
+
+    if (booking) {
+        if (!booking.jobPost) {
+            booking.jobPost = jobDoc._id;
+            await booking.save();
+        }
+
+        let targetStatus = jobDoc.status;
+        if (booking.status === 'completed') {
+            targetStatus = 'closed';
+        } else if (booking.status === 'cancelled') {
+            targetStatus = 'cancelled';
+        } else if (['accepted', 'ongoing'].includes(booking.status)) {
+            targetStatus = 'assigned';
+        }
+
+        if (jobDoc.status !== targetStatus) {
+            jobDoc.status = targetStatus;
+            await jobDoc.save();
+        }
+
+        if (targetStatus === 'closed') {
+            await JobBid.updateMany(
+                { jobPost: jobDoc._id, status: 'pending' },
+                { $set: { status: 'rejected' } }
+            );
+        }
+
+        return jobDoc;
+    }
 
     const acceptedBid = await JobBid.findOne({
         jobPost: jobDoc._id,
         status: 'accepted'
     }).select('worker');
 
-    if (!acceptedBid) return jobDoc;
-
-    const responseWindowEnd = new Date(jobDoc.expiresAt);
-    responseWindowEnd.setMinutes(responseWindowEnd.getMinutes() + 5);
-    const createdAtWindow = Number.isNaN(responseWindowEnd.getTime())
-        ? { $gte: jobDoc.createdAt }
-        : { $gte: jobDoc.createdAt, $lte: responseWindowEnd };
-    const legacyBookingMatch = {
-        customer: jobDoc.customer?._id || jobDoc.customer,
-        worker: acceptedBid.worker,
-        category: jobDoc.category,
-        description: jobDoc.description,
-        address: jobDoc.address,
-        bookingType: jobDoc.urgency,
-        createdAt: createdAtWindow
-    };
-
-    const booking = await Booking.findOne({
-        $or: [
-            { jobPost: jobDoc._id },
-            {
-                $and: [
-                    { $or: [{ jobPost: { $exists: false } }, { jobPost: null }] },
-                    legacyBookingMatch
-                ]
-            }
-        ]
-    }).sort({ createdAt: 1 });
-
-    if (!booking) return jobDoc;
-
-    if (!booking.jobPost) {
-        booking.jobPost = jobDoc._id;
-        await booking.save();
-    }
-
-    if (booking.status === 'completed' || booking.status === 'cancelled') {
-        jobDoc.status = booking.status === 'completed' ? 'closed' : 'cancelled';
+    if (acceptedBid && jobDoc.status !== 'assigned') {
+        jobDoc.status = 'assigned';
         await jobDoc.save();
     }
 
@@ -398,9 +406,7 @@ const buildJobPostDetailPayload = async (
         JobBid.countDocuments({ jobPost: job._id }),
         JobBid.countDocuments({ jobPost: job._id, status: 'pending' }),
         JobBid.countDocuments({ jobPost: job._id, status: 'accepted' }),
-        job.status === 'assigned' || job.status === 'ongoing' || job.status === 'completed'
-            ? mongoose.model('Booking').findOne({ jobPost: job._id }).populate('worker', WORKER_BID_PROFILE_SELECT)
-            : Promise.resolve(null),
+        Booking.findOne({ jobPost: job._id }).populate('worker', WORKER_BID_PROFILE_SELECT),
     ]);
     const statusInfo = job.status === 'cancelled'
         ? { value: job.status, label: 'Cancelled', tone: 'danger', accentColor: '#FF3B30' }
@@ -1039,10 +1045,20 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             logger.warn("Could not populate customer details for booking notification (non-fatal):", popErr);
         }
 
-        // Notify winner and losers via sockets safely
+        // Notify winner, losers, and customer via sockets safely
         try {
             const io = getIO();
             if (io) {
+                const customerRoomId = (jobPost.customer?._id || jobPost.customer || customerId)?.toString();
+                if (customerRoomId) {
+                    io.to(`user:${customerRoomId}`).emit('job:status', {
+                        jobId: jobPost._id,
+                        status: 'assigned',
+                        bookingId: booking._id
+                    });
+                    io.to(`user:${customerRoomId}`).emit('booking:accepted', populatedBooking);
+                }
+
                 io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
                 const otherBids = await JobBid.find({ jobPost: jobPost._id, _id: { $ne: bid._id } });
                 otherBids.forEach(ob => {

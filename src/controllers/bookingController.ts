@@ -3,6 +3,7 @@ import mongoose, { Types } from "mongoose";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import Booking from "../models/Booking";
 import JobPost from "../models/JobPost";
+import JobBid from "../models/JobBid";
 import Worker from "../models/Workers";
 import Dispute from "../models/Dispute";
 import logger from "../config/logger";
@@ -31,17 +32,76 @@ import {
 
 const toPlainObject = (doc: any) => doc?.toObject ? doc.toObject() : doc;
 
-const syncLinkedJobPostStatus = async (booking: any) => {
-    if (!booking.jobPost) return;
+const syncLinkedJobPostStatus = async (booking: any, session?: mongoose.ClientSession) => {
+    try {
+        const customerId = booking.customer?._id || booking.customer;
+        let jobDoc: any = null;
 
-    const linkedStatus = booking.status === 'completed'
-        ? 'closed'
-        : booking.status === 'cancelled'
-            ? 'cancelled'
-            : null;
+        if (booking.jobPost) {
+            const query = JobPost.findById(booking.jobPost);
+            if (session) query.session(session);
+            jobDoc = await query;
+        }
 
-    if (linkedStatus) {
-        await JobPost.findByIdAndUpdate(booking.jobPost, { $set: { status: linkedStatus } });
+        if (!jobDoc && customerId && booking.category) {
+            const query = JobPost.findOne({
+                customer: customerId,
+                category: booking.category,
+                status: { $in: ['open', 'reviewing', 'assigned'] },
+            }).sort({ createdAt: -1 });
+            if (session) query.session(session);
+            jobDoc = await query;
+
+            if (jobDoc && !booking.jobPost) {
+                const updateQuery = Booking.findByIdAndUpdate(booking._id, { $set: { jobPost: jobDoc._id } });
+                if (session) updateQuery.session(session);
+                await updateQuery;
+                booking.jobPost = jobDoc._id;
+            }
+        }
+
+        if (!jobDoc) return;
+
+        const linkedStatus = booking.status === 'completed'
+            ? 'closed'
+            : booking.status === 'cancelled'
+                ? 'cancelled'
+                : ['accepted', 'ongoing'].includes(booking.status)
+                    ? 'assigned'
+                    : null;
+
+        if (linkedStatus && jobDoc.status !== linkedStatus) {
+            jobDoc.status = linkedStatus;
+            if (session) {
+                await jobDoc.save({ session });
+            } else {
+                await jobDoc.save();
+            }
+
+            if (linkedStatus === 'closed') {
+                const bidUpdate = JobBid.updateMany(
+                    { jobPost: jobDoc._id, status: 'pending' },
+                    { $set: { status: 'rejected' } }
+                );
+                if (session) bidUpdate.session(session);
+                await bidUpdate;
+            }
+
+            try {
+                const io = getIO();
+                if (io && customerId) {
+                    io.to(`user:${customerId.toString()}`).emit('job:status', {
+                        jobId: jobDoc._id,
+                        status: linkedStatus,
+                        bookingId: booking._id,
+                    });
+                }
+            } catch (sockErr) {
+                logger.warn("Socket broadcast failed in syncLinkedJobPostStatus (non-fatal):", sockErr);
+            }
+        }
+    } catch (err) {
+        logger.error("Error in syncLinkedJobPostStatus (non-fatal):", err);
     }
 };
 
@@ -1089,7 +1149,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
                 await releaseCommissionReservation(booking._id, { session });
             }
             await syncPaymentForBookingStatus(booking, session);
-            await syncLinkedJobPostStatus(booking);
+            await syncLinkedJobPostStatus(booking, session);
         });
 
         // Emit socket event (outside transaction)
@@ -1183,6 +1243,7 @@ export const payBooking = async (req: AuthRequest, res: Response) => {
         }
 
         const payment = await confirmCashPaymentForBooking(booking, 'customer', notes);
+        await syncLinkedJobPostStatus(booking);
 
         // Emit socket event to notify worker
         const io = getIO();
