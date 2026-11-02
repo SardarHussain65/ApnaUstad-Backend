@@ -8,6 +8,7 @@ import { NotFoundError, BadRequestError } from "../utils/ApiError";
 import { recordAdminAction } from "../services/adminAuditLog";
 import { getIO } from "../sockets/socketManager";
 import { checkReason, extractReason } from "../utils/adminReason";
+import { reconcileAssignedJobPost } from "./jobPostController";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -52,12 +53,15 @@ export const getAllJobs = asyncHandler(async (req: AdminAuthRequest, res) => {
         .skip((page - 1) * limit)
         .limit(limit)
         .sort({ createdAt: -1 });
+
+    const reconciledJobs = await Promise.all(jobs.map(job => reconcileAssignedJobPost(job)));
+
     const acceptedBids = await JobBid.find({
-        jobPost: { $in: jobs.map(job => job._id) },
+        jobPost: { $in: reconciledJobs.map(job => job._id) },
         status: 'accepted'
     }).populate('worker', 'fullName phone profileImage');
     const acceptedBidByJob = new Map(acceptedBids.map(bid => [bid.jobPost.toString(), bid.toObject()]));
-    const rows = jobs.map(job => ({
+    const rows = reconciledJobs.map(job => ({
         ...job.toObject(),
         acceptedBid: acceptedBidByJob.get(job._id.toString()) || null
     }));
@@ -74,6 +78,8 @@ export const getJobDetails = asyncHandler(async (req: AdminAuthRequest, res) => 
         .populate('customer', 'fullName phone email city address profileImage isActive');
 
     if (!job) throw new NotFoundError("Job not found");
+
+    await reconcileAssignedJobPost(job);
 
     const [bids, linkedBooking] = await Promise.all([
         JobBid.find({ jobPost: job._id })
