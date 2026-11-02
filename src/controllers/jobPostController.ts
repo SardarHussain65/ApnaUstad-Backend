@@ -1188,9 +1188,15 @@ export const getNearbyJobs = async (req: AuthRequest, res: Response) => {
         if (workerCategories.length) query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
         query.urgency = { $in: enabledJobTypes };
 
-        const jobs = await JobPost.find(query)
-            .populate('customer', 'fullName profileImage phone')
-            .sort({ createdAt: -1 });
+        let jobsQuery = JobPost.find(query)
+            .populate('customer', 'fullName profileImage phone');
+
+        // When $near is used, MongoDB automatically sorts by ascending distance and forbids specifying sort()
+        if (!hasValidCoordinates) {
+            jobsQuery = jobsQuery.sort({ createdAt: -1 });
+        }
+
+        const jobs = await jobsQuery;
 
         const customerStats = await buildCustomerStatsById(jobs);
         const payload = await Promise.all(jobs.map(job => buildPersonalizedWorkerJobSignalPayload(job, customerStats, worker)));
@@ -1259,9 +1265,9 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
         }
         query.category = { $in: workerCategories.map((category) => new RegExp(`^${escapeRegex(category)}$`, 'i')) };
 
+        // When $near is used, MongoDB automatically sorts by ascending distance and forbids specifying sort()
         const jobs = await JobPost.find(query)
             .populate('customer', 'fullName profileImage phone')
-            .sort({ createdAt: -1 })
             .limit(20);
 
         const customerStats = await buildCustomerStatsById(jobs);
@@ -1778,11 +1784,24 @@ export const escalateJobPostManually = async (req: AuthRequest, res: Response) =
             return res.status(403).json({ success: false, message: "Forbidden: You are not the owner of this job post." });
         }
 
-        const result = await manuallyEscalateJobPrice(jobId);
+        const { newPrice, amountToAdd, additionalMinutes } = req.body || {};
+        const currentPrice = Number(jobPost.amount || 0);
+        let resolvedPrice: number | undefined = undefined;
+
+        if (newPrice && Number(newPrice) > 0) {
+            resolvedPrice = Number(newPrice);
+        } else if (amountToAdd && Number(amountToAdd) > 0) {
+            resolvedPrice = currentPrice + Number(amountToAdd);
+        }
+
+        const result = await manuallyEscalateJobPrice(jobId, {
+            newPrice: resolvedPrice,
+            additionalMinutes: additionalMinutes ? Number(additionalMinutes) : 10,
+        });
         return res.status(200).json({
             success: true,
             data: result,
-            message: "Job pricing escalated successfully."
+            message: "Job search updated successfully."
         });
     } catch (error: any) {
         logger.error("Error in escalateJobPostManually:", error);

@@ -16,50 +16,35 @@ export async function escalateJobPrice(jobId: string): Promise<void> {
         }
 
         const currentVersion = job.urgencyPricingVersion || 1;
-        const elapsedMs = Date.now() - job.createdAt.getTime();
+        const now = Date.now();
+        const expiresTime = job.expiresAt ? new Date(job.expiresAt).getTime() : 0;
 
-        const io = getIO();
+        // When 10 minutes expire: stop silent auto-extending and notify customer to make a decision
+        if (now >= expiresTime - 3000) {
+            logger.info(`⚡ [Urgent Timeout] Job ${jobId} 10-minute search window expired. Waiting for customer decision.`);
 
-        if (elapsedMs < 15 * 60 * 1000) {
-            // First 10-minute check: suggest manual escalation rather than auto-escalating
-            // Extend expiresAt by another 10 minutes so that the job doesn't expire immediately
-            job.expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-            await job.save();
-
-            logger.info(`⚡ [Urgent Check] Job ${jobId} reached 10-minute mark. Suggesting manual escalation.`);
-
-            // Notify customer that they can manually escalate/boost the price
+            const io = getIO();
             io.to(`user:${job.customer.toString()}`).emit('job:search_extended', {
                 jobId: job._id.toString(),
-                suggestEscalation: true,
+                timeout: true,
+                expired: true,
                 urgencyPricingVersion: currentVersion
             });
-
-            // Schedule the second check (timeout check) in 10 minutes
-            scheduleEscalation(jobId, 10 * 60 * 1000);
-        } else {
-            // 20-minute (or later) check:
-            // Only expire if the current time is past or very close to expiresAt
-            const now = Date.now();
-            if (now >= job.expiresAt.getTime() - 2000) {
-                logger.info(`⚡ [Urgent Timeout] Job ${jobId} has reached the timeout with no takers.`);
-
-                // Notify customer that search has timed out
-                io.to(`user:${job.customer.toString()}`).emit('job:search_extended', {
-                    jobId: job._id.toString(),
-                    timeout: true,
-                    urgencyPricingVersion: currentVersion
-                });
-            } else {
-                logger.info(`⚡ [Urgent Check] Job ${jobId} check ignored because expiresAt (${job.expiresAt}) is in the future.`);
-            }
         }
     } catch (error) {
         logger.error(`Error in escalateJobPrice for job ${jobId}:`, error);
     }
 }
 
-export async function manuallyEscalateJobPrice(jobId: string): Promise<{ success: boolean; newPrice: number; expiresAt: Date }> {
+export interface EscalateOptions {
+    newPrice?: number | undefined;
+    additionalMinutes?: number | undefined;
+}
+
+export async function manuallyEscalateJobPrice(
+    jobId: string,
+    options?: EscalateOptions
+): Promise<{ success: boolean; newPrice: number; expiresAt: Date }> {
     const job = await JobPost.findById(jobId);
     if (!job) {
         throw new Error("Job post not found");
@@ -67,23 +52,26 @@ export async function manuallyEscalateJobPrice(jobId: string): Promise<{ success
     if (job.status !== 'open' || job.urgency !== 'instant') {
         throw new Error("Rate cannot be increased for this job right now");
     }
-    if (job.urgencyPricingVersion !== 1) {
-        throw new Error("Rate has already been increased once");
-    }
 
-    const oldPrice = job.amount || 0;
-    const newPrice = Math.round(oldPrice * 1.15);
+    const oldPrice = Number(job.amount || 0);
+    // User-decided new price, or keep existing price if extending search time
+    let newPrice = options?.newPrice && options.newPrice > 0 ? options.newPrice : oldPrice;
+
     job.amount = newPrice;
+    if (job.pricing) {
+        job.pricing.clientOffer = newPrice;
+    }
     job.radiusExpanded = true;
-    job.urgencyPricingVersion = 2;
+    job.urgencyPricingVersion = (job.urgencyPricingVersion || 1) + 1;
 
-    // Extend expiration by 10 minutes from now
-    const newExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    // Extend expiration by requested minutes (default 10 minutes) from now
+    const extensionMinutes = options?.additionalMinutes && options.additionalMinutes > 0 ? options.additionalMinutes : 10;
+    const newExpiresAt = new Date(Date.now() + extensionMinutes * 60 * 1000);
     job.expiresAt = newExpiresAt;
 
     await job.save();
 
-    logger.info(`⚡ [Urgent Manual Escalation] Job ${jobId} price escalated from Rs. ${oldPrice} to Rs. ${newPrice} (15% increase)`);
+    logger.info(`⚡ [Urgent Escalation] Job ${jobId} updated: price Rs. ${oldPrice} -> Rs. ${newPrice}, extended by ${extensionMinutes} min`);
 
     const io = getIO();
 
@@ -91,8 +79,10 @@ export async function manuallyEscalateJobPrice(jobId: string): Promise<{ success
     io.to(`user:${job.customer.toString()}`).emit('job:search_extended', {
         jobId: job._id.toString(),
         newPrice,
+        expiresAt: newExpiresAt,
         radiusExpanded: true,
-        urgencyPricingVersion: 2
+        resumed: true,
+        urgencyPricingVersion: job.urgencyPricingVersion
     });
 
     // Fetch customer details to build signal payload
@@ -115,21 +105,21 @@ export async function manuallyEscalateJobPrice(jobId: string): Promise<{ success
     job.notifiedWorkersCount = nearbyWorkers.length;
     await job.save();
 
-    logger.info(`⚡ [Urgent Manual Escalation] Re-broadcasting Job ${jobId} to ${nearbyWorkers.length} workers with escalated price Rs. ${newPrice}`);
+    logger.info(`⚡ [Urgent Escalation] Re-broadcasting Job ${jobId} to ${nearbyWorkers.length} workers with price Rs. ${newPrice}`);
 
     for (const worker of nearbyWorkers) {
         io.to(`worker:${worker._id.toString()}`).emit('job:new', populatedJob);
         sendNotificationToRecipient(
             worker._id,
             'worker',
-            `🔥 Urgent Job Rate Increased!`,
+            `🔥 Urgent Job Updated!`,
             `The rate for the ${job.category} job near you is now Rs. ${newPrice.toLocaleString()}!`,
             { jobId: job._id.toString(), type: 'new_job' }
-        ).catch(err => logger.error(`Failed to send escalation notification to worker ${worker._id}:`, err));
+        ).catch(err => logger.error(`Failed to send notification to worker ${worker._id}:`, err));
     }
 
-    // Schedule the timeout check at 10 min mark from now
-    scheduleEscalation(jobId, 10 * 60 * 1000);
+    // Schedule the timeout check at the end of this extension window
+    scheduleEscalation(jobId, extensionMinutes * 60 * 1000);
 
     return {
         success: true,

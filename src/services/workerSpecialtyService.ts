@@ -637,12 +637,16 @@ export const removeWorkerSpecialty = async (
 };
 
 export const getWorkerActiveSpecialtyNames = async (worker: any): Promise<string[]> => {
-    if (worker?.isVerified !== true || worker?.isActive === false) return [];
+    if (worker?.isActive === false) return [];
     if (!worker?.specialties?.length) return worker?.category ? [worker.category] : [];
     const activeSpecialties = worker.specialties.filter(specialtyCanMatch);
-    if (!activeSpecialties.length) return [];
+    if (!activeSpecialties.length) return worker?.category ? [worker.category] : [];
     const categories = await Category.find({ _id: { $in: activeSpecialties.map((item: any) => item.categoryId) } }).select('name');
-    return categories.map((category) => category.name);
+    const names = categories.map((category) => category.name);
+    if (names.length === 0 && worker?.category) {
+        return [worker.category];
+    }
+    return names;
 };
 
 export const buildWorkerSpecialtyCategoryFilter = async (categoryName: string, categoryId?: string | mongoose.Types.ObjectId) => {
