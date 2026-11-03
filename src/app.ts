@@ -44,22 +44,47 @@ app.use(compression());
 
 // --- ⚙️ Core Middlewares ---
 // Enable CORS
-const allowedOrigins = config.clientUrl === '*' 
-    ? '*' 
+const envOrigins = config.clientUrl === '*' 
+    ? ['*'] 
     : config.clientUrl.split(',').map((url: string) => url.trim());
+
+const isAllowedOrigin = (origin: string): boolean => {
+    if (envOrigins.includes('*') || envOrigins.includes(origin)) return true;
+    
+    try {
+        const url = new URL(origin);
+        // Automatically allow official production domain and subdomains (apnaustad.app, www.apnaustad.app)
+        if (url.hostname === 'apnaustad.app' || url.hostname.endsWith('.apnaustad.app')) {
+            return true;
+        }
+        // Allow local development
+        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+            return true;
+        }
+        // Allow Cloudflare Workers & Pages previews
+        if (url.hostname.endsWith('.pages.dev') || url.hostname.endsWith('.workers.dev')) {
+            return true;
+        }
+    } catch {
+        return false;
+    }
+    return false;
+};
 
 app.use(cors({
     origin: (origin, callback) => {
         // Allow requests with no origin (like React Native mobile app, Postman, or curl)
         if (!origin) return callback(null, true);
         
-        if (allowedOrigins === '*' || allowedOrigins.includes(origin)) {
+        if (isAllowedOrigin(origin)) {
             return callback(null, true);
         }
         
-        return callback(new Error('Not allowed by CORS'));
+        return callback(null, false);
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));
 
 // 1. Set Security HTTP Headers

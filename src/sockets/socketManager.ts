@@ -17,15 +17,35 @@ let io: SocketIOServer;
 const config = getConfig();
 
 export const initSocket = (httpServer: HttpServer) => {
-    const allowedOrigins = config.clientUrl === '*' 
-        ? '*' 
+    const envOrigins = config.clientUrl === '*' 
+        ? ['*'] 
         : config.clientUrl.split(',').map((url: string) => url.trim());
+
+    const isSocketOriginAllowed = (origin: string | undefined): boolean => {
+        if (!origin) return true;
+        if (envOrigins.includes('*') || envOrigins.includes(origin)) return true;
+        try {
+            const url = new URL(origin);
+            if (url.hostname === 'apnaustad.app' || url.hostname.endsWith('.apnaustad.app') || url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+                return true;
+            }
+        } catch {
+            return false;
+        }
+        return false;
+    };
 
     io = new SocketIOServer(httpServer, {
         pingInterval: 15000, // Send ping every 15 seconds to check if client is alive
         pingTimeout: 10000,  // Consider connection dead and disconnect if no pong received within 10 seconds
         cors: {
-            origin: allowedOrigins,
+            origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+                if (isSocketOriginAllowed(origin)) {
+                    callback(null, true);
+                } else {
+                    callback(null, false);
+                }
+            },
             methods: ["GET", "POST"],
             credentials: true,
         },
