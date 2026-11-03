@@ -1,0 +1,75 @@
+name: ApnaUstad Backend CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # -----------------------------------------------------------
+  # Stage 1: Continuous Integration (Test & Validate on GitHub)
+  # -----------------------------------------------------------
+  ci:
+    name: Build & Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run Vitest Unit Tests
+        run: npm test
+
+      - name: Compile TypeScript
+        run: npm run build
+
+  # -----------------------------------------------------------
+  # Stage 2: Continuous Deployment (Zero-Downtime Deploy to Azure)
+  # -----------------------------------------------------------
+  deploy:
+    name: Deploy to Azure VM
+    needs: ci
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Execute Remote SSH Deployment
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.AZURE_VM_HOST }}
+          username: ${{ secrets.AZURE_VM_USERNAME }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          port: ${{ secrets.AZURE_VM_PORT || 22 }}
+          script_stop: true
+          script: |
+            echo "🚀 Starting automated deployment on Azure VM..."
+            cd /home/azureuser/ApnaUstad-Backend
+
+            echo "📥 Fetching latest code from main branch..."
+            git checkout package-lock.json
+            git pull origin main
+
+            echo "📦 Installing production dependencies..."
+            npm install --omit=dev
+
+            echo "🔨 Compiling TypeScript to JavaScript..."
+            NODE_OPTIONS="--max-old-space-size=1536" npm run build
+
+            echo "🔄 Gracefully reloading PM2..."
+            pm2 reload ecosystem.config.js --update-env || pm2 restart apna-ustad-backend --update-env
+            pm2 save
+
+            echo "🩺 Verifying PM2 process health..."
+            sleep 3
+            pm2 status
+            echo "✅ Deployment completed successfully!"

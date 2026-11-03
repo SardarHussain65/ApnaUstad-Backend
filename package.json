@@ -7,7 +7,7 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run src/",
     "seed:demo": "tsx src/scripts/seedFullDemo.ts",
     "migrate:placeholder-phones": "tsx src/scripts/migratePlaceholderPhones.ts",
     "migrate:worker-specialties": "tsx src/scripts/migrateWorkerSpecialties.ts",
