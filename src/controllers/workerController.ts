@@ -715,6 +715,16 @@ export const getVerificationStatus = asyncHandler(async (req: AuthRequest, res) 
         throw new UnauthorizedError("Unauthorized access");
     }
 
+    // Check directly if worker account is already verified
+    const worker = await Workers.findById(workerId).select("isVerified cnicNumber");
+    if (worker && worker.isVerified) {
+        return successResponse(res, 200, "Verification status fetched successfully", {
+            status: 'approved',
+            isVerified: true,
+            cnicNumber: worker.cnicNumber || '',
+        });
+    }
+
     const request = await VerificationRequest.findOne({ worker: workerId }).sort({ createdAt: -1 });
     return successResponse(res, 200, "Verification status fetched successfully", request || null);
 });

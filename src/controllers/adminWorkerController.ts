@@ -9,6 +9,7 @@ import { recordAdminAction } from "../services/adminAuditLog";
 import { getWalletSettings } from "../services/walletSettingsService";
 import { rechargeWallet } from "../services/workerWalletService";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
+import { getIO } from "../sockets/socketManager";
 import {
     applyMatchedSpecialtyProfileToWorkerPayload,
     approveFreeSpecialtiesForVerifiedWorker,
@@ -141,6 +142,21 @@ export const verifyWorker = asyncHandler(async (req: AdminAuthRequest, res) => {
             category: worker.category
         }
     });
+
+    try {
+        const io = getIO();
+        const payload = {
+            isVerified: worker.isVerified,
+            status: worker.isVerified ? 'approved' : 'rejected',
+            workerId: worker._id.toString(),
+            cnicNumber: worker.cnicNumber || ''
+        };
+        io.to(`worker:${worker._id.toString()}`).emit('worker:verified', payload);
+        io.to(`worker:${worker._id.toString()}`).emit('worker:updated', payload);
+        io.to('admin').emit('worker:updated', payload);
+    } catch (sockErr) {
+        // Non-fatal socket emission
+    }
 
     const message = isVerified ? "Worker verified successfully" : "Worker verification revoked";
     return successResponse(res, 200, message, worker);
