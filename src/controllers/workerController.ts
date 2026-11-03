@@ -383,6 +383,17 @@ export const getMyWorkerAccountStatus = asyncHandler(async (req: AuthRequest, re
     });
 });
 
+const isValidPakistanCoordinate = (lat: any, lng: any): boolean => {
+    const latitude = Number(lat);
+    const longitude = Number(lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return false;
+    const isEmulator =
+        (Math.abs(latitude - 37.422) < 0.05 && Math.abs(longitude - (-122.084)) < 0.05) ||
+        (Math.abs(latitude - 37.33) < 0.05 && Math.abs(longitude - (-122.03)) < 0.05);
+    if (isEmulator) return false;
+    return latitude >= 23.0 && latitude <= 37.5 && longitude >= 60.0 && longitude <= 78.5;
+};
+
 export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) => {
     const { id } = req.params;
 
@@ -401,8 +412,12 @@ export const updateWorkerProfile = asyncHandler(async (req: AuthRequest, res) =>
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");
 
-    if (latitude !== undefined && latitude !== null) worker.location.coordinates[1] = latitude;
-    if (longitude !== undefined && longitude !== null) worker.location.coordinates[0] = longitude;
+    if (latitude !== undefined && latitude !== null && longitude !== undefined && longitude !== null) {
+        if (isValidPakistanCoordinate(latitude, longitude)) {
+            worker.location.coordinates[1] = Number(latitude);
+            worker.location.coordinates[0] = Number(longitude);
+        }
+    }
 
     if (email !== undefined) {
         const existingWorkerEmail = await Workers.findOne({ email, _id: { $ne: id as any } });
@@ -598,12 +613,18 @@ export const updateWorkerLocation = asyncHandler(async (req: AuthRequest, res) =
 
     const { latitude, longitude } = req.body;
 
-    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) throw new BadRequestError("Latitude and longitude are required");
+    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null) {
+        throw new BadRequestError("Latitude and longitude are required");
+    }
+
+    if (!isValidPakistanCoordinate(latitude, longitude)) {
+        throw new BadRequestError("Coordinates must be valid and within Pakistan");
+    }
 
     const worker = await Workers.findById(id);
     if (!worker) throw new BadRequestError("Worker not found");
-    worker.location.coordinates[1] = latitude;
-    worker.location.coordinates[0] = longitude;
+    worker.location.coordinates[1] = Number(latitude);
+    worker.location.coordinates[0] = Number(longitude);
     await worker.save();
     return successResponse(res, 200, "Location updated successfully", worker);
 });
@@ -692,6 +713,16 @@ export const getVerificationStatus = asyncHandler(async (req: AuthRequest, res) 
     const workerId = req.tokenPayload?.id;
     if (!workerId) {
         throw new UnauthorizedError("Unauthorized access");
+    }
+
+    // Check directly if worker account is already verified
+    const worker = await Workers.findById(workerId).select("isVerified cnicNumber");
+    if (worker && worker.isVerified) {
+        return successResponse(res, 200, "Verification status fetched successfully", {
+            status: 'approved',
+            isVerified: true,
+            cnicNumber: worker.cnicNumber || '',
+        });
     }
 
     const request = await VerificationRequest.findOne({ worker: workerId }).sort({ createdAt: -1 });

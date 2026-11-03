@@ -332,29 +332,13 @@ const buildJobPostCardPayloadsBatch = async (jobsDoc: any[]) => {
     });
 };
 
-const reconcileAssignedJobPost = async (jobDoc: any) => {
-    if (jobDoc.status === 'closed' || jobDoc.status === 'cancelled') return jobDoc;
+export const reconcileAssignedJobPost = async (jobDoc: any) => {
+    if (jobDoc.status === 'cancelled') return jobDoc;
 
-    const customerId = jobDoc.customer?._id || jobDoc.customer;
-
-    // Check for any linked booking, or matching booking created for this customer & category
-    const booking = await Booking.findOne({
-        $or: [
-            { jobPost: jobDoc._id },
-            {
-                customer: customerId,
-                category: jobDoc.category,
-                createdAt: { $gte: new Date(new Date(jobDoc.createdAt).getTime() - 24 * 60 * 60 * 1000) }
-            }
-        ]
-    }).sort({ createdAt: -1 });
+    // A job post can ONLY be linked to a booking that explicitly references this jobPost ID
+    const booking = await Booking.findOne({ jobPost: jobDoc._id }).sort({ createdAt: -1 });
 
     if (booking) {
-        if (!booking.jobPost) {
-            booking.jobPost = jobDoc._id;
-            await booking.save();
-        }
-
         let targetStatus = jobDoc.status;
         if (booking.status === 'completed') {
             targetStatus = 'closed';
@@ -379,14 +363,28 @@ const reconcileAssignedJobPost = async (jobDoc: any) => {
         return jobDoc;
     }
 
+    // No linked booking exists for this job post. Check if an accepted bid exists.
     const acceptedBid = await JobBid.findOne({
         jobPost: jobDoc._id,
         status: 'accepted'
     }).select('worker');
 
-    if (acceptedBid && jobDoc.status !== 'assigned') {
-        jobDoc.status = 'assigned';
+    if (acceptedBid) {
+        if (jobDoc.status !== 'assigned') {
+            jobDoc.status = 'assigned';
+            await jobDoc.save();
+        }
+        return jobDoc;
+    }
+
+    // Self-healing: if jobDoc was falsely marked 'closed' without ANY booking or accepted bid,
+    // restore it back to 'open' (or 'reviewing' if pending bids exist)
+    if (jobDoc.status === 'closed') {
+        const pendingBidsCount = await JobBid.countDocuments({ jobPost: jobDoc._id, status: 'pending' });
+        const restoredStatus = pendingBidsCount > 0 ? 'reviewing' : 'open';
+        jobDoc.status = restoredStatus;
         await jobDoc.save();
+        logger.info(`🔄 [Self-Heal] Restored falsely closed JobPost ${jobDoc._id} back to '${restoredStatus}'`);
     }
 
     return jobDoc;

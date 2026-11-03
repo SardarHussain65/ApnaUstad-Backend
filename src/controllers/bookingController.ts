@@ -34,31 +34,12 @@ const toPlainObject = (doc: any) => doc?.toObject ? doc.toObject() : doc;
 
 const syncLinkedJobPostStatus = async (booking: any, session?: mongoose.ClientSession) => {
     try {
+        if (!booking.jobPost) return;
+
         const customerId = booking.customer?._id || booking.customer;
-        let jobDoc: any = null;
-
-        if (booking.jobPost) {
-            const query = JobPost.findById(booking.jobPost);
-            if (session) query.session(session);
-            jobDoc = await query;
-        }
-
-        if (!jobDoc && customerId && booking.category) {
-            const query = JobPost.findOne({
-                customer: customerId,
-                category: booking.category,
-                status: { $in: ['open', 'reviewing', 'assigned'] },
-            }).sort({ createdAt: -1 });
-            if (session) query.session(session);
-            jobDoc = await query;
-
-            if (jobDoc && !booking.jobPost) {
-                const updateQuery = Booking.findByIdAndUpdate(booking._id, { $set: { jobPost: jobDoc._id } });
-                if (session) updateQuery.session(session);
-                await updateQuery;
-                booking.jobPost = jobDoc._id;
-            }
-        }
+        const query = JobPost.findById(booking.jobPost);
+        if (session) query.session(session);
+        const jobDoc = await query;
 
         if (!jobDoc) return;
 
@@ -218,6 +199,7 @@ const buildBookingCardPayload = (bookingDoc: any, viewerRole: 'user' | 'worker',
                 isVerified: Boolean(person.isVerified),
                 isAvailable: person.isAvailable !== undefined ? Boolean(person.isAvailable) : undefined,
                 isActive: person.isActive !== undefined ? Boolean(person.isActive) : undefined,
+                location: person.location || undefined,
                 joinedAt: person.createdAt || '',
             } : {
                 fullName: 'Searching...',
@@ -425,8 +407,8 @@ export const getBookingById = async (req: AuthRequest, res: Response) => {
 
         // If authorized, populate sensitive fields
         await booking.populate([
-            { path: 'customer', select: 'fullName email phone profileImage address city createdAt isActive' },
-            { path: 'worker', select: 'fullName email phone profileImage category rating totalJobs totalReviews hourlyRate experience city address isVerified isAvailable' }
+            { path: 'customer', select: 'fullName email phone profileImage address city createdAt isActive location' },
+            { path: 'worker', select: 'fullName email phone profileImage category rating totalJobs totalReviews hourlyRate experience city address isVerified isAvailable location' }
         ]);
 
         const dispute = await Dispute.findOne({ booking: booking._id }).lean();

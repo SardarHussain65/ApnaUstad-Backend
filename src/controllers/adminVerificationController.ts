@@ -9,6 +9,7 @@ import { reviewVerificationSchema } from "../validations/admin.validation";
 import { getWalletSettings } from "../services/walletSettingsService";
 import { rechargeWallet } from "../services/workerWalletService";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
+import { getIO } from "../sockets/socketManager";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -205,6 +206,22 @@ export const reviewVerificationRequest = asyncHandler(async (req: AdminAuthReque
     }
 
     await verificationRequest.save();
+
+    try {
+        const io = getIO();
+        const payload = {
+            isVerified: worker.isVerified,
+            status: verificationRequest.status,
+            rejectionReason: verificationRequest.rejectionReason,
+            workerId: worker._id.toString(),
+            cnicNumber: verificationRequest.cnicNumber || ''
+        };
+        io.to(`worker:${worker._id.toString()}`).emit('worker:verified', payload);
+        io.to(`worker:${worker._id.toString()}`).emit('worker:updated', payload);
+        io.to('admin').emit('worker:updated', payload);
+    } catch (sockErr) {
+        // Non-fatal socket emission
+    }
 
     // Log the admin's action inside the audit ledger
     await recordAdminAction(req, {
