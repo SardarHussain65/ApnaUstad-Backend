@@ -713,7 +713,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         // Check if bid already exists
         const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId });
         if (existingBid) {
-            if (jobPost.urgency === 'instant') {
+            if (existingBid.status === 'pending') {
                 const parsedEstimatedDays = estimatedDays ? Number(estimatedDays) : undefined;
                 existingBid.proposedPrice = proposedAmount;
                 existingBid.priceMode = proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer';
@@ -728,8 +728,20 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
 
                 const io = getIO();
                 await existingBid.populate('worker', WORKER_BID_PROFILE_SELECT);
+                io.to(`user:${jobPost.customer.toString()}`).emit('bid:updated', existingBid);
                 io.to(`user:${jobPost.customer.toString()}`).emit('bid:new', existingBid);
                 io.to(`worker:${workerId.toString()}`).emit('bid:submitted', { bidId: existingBid._id, jobId: jobPost._id });
+
+                // Push notification to customer about the updated price
+                if (jobPost.customer) {
+                    sendNotificationToRecipient(
+                        jobPost.customer,
+                        'user',
+                        'Updated Offer from Ustad 💬',
+                        `Ustad updated their quote to Rs. ${proposedAmount.toLocaleString()} for "${jobPost.category}".`,
+                        { jobId: jobPost._id.toString(), bidId: existingBid._id.toString(), type: 'bid_updated' }
+                    ).catch(err => logger.error(`Failed to send bid update push notification to customer ${jobPost.customer}:`, err));
+                }
 
                 return res.status(200).json({
                     success: true,
@@ -1435,6 +1447,102 @@ export const withdrawBid = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         logger.error("Error in withdrawBid:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+/**
+ * @description Update an existing pending worker bid's proposed price and message
+ * @route PATCH /api/v1/jobs/bids/:bidId
+ * @access Private (Worker)
+ */
+export const updateBid = async (req: AuthRequest, res: Response) => {
+    try {
+        const workerId = req.tokenPayload?.id;
+        const { bidId } = req.params;
+        const { proposedPrice, message, estimatedDays } = req.body;
+        const proposedAmount = Number(proposedPrice);
+
+        if (!workerId || req.tokenPayload?.type !== 'worker') {
+            return res.status(401).json({ success: false, message: "Unauthorized as worker" });
+        }
+
+        const bid = await JobBid.findById(bidId);
+        if (!bid) {
+            return res.status(404).json({ success: false, message: "Bid not found" });
+        }
+
+        if (bid.worker.toString() !== workerId) {
+            return res.status(403).json({ success: false, message: "Forbidden" });
+        }
+
+        if (bid.status !== 'pending') {
+            return res.status(400).json({ success: false, message: "Only pending bids can be updated" });
+        }
+
+        if (!Number.isFinite(proposedAmount) || proposedAmount <= 0) {
+            return res.status(400).json({ success: false, message: "Proposed price must be a positive number" });
+        }
+
+        const jobPost = await JobPost.findById(bid.jobPost);
+        if (!jobPost) {
+            return res.status(404).json({ success: false, message: "Associated job not found" });
+        }
+
+        if (jobPost.status !== 'open' && jobPost.status !== 'reviewing') {
+            return res.status(400).json({ success: false, message: "This job is no longer open" });
+        }
+
+        const estimatedCommission = await calculateCommissionAmount(proposedAmount);
+        const walletEligibility = await getWalletEligibility(workerId, estimatedCommission);
+        if (!walletEligibility.isEligible) {
+            return res.status(402).json({
+                success: false,
+                requiredBalance: walletEligibility.requiredBalance,
+                currentBalance: walletEligibility.availableBalance,
+                message: buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance)
+            });
+        }
+
+        const clientOffer = Number(jobPost.pricing?.clientOffer ?? jobPost.amount ?? 0);
+        bid.proposedPrice = proposedAmount;
+        bid.priceMode = proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer';
+        if (message && typeof message === 'string' && message.trim()) {
+            bid.message = message.trim();
+        }
+        if (estimatedDays && Number(estimatedDays) > 0) {
+            bid.estimatedDays = Number(estimatedDays);
+        }
+        await bid.save();
+
+        await bid.populate('worker', WORKER_BID_PROFILE_SELECT);
+
+        // Real-time socket updates
+        const io = getIO();
+        if (jobPost.customer) {
+            io.to(`user:${jobPost.customer.toString()}`).emit('bid:updated', bid);
+            io.to(`user:${jobPost.customer.toString()}`).emit('bid:new', bid);
+        }
+        io.to(`worker:${workerId.toString()}`).emit('bid:submitted', { bidId: bid._id, jobId: jobPost._id });
+
+        // Push notification to customer about the updated price
+        if (jobPost.customer) {
+            sendNotificationToRecipient(
+                jobPost.customer,
+                'user',
+                'Updated Offer from Ustad 💬',
+                `Ustad updated their quote to Rs. ${proposedAmount.toLocaleString()} for "${jobPost.category}".`,
+                { jobId: jobPost._id.toString(), bidId: bid._id.toString(), type: 'bid_updated' }
+            ).catch(err => logger.error(`Failed to send bid update push notification to customer ${jobPost.customer}:`, err));
+        }
+
+        res.status(200).json({
+            success: true,
+            data: bid,
+            message: "Bid updated successfully"
+        });
+    } catch (error: any) {
+        logger.error("Error in updateBid:", error);
         res.status(500).json({ success: false, message: "Internal server error" });
     }
 };

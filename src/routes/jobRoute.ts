@@ -12,6 +12,7 @@ import {
     getJobPostById,
     getWorkerBids,
     withdrawBid,
+    updateBid,
     uploadJobImages,
     cancelJobPost,
     getUrgentPriceEstimate,
@@ -46,6 +47,9 @@ router.get("/my-bids", workerAuthMiddleware, getWorkerBids);
 
 // Withdraw a pending bid/mission interest
 router.delete("/bids/:bidId", workerAuthMiddleware, withdrawBid);
+
+// Update a pending bid's price / proposal (for workers)
+router.patch("/bids/:bidId", workerAuthMiddleware, updateBid);
 
 // Submit a bid on a job post (for workers)
 router.post("/:jobId/bids", workerAuthMiddleware, validate(submitJobBidSchema), submitBid);
