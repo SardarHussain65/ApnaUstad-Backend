@@ -44,7 +44,7 @@ const uniqueUrls = (urls: (string | undefined | null)[]) =>
 const toPublicAreaLabel = (address?: string) => {
     const parts = String(address || '').split(',').map(part => part.trim()).filter(Boolean);
     if (parts.length >= 3) return parts.slice(-2).join(', ');
-    if (parts.length === 2) return parts[1] || 'Nearby service area';
+    if (parts.length >= 1) return parts.join(', ');
     return 'Nearby service area';
 };
 

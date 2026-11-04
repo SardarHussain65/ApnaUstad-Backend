@@ -95,10 +95,11 @@ app.use(helmet());
 
 // 2. Limit requests from the same API (Prevents Brute Force/DDoS)
 const limiter = rateLimit({
-    max: 2500, // Limit each client IP to 2500 requests per 15 minutes window
+    max: 3500, // Limit each client IP to 3500 requests per 15 minutes window
     windowMs: 15 * 60 * 1000, // 15 Minutes
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => req.method === 'OPTIONS', // Never count CORS preflights towards rate limit
     message: {
         success: false,
         message: "Too many requests from this device, please try again shortly."
