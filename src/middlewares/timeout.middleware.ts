@@ -2,9 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 
 /**
  * Middleware to enforce request timeouts and prevent hanging connections
- * @param timeoutMs Timeout duration in milliseconds (default: 15000ms / 15s)
+ * @param timeoutMs Timeout duration in milliseconds (default: 30000ms / 30s)
  */
-export const requestTimeout = (timeoutMs = 15000) => {
+export const requestTimeout = (timeoutMs = 30000) => {
     return (req: Request, res: Response, next: NextFunction) => {
         const timer = setTimeout(() => {
             if (!res.headersSent) {

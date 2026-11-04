@@ -17,8 +17,8 @@ let io: SocketIOServer;
 const config = getConfig();
 
 export const initSocket = (httpServer: HttpServer) => {
-    const envOrigins = config.clientUrl === '*' 
-        ? ['*'] 
+    const envOrigins = config.clientUrl === '*'
+        ? ['*']
         : config.clientUrl.split(',').map((url: string) => url.trim());
 
     const isSocketOriginAllowed = (origin: string | undefined): boolean => {
@@ -97,7 +97,7 @@ export const initSocket = (httpServer: HttpServer) => {
             logger.info(`Joined room: admin`);
             getActionCounts()
                 .then((counts: any) => socket.emit('admin:counts', counts))
-                .catch(() => {});
+                .catch(() => { });
         }
 
         // Register handlers

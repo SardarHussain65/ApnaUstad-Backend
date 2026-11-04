@@ -33,24 +33,27 @@ import userWalletRoute from './routes/userWalletRoute';
 const app = express();
 const config = getConfig();
 
+// Trust reverse proxy (Nginx / Azure VM / Cloudflare) to ensure accurate client IP detection for rate-limiting
+app.set('trust proxy', 1);
+
 // --- 🪵 Logging Middleware ---
 app.use(morgan(config.nodeEnv === 'development' ? 'dev' : 'combined', { stream }));
 
 // --- ⏱️ Request Timeout Middleware ---
-app.use(requestTimeout(15000));
+app.use(requestTimeout(30000));
 
 // --- 📦 Response Compression Middleware ---
 app.use(compression());
 
 // --- ⚙️ Core Middlewares ---
 // Enable CORS
-const envOrigins = config.clientUrl === '*' 
-    ? ['*'] 
+const envOrigins = config.clientUrl === '*'
+    ? ['*']
     : config.clientUrl.split(',').map((url: string) => url.trim());
 
 const isAllowedOrigin = (origin: string): boolean => {
     if (envOrigins.includes('*') || envOrigins.includes(origin)) return true;
-    
+
     try {
         const url = new URL(origin);
         // Automatically allow official production domain and subdomains (apnaustad.app, www.apnaustad.app)
@@ -75,11 +78,11 @@ app.use(cors({
     origin: (origin, callback) => {
         // Allow requests with no origin (like React Native mobile app, Postman, or curl)
         if (!origin) return callback(null, true);
-        
+
         if (isAllowedOrigin(origin)) {
             return callback(null, true);
         }
-        
+
         return callback(null, false);
     },
     credentials: true,
@@ -92,9 +95,14 @@ app.use(helmet());
 
 // 2. Limit requests from the same API (Prevents Brute Force/DDoS)
 const limiter = rateLimit({
-    max: 500, // Limit each IP to 500 requests per windowMs
+    max: 2500, // Limit each client IP to 2500 requests per 15 minutes window
     windowMs: 15 * 60 * 1000, // 15 Minutes
-    message: "Too many requests from this IP, please try again in 15 minutes!"
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+        success: false,
+        message: "Too many requests from this device, please try again shortly."
+    }
 });
 app.use('/api', limiter);
 

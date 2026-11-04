@@ -92,10 +92,10 @@ export async function sendEmail(options: SendEmailOptions) {
 // APNA USTAD — COSMIC EMAIL DESIGN SYSTEM
 // ─────────────────────────────────────────────────────────────────────────────
 // App Colors: Background #050510 | Cyan #00F5FF | Purple #BF5AF2 | Gold #C9A84C
-// Logo CDN: https://ik.imagekit.io/2cavxfiex/app-assets/apnaustad_logo_yhkfXtyz0.jpeg
+// Logo CDN: https://ik.imagekit.io/2cavxfiex/app-assets/apnaustad_logo_premium.png
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LOGO_URL = 'https://ik.imagekit.io/2cavxfiex/app-assets/apnaustad_logo_yhkfXtyz0.jpeg';
+const LOGO_URL = 'https://ik.imagekit.io/2cavxfiex/app-assets/apnaustad_logo_premium.png';
 
 /**
  * Shared cosmic email shell — wraps all templates in the dark branded layout.
