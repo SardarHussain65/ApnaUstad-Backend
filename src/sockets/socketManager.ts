@@ -25,7 +25,19 @@ export const initSocket = (httpServer: HttpServer) => {
         pingInterval: 15000, // Send ping every 15 seconds to check if client is alive
         pingTimeout: 10000,  // Consider connection dead and disconnect if no pong received within 10 seconds
         cors: {
-            origin: allowedOrigins,
+            origin: (origin, callback) => {
+                if (!origin) return callback(null, true);
+                const normalized = origin.replace(/\/+$/, '');
+                const isApnaUstad = /^https?:\/\/([a-z0-9-]+\.)*apnaustad\.app$/i.test(normalized);
+                const isConfigured = allowedOrigins === '*' || 
+                    (Array.isArray(allowedOrigins) && allowedOrigins.some((allowed: string) => allowed.replace(/\/+$/, '') === normalized));
+                const isLocalDev = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(normalized);
+
+                if (isApnaUstad || isConfigured || isLocalDev) {
+                    return callback(null, true);
+                }
+                return callback(null, false);
+            },
             methods: ["GET", "POST"],
             credentials: true,
         },

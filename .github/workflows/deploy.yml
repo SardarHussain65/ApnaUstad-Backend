@@ -60,7 +60,7 @@ jobs:
             git pull origin main
 
             echo "📦 Installing production dependencies..."
-            npm install --omit=dev
+            npm install
 
             echo "🔨 Compiling TypeScript to JavaScript..."
             NODE_OPTIONS="--max-old-space-size=1536" npm run build

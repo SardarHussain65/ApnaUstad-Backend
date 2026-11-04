@@ -53,13 +53,21 @@ app.use(cors({
         // Allow requests with no origin (like React Native mobile app, Postman, or curl)
         if (!origin) return callback(null, true);
         
-        if (allowedOrigins === '*' || allowedOrigins.includes(origin)) {
+        const normalized = origin.replace(/\/+$/, '');
+        const isApnaUstad = /^https?:\/\/([a-z0-9-]+\.)*apnaustad\.app$/i.test(normalized);
+        const isConfigured = allowedOrigins === '*' || 
+            (Array.isArray(allowedOrigins) && allowedOrigins.some((allowed: string) => allowed.replace(/\/+$/, '') === normalized));
+        const isLocalDev = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(normalized);
+
+        if (isApnaUstad || isConfigured || isLocalDev) {
             return callback(null, true);
         }
         
-        return callback(new Error('Not allowed by CORS'));
+        return callback(null, false);
     },
-    credentials: true
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin']
 }));
 
 // 1. Set Security HTTP Headers
