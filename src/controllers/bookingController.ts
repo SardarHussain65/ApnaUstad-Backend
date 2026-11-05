@@ -1321,7 +1321,7 @@ export const requestPriceIncrease = async (req: AuthRequest, res: Response) => {
         sendNotificationToRecipient(
             booking.customer.toString(),
             'user',
-            'Price Revision Request ⚠️',
+            'Price Revision Request',
             `Ustad has requested to increase job price to Rs. ${newPrice.toLocaleString('en-PK')} (${reason}). Tap to review and approve.`,
             { bookingId: booking._id.toString(), type: 'price_increase_requested' }
         ).catch(err => logger.error("Failed to send price increase push to customer:", err));
@@ -1440,7 +1440,7 @@ export const respondPriceIncrease = async (req: AuthRequest, res: Response) => {
         sendNotificationToRecipient(
             booking.worker.toString(),
             'worker',
-            approved ? 'Price Increase Approved! ✅' : 'Price Increase Declined ❌',
+            approved ? 'Price Increase Approved' : 'Price Increase Declined',
             approved
                 ? `Customer approved your updated price of Rs. ${booking.totalAmount.toLocaleString('en-PK')}.`
                 : `Customer declined the price increase. The original agreed price remains.`,
