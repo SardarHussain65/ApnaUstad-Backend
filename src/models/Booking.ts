@@ -48,6 +48,44 @@ export interface IBooking extends Document {
         lockedAt: Date;
         pricingVersion: number;
     };
+    pricingType?: 'fixed' | 'open';
+    commissionDeducted?: boolean;
+    pendingPriceIncrease?: {
+        revisedPrice: number;
+        reason: string;
+        requestedAt: Date;
+        additionalCommission: number;
+    } | null;
+    priceRevisionHistory?: Array<{
+        previousPrice: number;
+        revisedPrice: number;
+        reason: string;
+        customerApproved: boolean;
+        approvedAt?: Date;
+        requestedAt: Date;
+        previousCommission: number;
+        additionalCommission: number;
+        status: 'pending' | 'approved' | 'rejected';
+    }>;
+    customerReductionRequest?: {
+        requestedAmount: number;
+        reason: string;
+        status: 'pending' | 'approved' | 'rejected';
+        requestedAt: Date;
+        adminNotes?: string;
+        resolvedAt?: Date;
+    } | null;
+    finalSettlement?: {
+        customerDeclaredAmount?: number;
+        extraCommissionDeducted?: number;
+        verifiedAt?: Date;
+    };
+    fraudSignals?: {
+        durationMinutesOnSite?: number;
+        isFlaggedForAudit?: boolean;
+        flagReason?: string;
+        flaggedAt?: Date;
+    };
 }
 
 const bookingSchema = new Schema<IBooking>(
@@ -112,6 +150,46 @@ const bookingSchema = new Schema<IBooking>(
             discountAmount: { type: Number, min: 0, default: 0 },
             lockedAt: { type: Date, default: Date.now },
             pricingVersion: { type: Number, default: 2 }
+        },
+        pricingType: { type: String, enum: ['fixed', 'open'], default: 'fixed' },
+        commissionDeducted: { type: Boolean, default: false },
+        pendingPriceIncrease: {
+            revisedPrice: { type: Number },
+            reason: { type: String, trim: true },
+            requestedAt: { type: Date },
+            additionalCommission: { type: Number }
+        },
+        priceRevisionHistory: [
+            {
+                previousPrice: { type: Number },
+                revisedPrice: { type: Number },
+                reason: { type: String, trim: true },
+                customerApproved: { type: Boolean, default: false },
+                approvedAt: { type: Date },
+                requestedAt: { type: Date, default: Date.now },
+                previousCommission: { type: Number },
+                additionalCommission: { type: Number },
+                status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' }
+            }
+        ],
+        customerReductionRequest: {
+            requestedAmount: { type: Number },
+            reason: { type: String, trim: true },
+            status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+            requestedAt: { type: Date, default: Date.now },
+            adminNotes: { type: String, trim: true },
+            resolvedAt: { type: Date }
+        },
+        finalSettlement: {
+            customerDeclaredAmount: { type: Number },
+            extraCommissionDeducted: { type: Number, default: 0 },
+            verifiedAt: { type: Date }
+        },
+        fraudSignals: {
+            durationMinutesOnSite: { type: Number, default: 0 },
+            isFlaggedForAudit: { type: Boolean, default: false },
+            flagReason: { type: String, trim: true },
+            flaggedAt: { type: Date }
         }
     },
     { timestamps: true }

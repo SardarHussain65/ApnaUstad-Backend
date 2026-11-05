@@ -3,6 +3,8 @@ import Payment from "../models/Payment";
 import JobPost from "../models/JobPost";
 import User from "../models/User";
 import Worker from "../models/Workers";
+import WorkerWallet from "../models/WorkerWallet";
+import WalletTransaction from "../models/WalletTransaction";
 import Message from "../models/Message";
 import Dispute from "../models/Dispute";
 import Review from "../models/Reviews";
@@ -13,6 +15,8 @@ import { BadRequestError, NotFoundError } from "../utils/ApiError";
 import mongoose from "mongoose";
 import { syncPaymentForBookingStatus } from "../services/paymentLedgerService";
 import { releaseCommissionReservation } from "../services/commissionReservationService";
+import { getOrCreateWallet, calculateCommissionAmount } from "../services/workerWalletService";
+import { recordAdminAction } from "../services/adminAuditLog";
 import { getIO } from "../sockets/socketManager";
 import { emitBookingEvent } from "../sockets/handlers/booking.handler";
 
@@ -54,6 +58,12 @@ export const getAllBookings = asyncHandler(async (req: AdminAuthRequest, res) =>
     }
     if (bookingType && bookingType !== 'undefined') {
         query.bookingType = bookingType;
+    }
+    if (req.query.fraudFlagged === 'true') {
+        query['fraudSignals.isFlaggedForAudit'] = true;
+    }
+    if (req.query.hasReductionRequest === 'true') {
+        query['customerReductionRequest.status'] = 'pending';
     }
     if (dateFrom || dateTo) {
         query.scheduledDate = {};
@@ -121,7 +131,7 @@ export const getBookingDetails = asyncHandler(async (req: AdminAuthRequest, res)
         .populate('customer', 'fullName phone email city address location profileImage isActive')
         .populate('worker', 'fullName phone email city address location category hourlyRate rating totalReviews profileImage isVerified isAvailable lastOnlineAt')
         .populate('jobPost', 'title category description address location urgency pricing status createdAt')
-        .populate('acceptedBid', 'proposedPrice priceMode message createdAt');
+        .populate('acceptedBid', 'proposedPrice priceMode message rateBasis helperCount createdAt');
 
     if (!booking) throw new NotFoundError("Booking not found");
 
@@ -250,4 +260,164 @@ export const getAdminBookingMessages = asyncHandler(async (req: AdminAuthRequest
         .lean();
 
     return successResponse(res, 200, "Booking messages fetched successfully", messages);
+});
+
+/**
+ * Admin resolves a customer price reduction request.
+ * If approved, updates booking amount and refunds excess commission back to the worker's wallet.
+ * @route PATCH /api/v1/admin/bookings/:id/resolve-reduction
+ */
+export const resolveCustomerReductionRequest = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const { id } = req.params;
+    const { action, adminNotes } = req.body; // action: 'approve' | 'reject'
+
+    if (!action || (action !== 'approve' && action !== 'reject')) {
+        throw new BadRequestError("Action must be 'approve' or 'reject'");
+    }
+
+    const booking = await Booking.findById(id);
+    if (!booking) throw new NotFoundError("Booking not found");
+
+    if (!booking.customerReductionRequest || booking.customerReductionRequest.status !== 'pending') {
+        throw new BadRequestError("No pending customer price reduction request for this booking");
+    }
+
+    const previousAmount = Number(booking.totalAmount || 0);
+    const requestedAmount = Number(booking.customerReductionRequest.requestedAmount);
+    let refundAmount = 0;
+
+    if (action === 'approve') {
+        const previousCommission = Number(booking.platformFee || 0);
+        const newCommission = await calculateCommissionAmount(requestedAmount);
+
+        // If commission was already deducted at ongoing, refund difference to worker wallet
+        if (booking.commissionDeducted && previousCommission > newCommission) {
+            refundAmount = previousCommission - newCommission;
+            const workerWallet = await getOrCreateWallet(booking.worker);
+            const bookingRef = String(booking._id).slice(-6).toUpperCase();
+
+            await WorkerWallet.findByIdAndUpdate(workerWallet._id, {
+                $inc: {
+                    balance: refundAmount,
+                    totalCommissionDeducted: -refundAmount
+                }
+            });
+
+            await WalletTransaction.create({
+                wallet: workerWallet._id,
+                worker: booking.worker,
+                type: 'refund',
+                amount: refundAmount,
+                balanceBefore: workerWallet.balance,
+                balanceAfter: workerWallet.balance + refundAmount,
+                description: `Refund excess commission for Job #${bookingRef} due to approved scope reduction to Rs. ${requestedAmount}`,
+                reference: { booking: booking._id },
+                performedBy: { actor: req.admin?._id, actorType: 'admin' }
+            });
+        }
+
+        booking.subtotal = requestedAmount;
+        booking.totalAmount = requestedAmount;
+        booking.platformFee = newCommission;
+        if (booking.agreement) {
+            booking.agreement.agreedPrice = requestedAmount;
+            booking.agreement.cashDue = requestedAmount - Number(booking.agreement.discountAmount || 0);
+            booking.agreement.commissionAmount = newCommission;
+            booking.agreement.workerNetIncome = requestedAmount - newCommission;
+        }
+
+        booking.customerReductionRequest.status = 'approved';
+        booking.customerReductionRequest.resolvedAt = new Date();
+        booking.customerReductionRequest.adminNotes = adminNotes || 'Approved by Admin';
+    } else {
+        booking.customerReductionRequest.status = 'rejected';
+        booking.customerReductionRequest.resolvedAt = new Date();
+        booking.customerReductionRequest.adminNotes = adminNotes || 'Rejected by Admin';
+    }
+
+    await booking.save();
+
+    await recordAdminAction(req, {
+        action: action === 'approve' ? 'APPROVE_PRICE_REDUCTION' : 'REJECT_PRICE_REDUCTION',
+        entityType: 'booking',
+        entityId: booking._id.toString(),
+        reason: adminNotes || `Admin ${action}d price reduction from Rs. ${previousAmount} to Rs. ${requestedAmount}`,
+        metadata: {
+            previousAmount,
+            requestedAmount,
+            refundAmount,
+            action
+        }
+    });
+
+    return successResponse(res, 200, `Price reduction request ${action}d successfully`, booking);
+});
+
+/**
+ * Admin resolves a fraud alert flag on a booking.
+ * Can dismiss as false alarm or penalize the worker wallet.
+ * @route PATCH /api/v1/admin/bookings/:id/resolve-fraud
+ */
+export const resolveFraudFlag = asyncHandler(async (req: AdminAuthRequest, res) => {
+    const { id } = req.params;
+    const { action, penaltyAmount, reason } = req.body; // action: 'dismiss' | 'penalize'
+
+    if (!action || (action !== 'dismiss' && action !== 'penalize')) {
+        throw new BadRequestError("Action must be 'dismiss' or 'penalize'");
+    }
+
+    if (!reason || String(reason).trim().length < 5) {
+        throw new BadRequestError("A detailed reason (at least 5 characters) is required");
+    }
+
+    const booking = await Booking.findById(id);
+    if (!booking) throw new NotFoundError("Booking not found");
+
+    const penalty = Number(penaltyAmount || 0);
+
+    if (action === 'penalize') {
+        if (penalty > 0) {
+            const workerWallet = await getOrCreateWallet(booking.worker);
+            const bookingRef = String(booking._id).slice(-6).toUpperCase();
+
+            await WorkerWallet.findByIdAndUpdate(workerWallet._id, {
+                $inc: {
+                    balance: -penalty,
+                    totalCommissionDeducted: penalty
+                }
+            });
+
+            await WalletTransaction.create({
+                wallet: workerWallet._id,
+                worker: booking.worker,
+                type: 'adjustment',
+                amount: penalty,
+                balanceBefore: workerWallet.balance,
+                balanceAfter: workerWallet.balance - penalty,
+                description: `Admin fraud penalty for Job #${bookingRef}: ${reason}`,
+                reference: { booking: booking._id },
+                performedBy: { actor: req.admin?._id, actorType: 'admin' }
+            });
+        }
+    }
+
+    booking.fraudSignals = booking.fraudSignals || {};
+    booking.fraudSignals.isFlaggedForAudit = false;
+    booking.fraudSignals.flagReason = `${booking.fraudSignals.flagReason || ''} [Resolved by Admin (${action}): ${reason}]`;
+
+    await booking.save();
+
+    await recordAdminAction(req, {
+        action: action === 'penalize' ? 'PENALIZE_WORKER_FRAUD' : 'DISMISS_FRAUD_FLAG',
+        entityType: 'booking',
+        entityId: booking._id.toString(),
+        reason: String(reason).trim(),
+        metadata: {
+            action,
+            penaltyAmount: penalty,
+            workerId: booking.worker.toString()
+        }
+    });
+
+    return successResponse(res, 200, `Fraud alert ${action}d successfully`, booking);
 });

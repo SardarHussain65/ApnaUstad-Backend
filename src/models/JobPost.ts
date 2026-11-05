@@ -26,6 +26,7 @@ export interface IJobPost extends Document {
     };
     estimatedHours?: number;
     isFixedPrice?: boolean;
+    pricingType?: 'fixed' | 'open';
     urgencyPricingVersion?: number;
     radiusExpanded?: boolean;
     notifiedWorkersCount?: number;
@@ -69,6 +70,7 @@ const jobPostSchema = new Schema<IJobPost>(
         },
         estimatedHours: { type: Number, default: 0 },
         isFixedPrice: { type: Boolean, default: false },
+        pricingType: { type: String, enum: ['fixed', 'open'], default: 'fixed' },
         urgencyPricingVersion: { type: Number, default: 1 },
         radiusExpanded: { type: Boolean, default: false },
         notifiedWorkersCount: { type: Number, default: 0 },

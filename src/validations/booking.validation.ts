@@ -33,3 +33,23 @@ export const updateBookingStatusSchema = z.object({
     message: "Cancel reason is required when status is cancelled",
     path: ["cancelReason"]
 });
+
+export const requestPriceIncreaseSchema = z.object({
+    revisedPrice: z.number({ error: "Revised price is required" }).positive("Revised price must be greater than zero"),
+    reason: z.string({ error: "Reason for price increase is required" }).trim().min(5, "Please explain why the price is being increased").max(500)
+});
+
+export const respondPriceIncreaseSchema = z.object({
+    approved: z.boolean({ error: "Approval decision is required" })
+});
+
+export const customerVerifyPaymentSchema = z.object({
+    actualAmountPaid: z.number({ error: "Actual amount paid is required" }).positive("Amount must be greater than zero"),
+    reportExtraDemand: z.boolean().optional(),
+    feedback: z.string().trim().max(500).optional()
+});
+
+export const requestPriceReductionSchema = z.object({
+    requestedAmount: z.number({ error: "Requested amount is required" }).positive("Amount must be greater than zero"),
+    reason: z.string({ error: "Reason for reduction is required" }).trim().min(5, "Please explain why the reduction is requested").max(500)
+});

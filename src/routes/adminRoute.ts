@@ -86,6 +86,8 @@ router.get('/bookings/:id', requirePermission('bookings'), adminBookingControlle
 router.get('/bookings/:id/messages', requirePermission('bookings', 'disputes', 'support'), adminBookingController.getAdminBookingMessages);
 router.patch('/bookings/:id/status', requirePermission('bookings'), adminBookingController.updateBookingStatus);
 router.post('/bookings/:id/cancel', requirePermission('bookings'), adminBookingController.cancelBooking);
+router.patch('/bookings/:id/resolve-reduction', requirePermission('bookings'), adminBookingController.resolveCustomerReductionRequest);
+router.patch('/bookings/:id/resolve-fraud', requirePermission('bookings'), adminBookingController.resolveFraudFlag);
 
 router.get('/payments', requirePermission('payments'), adminPaymentController.getAllPayments);
 router.get('/payments/summary', requirePermission('payments'), adminPaymentController.getPaymentSummary);
