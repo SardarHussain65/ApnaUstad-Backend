@@ -575,7 +575,8 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
             videoUrls,
             audioUrls,
             amount: finalAmount,
-            isFixedPrice: false,
+            pricingType: (req.body.pricingType === 'open' || finalAmount === 0) ? 'open' : 'fixed',
+            isFixedPrice: (req.body.pricingType !== 'open' && finalAmount > 0),
             urgencyPricingVersion: isInstant ? 1 : undefined,
             pricing: {
                 clientOffer: finalAmount,
@@ -660,7 +661,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         }
 
         const { jobId } = req.params;
-        const { message, proposedPrice, estimatedDays } = req.body;
+        const { message, proposedPrice, estimatedDays, rateBasis, helperCount } = req.body;
         const proposedAmount = Number(proposedPrice);
 
         const jobPost = await JobPost.findById(jobId);
@@ -721,6 +722,8 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
                 existingBid.message = finalMessage;
                 existingBid.commissionRateSnapshot = walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0;
                 existingBid.status = 'pending';
+                if (rateBasis) existingBid.rateBasis = rateBasis;
+                if (helperCount !== undefined) existingBid.helperCount = Number(helperCount) || 0;
                 if (Number.isFinite(parsedEstimatedDays) && parsedEstimatedDays! > 0) {
                     existingBid.estimatedDays = parsedEstimatedDays;
                 }
@@ -769,6 +772,8 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
             priceMode: proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer',
             clientOfferSnapshot: clientOffer,
             commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0,
+            rateBasis: rateBasis || 'total',
+            helperCount: Number(helperCount) || 0,
             ...(Number.isFinite(parsedEstimatedDays) && parsedEstimatedDays! > 0 ? { estimatedDays: parsedEstimatedDays } : {}),
         });
 
@@ -839,14 +844,6 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             const agreedPrice = Number(bid.proposedPrice);
             const commissionAmount = await calculateCommissionAmount(agreedPrice);
             const walletSettings = await getWalletSettings();
-            const walletEligibility = await getWalletEligibility(bid.worker, commissionAmount, session);
-            if (!walletEligibility.isEligible) {
-                const error = new Error(buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance));
-                (error as any).statusCode = 402;
-                (error as any).requiredBalance = walletEligibility.requiredBalance;
-                (error as any).currentBalance = walletEligibility.availableBalance;
-                throw error;
-            }
 
             const workerProfile = await Worker.findById(bid.worker).session(session);
             const workerNetIncome = Math.max(0, agreedPrice - commissionAmount);
@@ -1003,6 +1000,8 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
                     audioUrls: jobPost.audioUrls || [],
                     bookingType: resolvedBookingType,
                     status: 'accepted',
+                    pricingType: jobPost.pricingType || (jobPost.amount === 0 ? 'open' : 'fixed'),
+                    commissionDeducted: false,
                     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
                 }], { session });
 
@@ -1024,14 +1023,7 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
                 }).session(session);
             }
 
-            await reserveCommission({
-                workerId: bid.worker,
-                bookingId: booking._id,
-                jobPostId: jobPost._id,
-                bidId: bid._id,
-                amount: commissionAmount,
-                commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0
-            }, { session });
+            // Note: Commission is NOT deducted upon assignment. It is deducted when worker starts the job on-site.
 
             jobPost.status = 'assigned';
             await jobPost.save({ session });
@@ -1623,15 +1615,6 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
 
                 const commissionAmount = await calculateCommissionAmount(proposedPrice);
                 const walletSettings = await getWalletSettings();
-                const walletEligibility = await getWalletEligibility(workerId, commissionAmount, session);
-                if (!walletEligibility.isEligible) {
-                    const error = new Error(buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance));
-                    (error as any).statusCode = 402;
-                    (error as any).requiredBalance = walletEligibility.requiredBalance;
-                    (error as any).currentBalance = walletEligibility.availableBalance;
-                    throw error;
-                }
-
                 const workerNetIncome = Math.max(0, proposedPrice - commissionAmount);
 
                 // Create Bid immediately as accepted
@@ -1680,21 +1663,13 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
                     audioUrls: job.audioUrls || [],
                     bookingType: job.urgency,
                     status: 'accepted',
+                    commissionDeducted: false,
+                    pricingType: job.pricingType || 'fixed',
                     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
                 }], { session });
 
                 if (!createdBooking) throw new Error("Unable to create booking");
                 booking = createdBooking;
-
-                // Reserve commission
-                await reserveCommission({
-                    workerId,
-                    bookingId: booking._id,
-                    jobPostId: job._id,
-                    bidId: newBid._id,
-                    amount: commissionAmount,
-                    commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0
-                }, { session });
 
                 // Update JobPost status to assigned
                 job.status = 'assigned';

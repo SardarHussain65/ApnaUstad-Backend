@@ -8,10 +8,21 @@ import {
     getWorkerEarningsAnalytics,
     getWorkerBookings,
     updateBookingStatus,
-    payBooking
+    payBooking,
+    requestPriceIncrease,
+    respondPriceIncrease,
+    customerVerifyPayment,
+    requestPriceReduction
 } from "../controllers/bookingController";
 import validate from "../middlewares/validate.middleware";
-import { createBookingSchema, updateBookingStatusSchema } from "../validations/booking.validation";
+import {
+    createBookingSchema,
+    updateBookingStatusSchema,
+    requestPriceIncreaseSchema,
+    respondPriceIncreaseSchema,
+    customerVerifyPaymentSchema,
+    requestPriceReductionSchema
+} from "../validations/booking.validation";
 import { jwtAuthMiddleware, userAuthMiddleware, workerAuthMiddleware } from "../middlewares/jwt.middleware";
 
 const router = Router();
@@ -69,5 +80,29 @@ router.route("/:id/status").patch(jwtAuthMiddleware, validate(updateBookingStatu
  * @access Private (User)
  */
 router.route("/:id/pay").post(userAuthMiddleware, payBooking);
+
+/**
+ * @description Worker requests on-site price increase
+ * @access Private (Worker)
+ */
+router.route("/:id/request-price-increase").post(workerAuthMiddleware, validate(requestPriceIncreaseSchema), requestPriceIncrease);
+
+/**
+ * @description Customer approves or declines price increase
+ * @access Private (User)
+ */
+router.route("/:id/respond-price-increase").post(userAuthMiddleware, validate(respondPriceIncreaseSchema), respondPriceIncrease);
+
+/**
+ * @description Customer verifies actual cash payment at completion (Truth Verification)
+ * @access Private (User)
+ */
+router.route("/:id/verify-payment").post(userAuthMiddleware, validate(customerVerifyPaymentSchema), customerVerifyPayment);
+
+/**
+ * @description Customer requests price reduction to Admin Support when scope was reduced
+ * @access Private (User)
+ */
+router.route("/:id/request-price-reduction").post(userAuthMiddleware, validate(requestPriceReductionSchema), requestPriceReduction);
 
 export default router;

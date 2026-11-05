@@ -9,6 +9,8 @@ export interface IJobBid extends Document {
     clientOfferSnapshot: number;
     commissionRateSnapshot: number;
     estimatedDays?: number;
+    rateBasis?: 'total' | 'per_day' | 'per_hour';
+    helperCount?: number;
     status: 'pending' | 'accepted' | 'rejected';
 }
 
@@ -26,6 +28,17 @@ const jobBidSchema = new Schema<IJobBid>(
         clientOfferSnapshot: { type: Number, min: 0, default: 0 },
         commissionRateSnapshot: { type: Number, min: 0, max: 100, default: 0 },
         estimatedDays: { type: Number, min: 1 },
+        rateBasis: {
+            type: String,
+            enum: ['total', 'per_day', 'per_hour'],
+            default: 'total'
+        },
+        helperCount: {
+            type: Number,
+            default: 0,
+            min: 0,
+            max: 10
+        },
         status: {
             type: String,
             enum: ['pending', 'accepted', 'rejected'],

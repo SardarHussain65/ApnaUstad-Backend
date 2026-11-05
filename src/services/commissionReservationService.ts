@@ -41,10 +41,11 @@ export const reserveCommission = async (
     const wallet = await getOrCreateWallet(input.workerId, session);
     const bookingRef = String(input.bookingId).slice(-6).toUpperCase();
 
-    // Check if worker has sufficient balance to pay commission upfront
+    // Support micro-overdraft (up to -300 PKR) so worker is not blocked on-site when starting work
+    const MAX_OVERDRAFT = 300;
     const balanceBefore = Number(wallet.balance || 0);
-    if (balanceBefore < amount) {
-        const error = new Error(`Insufficient wallet balance to accept this job. Commission of Rs. ${Math.round(amount)} is deducted upon assignment.`);
+    if (balanceBefore - amount < -MAX_OVERDRAFT) {
+        const error = new Error(`Insufficient wallet balance to start this job. Commission of Rs. ${Math.round(amount)} is required. Current balance: Rs. ${balanceBefore}`);
         (error as any).statusCode = 402;
         (error as any).requiredBalance = amount;
         (error as any).currentBalance = balanceBefore;
@@ -56,7 +57,7 @@ export const reserveCommission = async (
         {
             _id: wallet._id,
             isActive: true,
-            balance: { $gte: amount }
+            balance: { $gte: amount - MAX_OVERDRAFT }
         },
         {
             $inc: {
@@ -68,7 +69,7 @@ export const reserveCommission = async (
     );
 
     if (!updatedWallet) {
-        const error = new Error(`Insufficient wallet balance to accept this job. Commission of Rs. ${Math.round(amount)} is deducted upon assignment.`);
+        const error = new Error(`Insufficient wallet balance to start this job. Commission of Rs. ${Math.round(amount)} is required.`);
         (error as any).statusCode = 402;
         throw error;
     }
@@ -81,7 +82,7 @@ export const reserveCommission = async (
         amount,
         balanceBefore,
         balanceAfter: balanceBefore - amount,
-        description: `Commission for job #${bookingRef} (deducted upon assignment)`,
+        description: `Commission for job #${bookingRef} (deducted upon start of work)`,
         reference: {
             booking: toObjectId(input.bookingId),
             ...(input.jobPostId ? { jobPost: toObjectId(input.jobPostId) } : {}),

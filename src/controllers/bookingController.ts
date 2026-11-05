@@ -5,12 +5,14 @@ import Booking from "../models/Booking";
 import JobPost from "../models/JobPost";
 import JobBid from "../models/JobBid";
 import Worker from "../models/Workers";
+import WorkerWallet from "../models/WorkerWallet";
+import WalletTransaction from "../models/WalletTransaction";
 import Dispute from "../models/Dispute";
 import logger from "../config/logger";
 import { confirmCashPaymentForBooking, syncPaymentForBookingStatus } from "../services/paymentLedgerService";
 import { evaluateDisputeEligibility, assertNoActiveDisputeForBooking, buildDisputeMeta } from "../services/disputeService";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
-import { buildInsufficientBalanceMessage, calculateCommissionAmount, getWalletEligibility } from "../services/workerWalletService";
+import { buildInsufficientBalanceMessage, calculateCommissionAmount, getWalletEligibility, getOrCreateWallet } from "../services/workerWalletService";
 import { workerAcceptsJobType } from "../services/workerJobAvailabilityService";
 import { releaseCommissionReservation, reserveCommission } from "../services/commissionReservationService";
 import { getWalletSettings } from "../services/walletSettingsService";
@@ -1088,25 +1090,21 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
                 throw error;
             }
 
-            if (nextStatus === 'accepted' && isWorker) {
-                const walletEligibility = await getWalletEligibility(userId as string, Number(booking.platformFee || 0), session);
-                if (!walletEligibility.isEligible) {
-                    const error = new Error(buildInsufficientBalanceMessage(walletEligibility.requiredBalance, walletEligibility.availableBalance));
-                    (error as any).statusCode = 402;
-                    (error as any).requiredBalance = walletEligibility.requiredBalance;
-                    (error as any).currentBalance = walletEligibility.availableBalance;
-                    throw error;
+            if (nextStatus === 'ongoing' && isWorker && !booking.commissionDeducted) {
+                const commissionToDeduct = Number(booking.agreement?.commissionAmount ?? booking.platformFee ?? 0);
+                if (commissionToDeduct > 0) {
+                    const walletSettings = await getWalletSettings();
+                    await reserveCommission({
+                        workerId: userId as string,
+                        bookingId: booking._id,
+                        amount: commissionToDeduct,
+                        commissionRateSnapshot: Number(
+                            booking.agreement?.commissionRateSnapshot
+                            ?? (walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0)
+                        )
+                    }, { session });
+                    booking.commissionDeducted = true;
                 }
-                const walletSettings = await getWalletSettings();
-                await reserveCommission({
-                    workerId: userId as string,
-                    bookingId: booking._id,
-                    amount: Number(booking.agreement?.commissionAmount ?? booking.platformFee ?? 0),
-                    commissionRateSnapshot: Number(
-                        booking.agreement?.commissionRateSnapshot
-                        ?? (walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0)
-                    )
-                }, { session });
             }
 
             // Apply new values
@@ -1123,12 +1121,22 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
             if (nextStatus === 'cancelled') {
                 booking.cancelledBy = userType === 'user' ? 'customer' : (userType as 'worker' | 'admin');
                 booking.cancelReason = cancelReason || '';
+
+                // Fraud anomaly detection on cancellation:
+                if (currentStatus === 'ongoing' || booking.commissionDeducted) {
+                    booking.fraudSignals = {
+                        isFlaggedForAudit: true,
+                        flagReason: `Cancelled during/after ongoing work by ${booking.cancelledBy}. Reason: ${cancelReason || 'Not specified'}`,
+                        flaggedAt: new Date()
+                    };
+                }
             }
 
             await booking.save({ session });
 
-            if (nextStatus === 'cancelled') {
+            if (nextStatus === 'cancelled' && booking.commissionDeducted) {
                 await releaseCommissionReservation(booking._id, { session });
+                booking.commissionDeducted = false;
             }
             await syncPaymentForBookingStatus(booking, session);
             await syncLinkedJobPostStatus(booking, session);
@@ -1242,5 +1250,349 @@ export const payBooking = async (req: AuthRequest, res: Response) => {
     } catch (error: any) {
         logger.error("Error in payBooking:", error);
         res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+/**
+ * Worker requests a price increase upon on-site inspection.
+ * Rule: Workers can ONLY increase price, never decrease.
+ */
+export const requestPriceIncrease = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { revisedPrice, reason } = req.body;
+        const userId = req.tokenPayload?.id;
+
+        const booking = await Booking.findById(id);
+        if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
+
+        if (booking.worker.toString() !== userId) {
+            return res.status(403).json({ success: false, message: "Forbidden: Only the assigned Ustad can request a price increase" });
+        }
+
+        if (booking.status !== 'accepted' && booking.status !== 'ongoing') {
+            return res.status(400).json({ success: false, message: "Price can only be updated for accepted or ongoing jobs" });
+        }
+
+        const currentPrice = Number(booking.totalAmount || booking.agreement?.agreedPrice || 0);
+        const newPrice = Number(revisedPrice);
+
+        if (newPrice <= currentPrice) {
+            return res.status(400).json({
+                success: false,
+                message: `Price can only be increased above the agreed Rs. ${currentPrice.toLocaleString('en-PK')}. Price reductions cannot be done by Ustads. If the scope was reduced, the customer must contact Admin Support.`
+            });
+        }
+
+        const priceDifference = newPrice - currentPrice;
+        const additionalCommission = await calculateCommissionAmount(priceDifference);
+
+        // Check worker wallet eligibility with -300 PKR overdraft grace
+        const wallet = await getOrCreateWallet(userId as string);
+        const balance = Number(wallet.balance || 0);
+        const MAX_OVERDRAFT = 300;
+        if (balance - additionalCommission < -MAX_OVERDRAFT) {
+            return res.status(402).json({
+                success: false,
+                message: `Insufficient wallet balance for additional commission of Rs. ${Math.round(additionalCommission)}. Available: Rs. ${balance}. Please recharge your wallet.`
+            });
+        }
+
+        booking.pendingPriceIncrease = {
+            revisedPrice: newPrice,
+            reason: String(reason).trim(),
+            requestedAt: new Date(),
+            additionalCommission
+        };
+
+        await booking.save();
+
+        // Real-time socket event to customer
+        const io = getIO();
+        io.to(booking.customer.toString()).emit('booking:price_increase_requested', {
+            bookingId: booking._id,
+            currentPrice,
+            revisedPrice: newPrice,
+            reason: String(reason).trim(),
+            additionalCommission
+        });
+
+        // Push notification to customer
+        sendNotificationToRecipient(
+            booking.customer.toString(),
+            'user',
+            'Price Revision Request ⚠️',
+            `Ustad has requested to increase job price to Rs. ${newPrice.toLocaleString('en-PK')} (${reason}). Tap to review and approve.`,
+            { bookingId: booking._id.toString(), type: 'price_increase_requested' }
+        ).catch(err => logger.error("Failed to send price increase push to customer:", err));
+
+        res.status(200).json({
+            success: true,
+            message: "Price increase requested. Waiting for customer approval.",
+            data: {
+                bookingId: booking._id,
+                currentPrice,
+                revisedPrice: newPrice,
+                pendingPriceIncrease: booking.pendingPriceIncrease
+            }
+        });
+    } catch (error: any) {
+        logger.error("Error in requestPriceIncrease:", error);
+        res.status(500).json({ success: false, message: error?.message || "Internal server error" });
+    }
+};
+
+/**
+ * Customer approves or declines a price increase requested by the worker.
+ */
+export const respondPriceIncrease = async (req: AuthRequest, res: Response) => {
+    const session = await mongoose.startSession();
+    try {
+        const { id } = req.params;
+        const { approved } = req.body;
+        const customerId = req.tokenPayload?.id;
+
+        let booking: any = null;
+
+        await session.withTransaction(async () => {
+            booking = await Booking.findById(id).session(session);
+            if (!booking) {
+                const err = new Error("Booking not found");
+                (err as any).statusCode = 404;
+                throw err;
+            }
+
+            if (booking.customer.toString() !== customerId) {
+                const err = new Error("Forbidden: Only the customer can approve or decline price increase");
+                (err as any).statusCode = 403;
+                throw err;
+            }
+
+            if (!booking.pendingPriceIncrease) {
+                const err = new Error("No pending price increase request for this booking");
+                (err as any).statusCode = 400;
+                throw err;
+            }
+
+            const { revisedPrice, reason, requestedAt, additionalCommission } = booking.pendingPriceIncrease;
+            const previousPrice = Number(booking.totalAmount || booking.agreement?.agreedPrice || 0);
+
+            booking.priceRevisionHistory = booking.priceRevisionHistory || [];
+
+            if (approved) {
+                // If job is already ongoing and commission was deducted, deduct additional commission now
+                if (booking.commissionDeducted && additionalCommission > 0) {
+                    const walletSettings = await getWalletSettings();
+                    await reserveCommission({
+                        workerId: booking.worker,
+                        bookingId: booking._id,
+                        amount: additionalCommission,
+                        commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0
+                    }, { session });
+                }
+
+                // Update amounts
+                booking.subtotal = revisedPrice;
+                booking.totalAmount = revisedPrice;
+                if (booking.agreement) {
+                    booking.agreement.agreedPrice = revisedPrice;
+                    booking.agreement.cashDue = revisedPrice - Number(booking.agreement.discountAmount || 0);
+                    booking.agreement.commissionAmount = Number(booking.agreement.commissionAmount || 0) + additionalCommission;
+                    booking.agreement.workerNetIncome = revisedPrice - booking.agreement.commissionAmount;
+                }
+                booking.platformFee = Number(booking.platformFee || 0) + additionalCommission;
+                booking.workerEarning = revisedPrice - booking.platformFee;
+
+                booking.priceRevisionHistory.push({
+                    previousPrice,
+                    revisedPrice,
+                    reason,
+                    customerApproved: true,
+                    approvedAt: new Date(),
+                    requestedAt,
+                    previousCommission: booking.platformFee - additionalCommission,
+                    additionalCommission,
+                    status: 'approved'
+                });
+            } else {
+                booking.priceRevisionHistory.push({
+                    previousPrice,
+                    revisedPrice,
+                    reason,
+                    customerApproved: false,
+                    requestedAt,
+                    previousCommission: booking.platformFee,
+                    additionalCommission: 0,
+                    status: 'rejected'
+                });
+            }
+
+            booking.pendingPriceIncrease = null;
+            await booking.save({ session });
+        });
+
+        const io = getIO();
+        io.to(booking.worker.toString()).emit(
+            approved ? 'booking:price_increase_approved' : 'booking:price_increase_rejected',
+            { bookingId: booking._id, approved, revisedPrice: booking.totalAmount }
+        );
+
+        sendNotificationToRecipient(
+            booking.worker.toString(),
+            'worker',
+            approved ? 'Price Increase Approved! ✅' : 'Price Increase Declined ❌',
+            approved
+                ? `Customer approved your updated price of Rs. ${booking.totalAmount.toLocaleString('en-PK')}.`
+                : `Customer declined the price increase. The original agreed price remains.`,
+            { bookingId: booking._id.toString(), type: approved ? 'price_increase_approved' : 'price_increase_rejected' }
+        ).catch(err => logger.error("Failed to send price increase response push to worker:", err));
+
+        res.status(200).json({
+            success: true,
+            message: approved ? "Price increase approved successfully." : "Price increase declined.",
+            data: { booking }
+        });
+    } catch (error: any) {
+        logger.error("Error in respondPriceIncrease:", error);
+        res.status(error.statusCode || 500).json({ success: false, message: error.message || "Internal server error" });
+    } finally {
+        await session.endSession();
+    }
+};
+
+/**
+ * Customer Truth Verification at Completion:
+ * Customer verifies how much they actually paid.
+ * If customer willingly paid extra, incremental commission is deducted from worker wallet.
+ * If worker demanded unauthorized money, customer can report it.
+ */
+export const customerVerifyPayment = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { actualAmountPaid, reportExtraDemand, feedback } = req.body;
+        const customerId = req.tokenPayload?.id;
+
+        const booking = await Booking.findById(id);
+        if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
+
+        if (booking.customer.toString() !== customerId) {
+            return res.status(403).json({ success: false, message: "Forbidden: Only the customer can verify payment" });
+        }
+
+        const agreedAmount = Number(booking.totalAmount || booking.agreement?.agreedPrice || 0);
+        const declaredAmount = Number(actualAmountPaid);
+
+        let extraCommission = 0;
+        if (declaredAmount > agreedAmount) {
+            const difference = declaredAmount - agreedAmount;
+            extraCommission = await calculateCommissionAmount(difference);
+
+            if (extraCommission > 0) {
+                await WorkerWallet.findOneAndUpdate(
+                    { worker: booking.worker },
+                    { $inc: { balance: -extraCommission, totalCommissionDeducted: extraCommission } }
+                );
+
+                const workerWallet = await getOrCreateWallet(booking.worker);
+                const bookingRef = String(booking._id).slice(-6).toUpperCase();
+                await WalletTransaction.create({
+                    wallet: workerWallet._id,
+                    worker: booking.worker,
+                    type: 'commission_deduction',
+                    amount: extraCommission,
+                    balanceBefore: workerWallet.balance + extraCommission,
+                    balanceAfter: workerWallet.balance,
+                    description: `Incremental commission on customer-declared payment for #${bookingRef} (extra Rs. ${difference})`,
+                    reference: { booking: booking._id },
+                    performedBy: { actor: booking.customer, actorType: 'user' }
+                });
+
+                booking.totalAmount = declaredAmount;
+                booking.subtotal = declaredAmount;
+                booking.platformFee = Number(booking.platformFee || 0) + extraCommission;
+                if (booking.agreement) {
+                    booking.agreement.agreedPrice = declaredAmount;
+                    booking.agreement.commissionAmount = Number(booking.agreement.commissionAmount || 0) + extraCommission;
+                }
+            }
+        }
+
+        booking.finalSettlement = {
+            customerDeclaredAmount: declaredAmount,
+            extraCommissionDeducted: extraCommission,
+            verifiedAt: new Date()
+        };
+
+        if (reportExtraDemand) {
+            booking.fraudSignals = {
+                isFlaggedForAudit: true,
+                flagReason: `Customer reported worker demanded unauthorized extra money. Declared: Rs. ${declaredAmount} vs Agreed: Rs. ${agreedAmount}. Note: ${feedback || 'None'}`,
+                flaggedAt: new Date()
+            };
+        }
+
+        await booking.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Payment verified successfully. Thank you for keeping ApnaUstad honest and safe.",
+            data: {
+                declaredAmount,
+                agreedAmount,
+                extraCommissionDeducted: extraCommission,
+                finalSettlement: booking.finalSettlement
+            }
+        });
+    } catch (error: any) {
+        logger.error("Error in customerVerifyPayment:", error);
+        res.status(500).json({ success: false, message: error?.message || "Internal server error" });
+    }
+};
+
+/**
+ * Customer requests a price reduction to Admin Support when scope was reduced.
+ * (Ustads cannot lower the price themselves to prevent coercion & fraud).
+ */
+export const requestPriceReduction = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { requestedAmount, reason } = req.body;
+        const customerId = req.tokenPayload?.id;
+
+        const booking = await Booking.findById(id);
+        if (!booking) return res.status(404).json({ success: false, message: "Booking not found" });
+
+        if (booking.customer.toString() !== customerId) {
+            return res.status(403).json({ success: false, message: "Forbidden: Only the customer can request a price reduction" });
+        }
+
+        const targetAmount = Number(requestedAmount);
+        const currentPrice = Number(booking.totalAmount || booking.agreement?.agreedPrice || 0);
+
+        if (targetAmount >= currentPrice) {
+            return res.status(400).json({ success: false, message: `Requested price must be less than current price of Rs. ${currentPrice}` });
+        }
+
+        if (targetAmount < 300) {
+            return res.status(400).json({ success: false, message: "Price reduction cannot be below the category minimum visit floor of Rs. 300" });
+        }
+
+        booking.customerReductionRequest = {
+            requestedAmount: targetAmount,
+            reason: String(reason).trim(),
+            status: 'pending',
+            requestedAt: new Date()
+        };
+
+        await booking.save();
+
+        res.status(200).json({
+            success: true,
+            message: "Price reduction request submitted to Admin Support for review.",
+            data: { customerReductionRequest: booking.customerReductionRequest }
+        });
+    } catch (error: any) {
+        logger.error("Error in requestPriceReduction:", error);
+        res.status(500).json({ success: false, message: error?.message || "Internal server error" });
     }
 };
