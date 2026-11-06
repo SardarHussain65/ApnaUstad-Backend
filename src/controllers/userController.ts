@@ -146,7 +146,8 @@ export const getWorkerById = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
     const worker = await Workers.findOne({ _id: id, isActive: true })
-        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -phone -email");
+        .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -phone -email")
+        .populate('specialties.categoryId', 'name icon color isActive');
     if (!worker) {
         throw new BadRequestError("Worker not found");
     }
