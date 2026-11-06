@@ -58,6 +58,7 @@ export const getAllWorkers = asyncHandler(async (req: AdminAuthRequest, res) => 
 
     const total = await Worker.countDocuments(query);
     const workers = await Worker.find(query)
+        .populate('specialties.categoryId', 'name icon color isActive')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum);
