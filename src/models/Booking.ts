@@ -173,17 +173,26 @@ const bookingSchema = new Schema<IBooking>(
             }
         ],
         customerReductionRequest: {
-            requestedAmount: { type: Number },
-            reason: { type: String, trim: true },
-            status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
-            requestedAt: { type: Date, default: Date.now },
-            adminNotes: { type: String, trim: true },
-            resolvedAt: { type: Date }
+            type: new mongoose.Schema({
+                requestedAmount: { type: Number },
+                reason: { type: String, trim: true },
+                status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+                requestedAt: { type: Date, default: Date.now },
+                adminNotes: { type: String, trim: true },
+                resolvedAt: { type: Date }
+            }, { _id: false }),
+            default: null
         },
         finalSettlement: {
-            customerDeclaredAmount: { type: Number },
-            extraCommissionDeducted: { type: Number, default: 0 },
-            verifiedAt: { type: Date }
+            type: new mongoose.Schema({
+                customerDeclaredAmount: { type: Number },
+                extraCommissionDeducted: { type: Number, default: 0 },
+                verifiedAt: { type: Date },
+                unauthorizedExtraDemanded: { type: Boolean, default: false },
+                customerFeedback: { type: String, trim: true },
+                reportedStatus: { type: String }
+            }, { _id: false }),
+            default: null
         },
         fraudSignals: {
             durationMinutesOnSite: { type: Number, default: 0 },

@@ -1307,15 +1307,9 @@ export const requestPriceIncrease = async (req: AuthRequest, res: Response) => {
 
         await booking.save();
 
-        // Real-time socket event to customer
+        // Real-time socket event to customer and worker
         const io = getIO();
-        io.to(booking.customer.toString()).emit('booking:price_increase_requested', {
-            bookingId: booking._id,
-            currentPrice,
-            revisedPrice: newPrice,
-            reason: String(reason).trim(),
-            additionalCommission
-        });
+        emitBookingEvent(io, booking, 'booking:price_increase_requested');
 
         // Push notification to customer
         sendNotificationToRecipient(
@@ -1432,10 +1426,7 @@ export const respondPriceIncrease = async (req: AuthRequest, res: Response) => {
         });
 
         const io = getIO();
-        io.to(booking.worker.toString()).emit(
-            approved ? 'booking:price_increase_approved' : 'booking:price_increase_rejected',
-            { bookingId: booking._id, approved, revisedPrice: booking.totalAmount }
-        );
+        emitBookingEvent(io, booking, approved ? 'booking:price_increase_approved' : 'booking:price_increase_rejected');
 
         sendNotificationToRecipient(
             booking.worker.toString(),
@@ -1504,27 +1495,32 @@ export const customerVerifyPayment = async (req: AuthRequest, res: Response) => 
                     balanceAfter: workerWallet.balance,
                     description: `Incremental commission on customer-declared payment for #${bookingRef} (extra Rs. ${difference})`,
                     reference: { booking: booking._id },
-                    performedBy: { actor: booking.customer, actorType: 'user' }
+                    performedBy: { actor: booking.customer, actorType: 'system' }
                 });
+            }
 
-                booking.totalAmount = declaredAmount;
-                booking.subtotal = declaredAmount;
-                booking.platformFee = Number(booking.platformFee || 0) + extraCommission;
-                if (booking.agreement) {
-                    booking.agreement.agreedPrice = declaredAmount;
-                    booking.agreement.commissionAmount = Number(booking.agreement.commissionAmount || 0) + extraCommission;
-                }
+            booking.totalAmount = declaredAmount;
+            booking.subtotal = declaredAmount;
+            booking.platformFee = Number(booking.platformFee || 0) + extraCommission;
+            if (booking.agreement) {
+                booking.agreement.agreedPrice = declaredAmount;
+                booking.agreement.cashDue = declaredAmount - Number(booking.agreement.discountAmount || 0);
+                booking.agreement.commissionAmount = Number(booking.agreement.commissionAmount || 0) + extraCommission;
             }
         }
 
         booking.finalSettlement = {
             customerDeclaredAmount: declaredAmount,
             extraCommissionDeducted: extraCommission,
-            verifiedAt: new Date()
+            verifiedAt: new Date(),
+            unauthorizedExtraDemanded: Boolean(reportExtraDemand),
+            customerFeedback: feedback ? String(feedback).trim() : undefined,
+            reportedStatus: declaredAmount > agreedAmount ? 'paid_more' : 'exact_as_agreed'
         };
 
         if (reportExtraDemand) {
             booking.fraudSignals = {
+                durationMinutesOnSite: booking.fraudSignals?.durationMinutesOnSite || 0,
                 isFlaggedForAudit: true,
                 flagReason: `Customer reported worker demanded unauthorized extra money. Declared: Rs. ${declaredAmount} vs Agreed: Rs. ${agreedAmount}. Note: ${feedback || 'None'}`,
                 flaggedAt: new Date()
@@ -1532,6 +1528,9 @@ export const customerVerifyPayment = async (req: AuthRequest, res: Response) => 
         }
 
         await booking.save();
+
+        const io = getIO();
+        emitBookingEvent(io, booking, 'booking:price_updated');
 
         res.status(200).json({
             success: true,

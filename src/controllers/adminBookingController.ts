@@ -64,6 +64,7 @@ export const getAllBookings = asyncHandler(async (req: AdminAuthRequest, res) =>
     }
     if (req.query.hasReductionRequest === 'true') {
         query['customerReductionRequest.status'] = 'pending';
+        query['customerReductionRequest.requestedAmount'] = { $gt: 0 };
     }
     if (dateFrom || dateTo) {
         query.scheduledDate = {};
