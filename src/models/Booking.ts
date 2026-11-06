@@ -174,14 +174,15 @@ const bookingSchema = new Schema<IBooking>(
         ],
         customerReductionRequest: {
             type: new mongoose.Schema({
-                requestedAmount: { type: Number },
+                requestedAmount: { type: Number, required: true },
                 reason: { type: String, trim: true },
-                status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
-                requestedAt: { type: Date, default: Date.now },
+                status: { type: String, enum: ['pending', 'approved', 'rejected'] },
+                requestedAt: { type: Date },
                 adminNotes: { type: String, trim: true },
                 resolvedAt: { type: Date }
             }, { _id: false }),
-            default: null
+            default: undefined,
+            required: false
         },
         finalSettlement: {
             type: new mongoose.Schema({
