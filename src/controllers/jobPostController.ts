@@ -1136,14 +1136,20 @@ export const rejectBid = async (req: AuthRequest, res: Response) => {
 
         const io = getIO();
         if (io) {
-            // Inform the worker that their bid was rejected so they can re-bid with updated price
-            io.to(`worker:${bid.worker.toString()}`).emit('bid:rejected', {
+            const rejectPayload = {
                 bidId: bid._id,
                 jobId: jobPost._id,
+                workerId: bid.worker.toString(),
                 proposedPrice: bid.proposedPrice,
                 category: jobPost.category,
                 reason: reason || "Customer declined your offer. You can submit an updated rate!"
-            });
+            };
+
+            // Inform the worker that their bid was rejected so they can re-bid with updated price
+            io.to(`worker:${bid.worker.toString()}`).emit('bid:rejected', rejectPayload);
+
+            // Inform anyone in the job room (e.g. active screens)
+            io.to(`job:${jobPost._id.toString()}`).emit('bid:rejected', rejectPayload);
 
             // Inform the customer's room to update applicant list
             io.to(`user:${customerId}`).emit('bid:rejected', {
@@ -1427,7 +1433,7 @@ export const getWorkerBids = async (req: AuthRequest, res: Response) => {
         const allowedStatuses = ['pending', 'accepted', 'rejected'];
         const statuses = statusParam
             ? statusParam.split(',').map(s => s.trim()).filter(s => allowedStatuses.includes(s))
-            : ['pending'];
+            : ['pending', 'rejected'];
 
         const query: any = { worker: workerId };
         if (statuses.length > 0) {
@@ -1463,6 +1469,50 @@ export const getWorkerBids = async (req: AuthRequest, res: Response) => {
         });
     } catch (error: any) {
         logger.error("Error in getWorkerBids:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+/**
+ * @description Get a single bid by ID for authenticated worker
+ * @route GET /api/v1/jobs/bids/:bidId
+ * @access Private (Worker)
+ */
+export const getBidById = async (req: AuthRequest, res: Response) => {
+    try {
+        const workerId = req.tokenPayload?.id;
+        const { bidId } = req.params;
+
+        if (!workerId || req.tokenPayload?.type !== 'worker') {
+            return res.status(401).json({ success: false, message: "Unauthorized as worker" });
+        }
+
+        const bid = await JobBid.findById(bidId)
+            .populate({
+                path: 'jobPost',
+                select: 'customer category description urgency scheduledDate scheduledTime address location amount imageUrl imageUrls videoUrl videoUrls audioUrls status expiresAt createdAt updatedAt',
+                populate: { path: 'customer', select: 'fullName profileImage phone' }
+            });
+
+        if (!bid) {
+            return res.status(404).json({ success: false, message: "Bid not found" });
+        }
+
+        if (bid.worker.toString() !== workerId) {
+            return res.status(403).json({ success: false, message: "Forbidden" });
+        }
+
+        const customerStats = await buildCustomerStatsById(
+            typeof bid.jobPost === 'object' && bid.jobPost ? [bid.jobPost] : []
+        );
+        const cardPayload = buildWorkerBidCardPayload(bid, customerStats);
+
+        res.status(200).json({
+            success: true,
+            data: cardPayload
+        });
+    } catch (error: any) {
+        logger.error("Error in getBidById:", error);
         res.status(500).json({ success: false, message: "Internal server error" });
     }
 };

@@ -12,6 +12,7 @@ import {
     getMyJobPosts,
     getJobPostById,
     getWorkerBids,
+    getBidById,
     withdrawBid,
     updateBid,
     uploadJobImages,
@@ -45,6 +46,9 @@ router.get("/my-posts", userAuthMiddleware, getMyJobPosts);
 
 // Get bids/interests submitted by the authenticated worker
 router.get("/my-bids", workerAuthMiddleware, getWorkerBids);
+
+// Get a single bid by ID (for workers)
+router.get("/bids/:bidId", workerAuthMiddleware, getBidById);
 
 // Withdraw a pending bid/mission interest
 router.delete("/bids/:bidId", workerAuthMiddleware, withdrawBid);
