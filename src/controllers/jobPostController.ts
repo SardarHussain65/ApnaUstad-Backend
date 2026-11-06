@@ -718,14 +718,14 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
         // Check if bid already exists
         const existingBid = await JobBid.findOne({ jobPost: jobId, worker: workerId });
         if (existingBid) {
-            if (existingBid.status === 'pending') {
+            if (existingBid.status === 'pending' || existingBid.status === 'rejected') {
                 const parsedEstimatedDays = estimatedDays ? Number(estimatedDays) : undefined;
                 existingBid.proposedPrice = proposedAmount;
                 existingBid.priceMode = proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer';
                 existingBid.clientOfferSnapshot = clientOffer;
                 existingBid.message = finalMessage;
                 existingBid.commissionRateSnapshot = walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0;
-                existingBid.status = 'pending';
+                existingBid.status = 'pending'; // Reset back to pending if previously rejected
                 if (rateBasis) existingBid.rateBasis = rateBasis;
                 if (helperCount !== undefined) existingBid.helperCount = Number(helperCount) || 0;
                 if (Number.isFinite(parsedEstimatedDays) && parsedEstimatedDays! > 0) {
@@ -756,7 +756,7 @@ export const submitBid = async (req: AuthRequest, res: Response) => {
                     message: "Bid updated successfully"
                 });
             } else {
-                return res.status(400).json({ success: false, message: "You have already placed a bid on this job." });
+                return res.status(400).json({ success: false, message: "You have already placed an accepted bid on this job." });
             }
         }
 
@@ -1103,6 +1103,76 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
 };
 
 /**
+ * @description Reject a Bid
+ * @route POST /api/v1/jobs/:jobId/bids/:bidId/reject
+ * @access Private (User)
+ */
+export const rejectBid = async (req: AuthRequest, res: Response) => {
+    try {
+        const customerId = req.tokenPayload?.id;
+        const { jobId, bidId } = req.params;
+        const { reason } = req.body || {};
+
+        if (!customerId || req.tokenPayload?.type !== 'user') {
+            return res.status(401).json({ success: false, message: "Unauthorized as customer" });
+        }
+
+        const jobPost = await JobPost.findById(jobId);
+        if (!jobPost) {
+            return res.status(404).json({ success: false, message: "Job post not found" });
+        }
+
+        if (jobPost.customer.toString() !== customerId) {
+            return res.status(403).json({ success: false, message: "Forbidden" });
+        }
+
+        const bid = await JobBid.findOne({ _id: bidId, jobPost: jobId, status: 'pending' });
+        if (!bid) {
+            return res.status(404).json({ success: false, message: "Pending bid not found or already processed" });
+        }
+
+        bid.status = 'rejected';
+        await bid.save();
+
+        const io = getIO();
+        if (io) {
+            // Inform the worker that their bid was rejected so they can re-bid with updated price
+            io.to(`worker:${bid.worker.toString()}`).emit('bid:rejected', {
+                bidId: bid._id,
+                jobId: jobPost._id,
+                proposedPrice: bid.proposedPrice,
+                category: jobPost.category,
+                reason: reason || "Customer declined your offer. You can submit an updated rate!"
+            });
+
+            // Inform the customer's room to update applicant list
+            io.to(`user:${customerId}`).emit('bid:rejected', {
+                bidId: bid._id,
+                jobId: jobPost._id
+            });
+        }
+
+        // Send push notification to worker so they know to adjust their rate
+        sendNotificationToRecipient(
+            bid.worker,
+            'worker',
+            'Offer Declined 💬',
+            `Customer declined your quote of Rs. ${Number(bid.proposedPrice).toLocaleString()} for "${jobPost.category}". Tap to submit an updated rate!`,
+            { jobId: jobPost._id.toString(), bidId: bid._id.toString(), type: 'bid_rejected' }
+        ).catch(err => logger.error(`Failed to send bid rejection push notification to worker ${bid.worker}:`, err));
+
+        res.status(200).json({
+            success: true,
+            message: "Bid rejected successfully",
+            data: bid
+        });
+    } catch (error: any) {
+        logger.error("Error in rejectBid:", error);
+        res.status(500).json({ success: false, message: error.message || "Internal server error" });
+    }
+};
+
+/**
  * @description Get a single Job Post
  * @route GET /api/v1/jobs/:jobId
  * @access Private (User, Worker, Admin)
@@ -1320,7 +1390,15 @@ export const getMissedJobs = async (req: AuthRequest, res: Response) => {
 export const getJobBids = async (req: AuthRequest, res: Response) => {
     try {
         const { jobId } = req.params;
-        const bids = await JobBid.find({ jobPost: jobId })
+        const statusParam = req.query.status as string | undefined;
+        const query: any = { jobPost: jobId };
+        if (statusParam) {
+            query.status = statusParam;
+        } else {
+            // Default to pending bids so rejected bids do not clutter active offers
+            query.status = 'pending';
+        }
+        const bids = await JobBid.find(query)
             .populate('worker', WORKER_BID_PROFILE_SELECT)
             .sort({ createdAt: -1 });
 
@@ -1472,8 +1550,8 @@ export const updateBid = async (req: AuthRequest, res: Response) => {
             return res.status(403).json({ success: false, message: "Forbidden" });
         }
 
-        if (bid.status !== 'pending') {
-            return res.status(400).json({ success: false, message: "Only pending bids can be updated" });
+        if (bid.status !== 'pending' && bid.status !== 'rejected') {
+            return res.status(400).json({ success: false, message: "Only pending or rejected bids can be updated" });
         }
 
         if (!Number.isFinite(proposedAmount) || proposedAmount <= 0) {
@@ -1503,6 +1581,7 @@ export const updateBid = async (req: AuthRequest, res: Response) => {
         const clientOffer = Number(jobPost.pricing?.clientOffer ?? jobPost.amount ?? 0);
         bid.proposedPrice = proposedAmount;
         bid.priceMode = proposedAmount === clientOffer ? 'accepted_offer' : 'counter_offer';
+        bid.status = 'pending'; // Re-activate rejected bids upon price update
         if (message && typeof message === 'string' && message.trim()) {
             bid.message = message.trim();
         }

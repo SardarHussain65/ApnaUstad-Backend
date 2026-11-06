@@ -1374,17 +1374,6 @@ export const respondPriceIncrease = async (req: AuthRequest, res: Response) => {
             booking.priceRevisionHistory = booking.priceRevisionHistory || [];
 
             if (approved) {
-                // If job is already ongoing and commission was deducted, deduct additional commission now
-                if (booking.commissionDeducted && additionalCommission > 0) {
-                    const walletSettings = await getWalletSettings();
-                    await reserveCommission({
-                        workerId: booking.worker,
-                        bookingId: booking._id,
-                        amount: additionalCommission,
-                        commissionRateSnapshot: walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0
-                    }, { session });
-                }
-
                 // Update amounts
                 booking.subtotal = revisedPrice;
                 booking.totalAmount = revisedPrice;
@@ -1408,6 +1397,63 @@ export const respondPriceIncrease = async (req: AuthRequest, res: Response) => {
                     additionalCommission,
                     status: 'approved'
                 });
+
+                // Auto-transition to 'ongoing' (Start Work) if currently 'accepted'
+                // Worker requested price revision on-site; once approved by customer, work begins immediately
+                // without requiring worker to press "Start Work" again.
+                const shouldAutoStart = booking.status === 'accepted';
+                if (shouldAutoStart) {
+                    booking.status = 'ongoing';
+                    if (!booking.workStartedAt) {
+                        booking.workStartedAt = new Date();
+                    }
+                }
+
+                // Deduct commission for revised price:
+                // If job was not yet ongoing, reserve full commission on revised price.
+                // If job was already ongoing, deduct incremental commission.
+                const walletSettings = await getWalletSettings();
+                const totalCommission = Number(booking.agreement?.commissionAmount ?? booking.platformFee ?? 0);
+
+                if (!booking.commissionDeducted) {
+                    if (totalCommission > 0) {
+                        await reserveCommission({
+                            workerId: booking.worker,
+                            bookingId: booking._id,
+                            amount: totalCommission,
+                            commissionRateSnapshot: Number(
+                                booking.agreement?.commissionRateSnapshot
+                                ?? (walletSettings.commissionEnabled ? walletSettings.platformFeePercentage : 0)
+                            )
+                        }, { session });
+                        booking.commissionDeducted = true;
+                    }
+                } else if (additionalCommission > 0) {
+                    await WorkerWallet.findOneAndUpdate(
+                        { worker: booking.worker },
+                        { $inc: { balance: -additionalCommission, totalCommissionDeducted: additionalCommission } },
+                        { session }
+                    );
+
+                    const workerWallet = await getOrCreateWallet(booking.worker, session);
+                    const bookingRef = String(booking._id).slice(-6).toUpperCase();
+                    await WalletTransaction.create([{
+                        wallet: workerWallet._id,
+                        worker: booking.worker,
+                        type: 'commission_deduction',
+                        amount: additionalCommission,
+                        balanceBefore: workerWallet.balance,
+                        balanceAfter: workerWallet.balance - additionalCommission,
+                        description: `Additional commission on approved price increase for #${bookingRef} (new price Rs. ${revisedPrice})`,
+                        reference: { booking: booking._id },
+                        performedBy: { actor: booking.customer, actorType: 'system' }
+                    }], { session });
+                }
+
+                if (shouldAutoStart) {
+                    await syncPaymentForBookingStatus(booking, session);
+                    await syncLinkedJobPostStatus(booking, session);
+                }
             } else {
                 booking.priceRevisionHistory.push({
                     previousPrice,
@@ -1427,13 +1473,17 @@ export const respondPriceIncrease = async (req: AuthRequest, res: Response) => {
 
         const io = getIO();
         emitBookingEvent(io, booking, approved ? 'booking:price_increase_approved' : 'booking:price_increase_rejected');
+        if (approved) {
+            emitBookingEvent(io, booking, 'booking:ongoing');
+            emitBookingEvent(io, booking, 'booking:price_updated');
+        }
 
         sendNotificationToRecipient(
             booking.worker.toString(),
             'worker',
-            approved ? 'Price Increase Approved' : 'Price Increase Declined',
+            approved ? 'Price Approved – Work Started! ⚡' : 'Price Increase Declined',
             approved
-                ? `Customer approved your updated price of Rs. ${booking.totalAmount.toLocaleString('en-PK')}.`
+                ? `Customer approved your updated price of Rs. ${booking.totalAmount.toLocaleString('en-PK')}. Work is now in progress!`
                 : `Customer declined the price increase. The original agreed price remains.`,
             { bookingId: booking._id.toString(), type: approved ? 'price_increase_approved' : 'price_increase_rejected' }
         ).catch(err => logger.error("Failed to send price increase response push to worker:", err));
