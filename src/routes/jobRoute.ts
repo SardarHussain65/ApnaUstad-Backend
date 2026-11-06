@@ -4,6 +4,7 @@ import {
     createJobPost,
     submitBid,
     acceptBid,
+    rejectBid,
     getNearbyJobs,
     getMissedJobs,
     getJobBids,
@@ -59,6 +60,9 @@ router.get("/:jobId/bids", userAuthMiddleware, getJobBids);
 
 // Accept a bid (for users)
 router.post("/:jobId/bids/:bidId/accept", userAuthMiddleware, acceptBid);
+
+// Reject a bid (for users)
+router.post("/:jobId/bids/:bidId/reject", userAuthMiddleware, rejectBid);
 
 // Accept an instant job (for workers)
 router.post("/:jobId/accept-instant", workerAuthMiddleware, acceptInstantJob);
