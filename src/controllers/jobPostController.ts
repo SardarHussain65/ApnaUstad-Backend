@@ -159,7 +159,8 @@ const buildWorkerJobSignalPayload = (
     const media = buildJobMediaMeta(job);
     const schedule = formatJobDate(job.scheduledDate || job.createdAt);
     const clientBudget = Number(job.amount || 0);
-    const offerAmount = Number(clientBudget || workerProfile?.hourlyRate || 0);
+    const isOpenPricing = job.pricingType === 'open' || job.isFixedPrice === false || clientBudget <= 0;
+    const offerAmount = isOpenPricing ? 0 : clientBudget;
     const distanceMeters = calculateDistanceMeters(workerProfile?.location?.coordinates, job.location?.coordinates);
     const responseWindowSeconds = Math.max(0, Math.floor((new Date(job.expiresAt).getTime() - Date.now()) / 1000));
 
@@ -183,10 +184,11 @@ const buildWorkerJobSignalPayload = (
             missionKindLabel: job.urgency === 'instant' ? 'Urgent job' : 'Scheduled visit',
             evidenceCount: media.totalCount,
             hasMedia: media.totalCount > 0,
+            isOpenPricing,
             amount: offerAmount,
-            amountText: offerAmount > 0 ? `Rs. ${offerAmount.toLocaleString()}` : 'Open budget',
-            clientBudget,
-            clientBudgetText: clientBudget > 0 ? `Rs. ${clientBudget.toLocaleString()}` : 'Open budget',
+            amountText: isOpenPricing ? 'Open for offers' : `Rs. ${offerAmount.toLocaleString()}`,
+            clientBudget: offerAmount,
+            clientBudgetText: isOpenPricing ? 'Open for offers' : `Rs. ${offerAmount.toLocaleString()}`,
             distanceMeters,
             distanceText: formatDistance(distanceMeters),
             expiresAt: job.expiresAt,
@@ -213,8 +215,9 @@ const buildPersonalizedWorkerJobSignalPayload = async (
         ? { ...(workerProfile?.toObject ? workerProfile.toObject() : workerProfile), hourlyRate: matchedSpecialtyProfile.hourlyRate }
         : workerProfile;
     const payload = buildWorkerJobSignalPayload(jobDoc, customerStatsById, workerForPayload);
+    const isOpenPricing = payload.signalMeta.isOpenPricing;
     const offerAmount = Number(payload.signalMeta.amount || 0);
-    const estimatedCommission = await calculateCommissionAmount(offerAmount);
+    const estimatedCommission = isOpenPricing ? 0 : await calculateCommissionAmount(offerAmount);
     const walletEligibility = workerProfile?._id
         ? await getWalletEligibility(workerProfile._id, estimatedCommission)
         : null;
@@ -223,10 +226,11 @@ const buildPersonalizedWorkerJobSignalPayload = async (
         ...payload,
         signalMeta: {
             ...payload.signalMeta,
+            isOpenPricing,
             estimatedCommission,
-            estimatedCommissionText: `Rs. ${estimatedCommission.toLocaleString()}`,
-            estimatedNetEarning: Math.max(0, offerAmount - estimatedCommission),
-            estimatedNetEarningText: `Rs. ${Math.max(0, offerAmount - estimatedCommission).toLocaleString()}`,
+            estimatedCommissionText: isOpenPricing ? 'Commission on agree' : `Rs. ${estimatedCommission.toLocaleString()}`,
+            estimatedNetEarning: isOpenPricing ? 0 : Math.max(0, offerAmount - estimatedCommission),
+            estimatedNetEarningText: isOpenPricing ? 'Open for Bids' : `Rs. ${Math.max(0, offerAmount - estimatedCommission).toLocaleString()}`,
             requiredWalletBalance: walletEligibility?.requiredBalance ?? 0,
             walletBalance: walletEligibility?.availableBalance ?? walletEligibility?.balance ?? 0,
             walletTotalBalance: walletEligibility?.balance ?? 0,
