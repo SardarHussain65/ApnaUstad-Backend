@@ -107,6 +107,7 @@ export const getWorkers = asyncHandler(async (req, res) => {
     // Fetch workers with filters
     const workers = await Workers.find(filter)
         .select("-password -fcmToken -cnicNumber -cnicFrontImage -cnicBackImage -location -address -phone -email")
+        .populate('specialties.categoryId', 'name icon color isActive')
         .skip(skip)
         .limit(limit)
         .lean();

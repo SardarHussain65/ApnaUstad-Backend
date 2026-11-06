@@ -50,19 +50,27 @@ export const streamExport = asyncHandler(async (req: AdminAuthRequest, res: Resp
       );
     }
   } else if (entity === 'workers') {
-    res.write(csvRow(['ID', 'Full Name', 'Phone', 'Category', 'CNIC (Masked)', 'Rating', 'Jobs', 'Verified', 'Active', 'Joined At']));
+    res.write(csvRow(['ID', 'Full Name', 'Phone', 'Services / Categories', 'CNIC (Masked)', 'Rating', 'Jobs', 'Verified', 'Active', 'Joined At']));
     const cursor = Worker.find({ createdAt: { $gte: range.from, $lt: range.to } })
-      .select('fullName phone category cnicNumber rating totalJobs isVerified isActive createdAt')
+      .populate('specialties.categoryId', 'name')
+      .select('fullName phone category specialties cnicNumber rating totalJobs isVerified isActive createdAt')
       .sort({ createdAt: -1 })
       .cursor();
 
     for await (const doc of cursor) {
+      const allCats = [(doc as any).category].filter(Boolean);
+      if (Array.isArray((doc as any).specialties)) {
+        for (const s of (doc as any).specialties) {
+          const name = s.categoryId && typeof s.categoryId === 'object' && 'name' in s.categoryId ? s.categoryId.name : '';
+          if (name && !allCats.includes(name)) allCats.push(name);
+        }
+      }
       res.write(
         csvRow([
           doc._id.toString(),
           doc.fullName || '',
           doc.phone || '',
-          doc.category || '',
+          allCats.join(', ') || 'General',
           maskCnic(doc.cnicNumber || ''),
           doc.rating || 0,
           doc.totalJobs || 0,
