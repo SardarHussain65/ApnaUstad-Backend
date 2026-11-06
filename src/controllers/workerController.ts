@@ -356,7 +356,9 @@ export const getWorkerById = asyncHandler(async (req: AuthRequest, res) => {
         throw new BadRequestError("Worker not found");
     }
     await ensureLegacyPrimarySpecialty(worker);
-    worker = await Workers.findById(id).select("-password -fcmToken");
+    worker = await Workers.findById(id)
+        .select("-password -fcmToken")
+        .populate('specialties.categoryId', 'name icon color isActive');
 
     return successResponse(res, 200, "Worker fetched successfully", worker);
 });
