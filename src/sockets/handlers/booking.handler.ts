@@ -34,6 +34,10 @@ export const emitBookingEvent = (io: SocketIOServer, booking: any, eventType: st
             case 'booking:completed':
             case 'booking:cancelled':
             case 'booking:paid':
+            case 'booking:price_increase_requested':
+            case 'booking:price_increase_approved':
+            case 'booking:price_increase_rejected':
+            case 'booking:price_updated':
                 // Send to both parties and admin
                 if (customerRoom) emitter.to(customerRoom).emit(eventType, booking);
                 if (workerRoom) emitter.to(workerRoom).emit(eventType, booking);
