@@ -9,6 +9,7 @@ import {
     sendDisputeMessageAsParty,
     markDisputeReadAsParty,
     withdrawDispute,
+    cancelJobFromDispute,
     uploadDisputeEvidence,
 } from "../controllers/disputeController";
 import { jwtAuthMiddleware } from "../middlewares/jwt.middleware";
@@ -55,5 +56,6 @@ router.get("/:id/messages", getDisputeMessagesForParty);
 router.post("/:id/messages", sendDisputeMessageAsParty);
 router.post("/:id/read", markDisputeReadAsParty);
 router.post("/:id/withdraw", withdrawDispute);
+router.post("/:id/cancel-job", cancelJobFromDispute);
 
 export default router;

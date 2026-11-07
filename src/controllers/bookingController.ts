@@ -72,12 +72,27 @@ const syncLinkedJobPostStatus = async (booking: any, session?: mongoose.ClientSe
 
             try {
                 const io = getIO();
-                if (io && customerId) {
-                    io.to(`user:${customerId.toString()}`).emit('job:status', {
-                        jobId: jobDoc._id,
+                if (io) {
+                    if (customerId) {
+                        io.to(`user:${customerId.toString()}`).emit('job:status', {
+                            jobId: jobDoc._id,
+                            status: linkedStatus,
+                            bookingId: booking._id,
+                        });
+                    }
+                    // Global broadcasts to clear modal and home cards for all nearby workers
+                    io.emit('job:status', {
+                        jobId: jobDoc._id.toString(),
                         status: linkedStatus,
-                        bookingId: booking._id,
+                        bookingId: booking._id?.toString(),
                     });
+                    if (['assigned', 'closed', 'cancelled'].includes(linkedStatus)) {
+                        io.emit('job:assigned', {
+                            jobId: jobDoc._id.toString(),
+                            status: linkedStatus,
+                            bookingId: booking._id?.toString(),
+                        });
+                    }
                 }
             } catch (sockErr) {
                 logger.warn("Socket broadcast failed in syncLinkedJobPostStatus (non-fatal):", sockErr);
@@ -354,11 +369,11 @@ export const createBooking = async (req: AuthRequest, res: Response) => {
 
         // Emit socket event to the worker
         const io = getIO();
-        const eventPayload = bookingType === 'instant' 
-            ? { ...booking.toObject(), urgent: true } 
+        const eventPayload = bookingType === 'instant'
+            ? { ...booking.toObject(), urgent: true }
             : booking;
         emitBookingEvent(io, eventPayload, 'booking:new');
-        
+
         // Send push notification to the specific worker
         sendNotificationToRecipient(
             workerId,
@@ -569,10 +584,10 @@ export const getClientHomeSummary = async (req: AuthRequest, res: Response) => {
                     { status: 'completed', paymentStatus: { $ne: 'paid' } }
                 ]
             })
-            .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount agreement customer worker createdAt')
-            .populate('worker', 'fullName profileImage rating category city isVerified phone')
-            .sort({ updatedAt: -1 })
-            .lean(),
+                .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount agreement customer worker createdAt')
+                .populate('worker', 'fullName profileImage rating category city isVerified phone')
+                .sort({ updatedAt: -1 })
+                .lean(),
         ]);
 
         const total = statsSummary?.total || 0;
@@ -707,10 +722,10 @@ export const getWorkerHomeSummary = async (req: AuthRequest, res: Response) => {
                     { status: 'completed', paymentStatus: { $ne: 'paid' } }
                 ]
             })
-            .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount workerEarning agreement customer worker createdAt')
-            .populate('customer', 'fullName profileImage city phone')
-            .sort({ updatedAt: -1 })
-            .lean(),
+                .select('category description bookingType scheduledDate scheduledTime address status paymentStatus totalAmount workerEarning agreement customer worker createdAt')
+                .populate('customer', 'fullName profileImage city phone')
+                .sort({ updatedAt: -1 })
+                .lean(),
         ]);
 
         const total = statsSummary?.total || 0;
@@ -1154,7 +1169,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
     } catch (error: any) {
         logger.error("Error in updateBookingStatus:", error);
         const statusCode = error.statusCode || 500;
-        
+
         // Handle specific wallet validation response
         if (statusCode === 402) {
             res.status(402).json({
@@ -1165,7 +1180,7 @@ export const updateBookingStatus = async (req: AuthRequest, res: Response) => {
             });
             return;
         }
-        
+
         res.status(statusCode).json({ success: false, message: error.message || "Internal server error" });
     } finally {
         await session.endSession();

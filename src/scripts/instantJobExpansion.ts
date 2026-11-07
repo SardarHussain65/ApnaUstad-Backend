@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import JobPost from '../models/JobPost';
 import Worker from '../models/Workers';
+import Booking from '../models/Booking';
 import { getIO } from '../sockets/socketManager';
 import logger from '../config/logger';
 import { buildAvailableWorkerFilterForJobType } from '../services/workerJobAvailabilityService';
@@ -33,11 +34,31 @@ export const startInstantJobExpansion = () => {
             });
 
             for (const job of jobsToExpand) {
+                // Safeguard: verify job is genuinely open and not already assigned or completed
+                const existingBooking = await Booking.findOne({
+                    jobPost: job._id,
+                    status: { $in: ['accepted', 'ongoing', 'completed'] }
+                });
+                if (existingBooking) {
+                    job.status = existingBooking.status === 'completed' ? 'closed' : 'assigned';
+                    await job.save();
+                    continue;
+                }
+
                 logger.info(`Expanding radius for instant job: ${job._id}`);
                 const categoryFilter = await buildWorkerSpecialtyCategoryFilter(job.category);
+
+                // Exclude workers currently busy on an active/ongoing job
+                const busyBookings = await Booking.find({
+                    status: { $in: ['accepted', 'ongoing'] }
+                }).select('worker');
+                const busyWorkerIds = busyBookings.map(b => b.worker).filter(Boolean);
+                const busyWorkerFilter = busyWorkerIds.length > 0 ? { _id: { $nin: busyWorkerIds } } : {};
+
                 const nearbyWorkers = await Worker.find({
                     ...categoryFilter,
                     ...buildAvailableWorkerFilterForJobType('instant'),
+                    ...busyWorkerFilter,
                     location: {
                         $near: {
                             $geometry: job.location,
