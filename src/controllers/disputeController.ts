@@ -1,6 +1,7 @@
 // src/controllers/disputeController.ts
 import Dispute, { type IDispute } from "../models/Dispute";
 import Booking from "../models/Booking";
+import JobPost from "../models/JobPost";
 import User from "../models/User";
 import Worker from "../models/Workers";
 import Payment from "../models/Payment";
@@ -15,6 +16,9 @@ import { UploadRequest } from "../middlewares/multer.middleware";
 import { recordAdminAction } from "../services/adminAuditLog";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
 import { releaseCommissionReservation, settleCommissionReservation } from "../services/commissionReservationService";
+import { syncPaymentForBookingStatus } from "../services/paymentLedgerService";
+import { getIO } from "../sockets/socketManager";
+import { emitBookingEvent } from "../sockets/handlers/booking.handler";
 import logger from "../config/logger";
 import mongoose from "mongoose";
 
@@ -35,6 +39,7 @@ import {
 } from "../services/disputeResolutionService";
 import {
     CLOSED_DISPUTE_STATUSES,
+    emitDisputeCreated,
     emitDisputeUpdated,
     fetchDisputeMessages,
     getViewerRole,
@@ -71,7 +76,7 @@ const loadDisputeForParty = async (req: AuthRequest): Promise<{ dispute: IDisput
 };
 
 const populateDisputeForParty = (query: any) => query
-    .populate('booking', 'category status paymentStatus totalAmount completedAt scheduledDate scheduledTime address agreement')
+    .populate('booking', 'category status paymentStatus totalAmount completedAt scheduledDate scheduledTime address agreement jobPost')
     .populate('customer', 'fullName profileImage')
     .populate('worker', 'fullName profileImage category')
     .populate('resolvedBy', 'fullName');
@@ -146,6 +151,7 @@ export const raiseDispute = asyncHandler(async (req: AuthRequest, res) => {
         notifyPartiesAboutNewDispute(dispute, booking),
         notifyAdminsAboutDispute(dispute, booking),
     ]);
+    emitDisputeCreated(dispute);
     emitDisputeUpdated(dispute);
 
     return successResponse(res, 201, "Complaint submitted successfully", dispute);
@@ -188,7 +194,7 @@ export const getDisputeByBooking = asyncHandler(async (req: AuthRequest, res) =>
     }
 
     const dispute = await Dispute.findOne({ booking: bookingId })
-        .populate('booking', 'category status paymentStatus totalAmount completedAt')
+        .populate('booking', 'category status paymentStatus totalAmount completedAt jobPost')
         .sort({ createdAt: -1 }) as IDispute | null;
 
     const eligibility = await evaluateDisputeEligibility({ booking, userId, userType });
@@ -364,6 +370,122 @@ export const withdrawDispute = asyncHandler(async (req: AuthRequest, res) => {
 
     emitDisputeUpdated(dispute);
     return successResponse(res, 200, "Complaint withdrawn", await serializeDisputeForViewer(dispute, role));
+});
+
+/**
+ * Mobile: Cancel Job from Dispute Screen (by customer or worker)
+ * @route POST /api/v1/disputes/:id/cancel-job
+ */
+export const cancelJobFromDispute = asyncHandler(async (req: AuthRequest, res) => {
+    const { dispute, role, userId } = await loadDisputeForParty(req);
+    if (isDisputeClosed(dispute.status)) {
+        throw new BadRequestError("This complaint is already closed");
+    }
+
+    const booking = await Booking.findById(dispute.booking);
+    if (!booking) {
+        throw new NotFoundError("Associated booking not found");
+    }
+
+    if (booking.status === 'completed' || booking.status === 'cancelled') {
+        throw new BadRequestError(`Cannot cancel booking in ${booking.status} state`);
+    }
+
+    const actorName = await resolvePartyName(role, userId);
+    const cancelReason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+        ? req.body.reason.trim()
+        : `Cancelled during dispute by ${role === 'customer' ? 'Customer' : 'Ustad'}`;
+
+    // 1. Cancel the Booking
+    booking.status = 'cancelled';
+    booking.cancelledBy = role === 'customer' ? 'customer' : 'worker';
+    booking.cancelReason = cancelReason;
+    booking.cancelledAt = new Date();
+    booking.workerRespondedAt = booking.workerRespondedAt || new Date();
+
+    if (booking.commissionDeducted) {
+        await releaseCommissionReservation(booking._id).catch(err => {
+            logger.warn("Failed to release commission reservation on dispute cancellation:", err);
+        });
+        booking.commissionDeducted = false;
+    }
+    await booking.save();
+    await syncPaymentForBookingStatus(booking).catch(err => {
+        logger.warn("Failed to sync payment status on dispute cancellation:", err);
+    });
+
+    // If linked to a JobPost, update its status to cancelled
+    if (booking.jobPost) {
+        await JobPost.findByIdAndUpdate(booking.jobPost, {
+            $set: {
+                status: 'cancelled',
+                cancelledBy: booking.cancelledBy,
+                cancelReason,
+                cancelledAt: new Date()
+            }
+        });
+    }
+
+    // 2. Mark Dispute as resolved / cancelled
+    const now = new Date();
+    dispute.status = 'resolved';
+    dispute.outcome = 'settled';
+    dispute.closedAt = now;
+    dispute.closedByType = role;
+    dispute.resolutionDetails = `Job cancelled by ${role === 'customer' ? 'Customer' : 'Ustad'}. Cash payment obligations released.`;
+    pushTimelineEvent(dispute, {
+        type: 'closed',
+        actorType: role,
+        actorName,
+        note: cancelReason,
+        at: now
+    });
+    await dispute.save();
+
+    // 3. Post System message in Dispute Case Room
+    await postDisputeMessage({
+        dispute,
+        senderType: 'system',
+        kind: 'system',
+        content: `Service request was cancelled by ${actorName || (role === 'customer' ? 'Customer' : 'Ustad')}. Cash payment obligation is cancelled. This case is now closed.`,
+        silent: true,
+    });
+
+    // 4. Sockets & Push Notifications
+    try {
+        const io = getIO();
+        if (io) {
+            emitBookingEvent(io, booking, 'booking:cancelled');
+            if (booking.jobPost) {
+                io.emit('job:status', {
+                    jobId: booking.jobPost.toString(),
+                    status: 'cancelled',
+                    bookingId: booking._id.toString()
+                });
+            }
+        }
+    } catch (sockErr) {
+        logger.warn("Socket broadcast failed in cancelJobFromDispute:", sockErr);
+    }
+    emitDisputeUpdated(dispute);
+
+    const otherId = role === 'customer' ? dispute.worker : dispute.customer;
+    const otherType = role === 'customer' ? 'worker' : 'user';
+    const caseRef = String(dispute._id).slice(-6).toUpperCase();
+
+    sendNotificationToRecipient(
+        otherId,
+        otherType,
+        'Job Cancelled — Dispute Closed',
+        `The ${booking.category} job was cancelled by the other party. Case #${caseRef} is closed.`,
+        { type: 'dispute', bookingId: String(booking._id), disputeId: String(dispute._id) }
+    ).catch(err => logger.error(`Failed to send dispute cancellation push notification:`, err));
+
+    return successResponse(res, 200, "Job cancelled and dispute closed", {
+        dispute: await serializeDisputeForViewer(dispute, role),
+        booking,
+        jobPostId: booking.jobPost
+    });
 });
 
 /**

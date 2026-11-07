@@ -1,5 +1,6 @@
 import JobPost from '../models/JobPost';
 import Worker from '../models/Workers';
+import Booking from '../models/Booking';
 import { getIO } from '../sockets/socketManager';
 import logger from '../config/logger';
 import { buildWorkerSpecialtyCategoryFilter } from './workerSpecialtyService';
@@ -12,6 +13,16 @@ export async function escalateJobPrice(jobId: string): Promise<void> {
     try {
         const job = await JobPost.findById(jobId);
         if (!job || job.status !== 'open' || job.urgency !== 'instant') {
+            return;
+        }
+
+        const existingBooking = await Booking.findOne({
+            jobPost: job._id,
+            status: { $in: ['accepted', 'ongoing', 'completed'] }
+        });
+        if (existingBooking) {
+            job.status = existingBooking.status === 'completed' ? 'closed' : 'assigned';
+            await job.save();
             return;
         }
 
@@ -56,6 +67,16 @@ export async function manuallyEscalateJobPrice(
         throw new Error("Rate cannot be increased for this job right now");
     }
 
+    const existingBooking = await Booking.findOne({
+        jobPost: job._id,
+        status: { $in: ['accepted', 'ongoing', 'completed'] }
+    });
+    if (existingBooking) {
+        job.status = existingBooking.status === 'completed' ? 'closed' : 'assigned';
+        await job.save();
+        throw new Error("This job has already been assigned or completed");
+    }
+
     const oldPrice = Number(job.amount || 0);
     // User-decided new price, or keep existing price if extending search time
     let newPrice = options?.newPrice && options.newPrice > 0 ? options.newPrice : oldPrice;
@@ -93,9 +114,18 @@ export async function manuallyEscalateJobPrice(
 
     // Re-broadcast to workers (expanded radius)
     const categoryFilter = await buildWorkerSpecialtyCategoryFilter(job.category);
+
+    // Exclude workers currently busy on an active/ongoing job
+    const busyBookings = await Booking.find({
+        status: { $in: ['accepted', 'ongoing'] }
+    }).select('worker');
+    const busyWorkerIds = busyBookings.map(b => b.worker).filter(Boolean);
+    const busyWorkerFilter = busyWorkerIds.length > 0 ? { _id: { $nin: busyWorkerIds } } : {};
+
     const nearbyWorkers = await Worker.find({
         ...categoryFilter,
         ...buildAvailableWorkerFilterForJobType('instant'),
+        ...busyWorkerFilter,
         location: {
             $near: {
                 $geometry: job.location,

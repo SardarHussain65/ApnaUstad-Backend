@@ -605,10 +605,23 @@ export const createJobPost = async (req: AuthRequest, res: Response) => {
         // Broadcast to relevant workers
         logger.info(`📡 Job Broadcast: Finding workers for category: ${category} at [${longitude}, ${latitude}]`);
 
+        // Exclude workers currently busy on an active/ongoing job from instant job broadcasts
+        let busyWorkerFilter: any = {};
+        if (isInstant) {
+            const busyBookings = await Booking.find({
+                status: { $in: ['accepted', 'ongoing'] }
+            }).select('worker');
+            const busyWorkerIds = busyBookings.map(b => b.worker).filter(Boolean);
+            if (busyWorkerIds.length > 0) {
+                busyWorkerFilter = { _id: { $nin: busyWorkerIds } };
+            }
+        }
+
         const categoryFilter = await buildWorkerSpecialtyCategoryFilter(category);
         const nearbyWorkers = await Worker.find({
             ...categoryFilter,
             ...buildAvailableWorkerFilterForJobType(urgency),
+            ...busyWorkerFilter,
             location: {
                 $near: {
                     $geometry: { type: "Point", coordinates: [longitude, latitude] },
@@ -1070,6 +1083,11 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
                 otherBids.forEach(ob => {
                     io.to(`worker:${ob.worker.toString()}`).emit('bid:lost', { jobPost });
                 });
+
+                // Global broadcasts so other workers remove this job from their incoming modal and radar
+                io.emit('job:assigned', { jobId: jobPost._id.toString(), bookingId: booking._id.toString() });
+                io.emit('job:status', { jobId: jobPost._id.toString(), status: 'assigned', bookingId: booking._id.toString() });
+                io.to('admin').emit('job:assigned', { jobId: jobPost._id.toString(), booking: populatedBooking });
             }
         } catch (sockErr) {
             logger.warn("Socket broadcast failed in acceptBid (non-fatal):", sockErr);
@@ -2004,6 +2022,108 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
 
     } catch (error: any) {
         logger.error("Error in cancelJobPost:", error);
+        res.status(500).json({ success: false, message: "Internal server error" });
+    }
+};
+
+export const reopenJobPost = async (req: AuthRequest, res: Response) => {
+    try {
+        const customerId = req.tokenPayload?.id;
+        if (!customerId) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+        const { jobId } = req.params;
+        const newBudget = Number(req.body?.budget || req.body?.amount || 0);
+
+        const jobPost = await JobPost.findById(jobId);
+        if (!jobPost) return res.status(404).json({ success: false, message: "Job post not found" });
+
+        if (jobPost.customer.toString() !== customerId) {
+            return res.status(403).json({ success: false, message: "Forbidden: You are not the owner of this job post." });
+        }
+
+        // Restore to open
+        jobPost.status = 'open';
+        jobPost.cancelledBy = undefined;
+        jobPost.cancelReason = undefined;
+        jobPost.cancelledAt = undefined;
+        jobPost.radiusExpanded = false;
+
+        if (newBudget > 0) {
+            jobPost.amount = newBudget;
+            if (jobPost.pricing) {
+                jobPost.pricing.clientOffer = newBudget;
+            }
+        }
+
+        // Extend expiration
+        const extensionMinutes = jobPost.urgency === 'instant' ? 15 : 120;
+        jobPost.expiresAt = new Date(Date.now() + extensionMinutes * 60 * 1000);
+        await jobPost.save();
+
+        // Clear previous bids so fresh offers can be received
+        await JobBid.deleteMany({ jobPost: jobId });
+
+        const isInstant = jobPost.urgency === 'instant';
+        if (isInstant) {
+            scheduleEscalation(jobPost._id.toString(), 10 * 60 * 1000);
+        }
+
+        const populatedJobPost = await JobPost.findById(jobPost._id)
+            .populate('customer', 'fullName profileImage phone');
+        const customerStats = await buildCustomerStatsById(populatedJobPost ? [populatedJobPost] : [jobPost]);
+        const signalPayload = buildWorkerJobSignalPayload(populatedJobPost || jobPost, customerStats);
+
+        const io = getIO();
+        if (io) {
+            let busyWorkerFilter: any = {};
+            if (isInstant) {
+                const busyBookings = await Booking.find({
+                    status: { $in: ['accepted', 'ongoing'] }
+                }).select('worker');
+                const busyWorkerIds = busyBookings.map(b => b.worker).filter(Boolean);
+                if (busyWorkerIds.length > 0) {
+                    busyWorkerFilter = { _id: { $nin: busyWorkerIds } };
+                }
+            }
+
+            const categoryFilter = await buildWorkerSpecialtyCategoryFilter(jobPost.category);
+            const coordinates = jobPost.location?.coordinates || [0, 0];
+            const nearbyWorkers = await Worker.find({
+                ...categoryFilter,
+                ...buildAvailableWorkerFilterForJobType(jobPost.urgency),
+                ...busyWorkerFilter,
+                location: {
+                    $near: {
+                        $geometry: { type: "Point", coordinates },
+                        $maxDistance: DEFAULT_JOB_RADIUS_METERS
+                    }
+                }
+            }).limit(10).select('_id category specialties hourlyRate location');
+
+            jobPost.notifiedWorkersCount = nearbyWorkers.length;
+            await jobPost.save();
+
+            await Promise.all(nearbyWorkers.map(async worker => {
+                const personalizedSignal = await buildPersonalizedWorkerJobSignalPayload(populatedJobPost || jobPost, customerStats, worker);
+                io.to(`worker:${worker._id.toString()}`).emit('job:new', personalizedSignal);
+            }));
+
+            io.to('admin').emit('job:new', signalPayload);
+            io.to(`user:${customerId}`).emit('job:created', signalPayload);
+            io.emit('job:status', {
+                jobId: jobPost._id.toString(),
+                status: 'open'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: jobPost,
+            message: "Job reopened successfully."
+        });
+
+    } catch (error: any) {
+        logger.error("Error in reopenJobPost:", error);
         res.status(500).json({ success: false, message: "Internal server error" });
     }
 };

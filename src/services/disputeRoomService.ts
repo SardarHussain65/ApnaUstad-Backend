@@ -149,7 +149,7 @@ export const serializeDisputeForViewer = async (dispute: IDispute, role: Dispute
   };
 };
 
-const safeEmit = (rooms: string[], event: string, payload: any) => {
+export const safeEmit = (rooms: string[], event: string, payload: any) => {
   try {
     const io = getIO();
     rooms.forEach((room) => io.to(room).emit(event, payload));
@@ -158,11 +158,22 @@ const safeEmit = (rooms: string[], event: string, payload: any) => {
   }
 };
 
-const disputeRooms = (dispute: IDispute) => [
+export const disputeRooms = (dispute: IDispute) => [
   `user:${idOf(dispute.customer)}`,
   `worker:${idOf(dispute.worker)}`,
   'admin',
 ];
+
+export const emitDisputeCreated = (dispute: IDispute) => {
+  safeEmit(disputeRooms(dispute), 'dispute:created', {
+    disputeId: idOf(dispute._id),
+    bookingId: idOf(dispute.booking),
+    status: dispute.status,
+    raisedByType: dispute.raisedByType,
+    phase: getDisputePhase(dispute.status),
+    outcome: deriveDisputeOutcome(dispute),
+  });
+};
 
 export const emitDisputeUpdated = (dispute: IDispute) => {
   safeEmit(disputeRooms(dispute), 'dispute:updated', {
