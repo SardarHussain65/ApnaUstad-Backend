@@ -28,6 +28,7 @@ import walletRoute from './routes/walletRoute';
 import disputeRoute from './routes/disputeRoute';
 import promoRoute from './routes/promoRoute';
 import userWalletRoute from './routes/userWalletRoute';
+import callRoute from './routes/callRoute';
 
 
 const app = express();
@@ -139,6 +140,7 @@ app.use('/api/v1/wallet', walletRoute);
 app.use('/api/v1/user-wallet', userWalletRoute);
 app.use('/api/v1/disputes', disputeRoute);
 app.use('/api/v1/promos', promoRoute);
+app.use('/api/v1/calls', callRoute);
 
 
 // --- ⚠️ Error Handling ---
