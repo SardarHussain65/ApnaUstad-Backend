@@ -836,6 +836,7 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
         let bid: any = null;
         let jobPost: any = null;
         let booking: any = null;
+        let otherBids: any[] = [];
 
         await session.withTransaction(async () => {
             bid = await JobBid.findOne({ _id: bidId, status: 'pending' }).session(session);
@@ -1046,9 +1047,12 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
             await jobPost.save({ session });
             bid.status = 'accepted';
             await bid.save({ session });
-            await JobBid.updateMany(
+
+            // Retrieve other bids before deleting so we can notify losing workers
+            otherBids = await JobBid.find({ jobPost: jobPost._id, _id: { $ne: bid._id } }).session(session);
+            // Delete all other offers since this job has been assigned to the selected worker
+            await JobBid.deleteMany(
                 { jobPost: jobPost._id, _id: { $ne: bid._id } },
-                { $set: { status: 'rejected' } },
                 { session }
             );
             await syncPaymentForBookingStatus(booking, session);
@@ -1079,9 +1083,9 @@ export const acceptBid = async (req: AuthRequest, res: Response) => {
                 }
 
                 io.to(`worker:${bid.worker.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
-                const otherBids = await JobBid.find({ jobPost: jobPost._id, _id: { $ne: bid._id } });
                 otherBids.forEach(ob => {
-                    io.to(`worker:${ob.worker.toString()}`).emit('bid:lost', { jobPost });
+                    io.to(`worker:${ob.worker.toString()}`).emit('bid:deleted', { jobId: jobPost._id.toString(), bidId: ob._id.toString(), reason: 'assigned_other' });
+                    io.to(`worker:${ob.worker.toString()}`).emit('bid:lost', { jobPost, bidId: ob._id.toString() });
                 });
 
                 // Global broadcasts so other workers remove this job from their incoming modal and radar
@@ -1461,20 +1465,54 @@ export const getWorkerBids = async (req: AuthRequest, res: Response) => {
         const bids = await JobBid.find(query)
             .populate({
                 path: 'jobPost',
-                select: 'customer category description urgency scheduledDate scheduledTime address location amount imageUrl imageUrls videoUrl videoUrls audioUrls status expiresAt createdAt updatedAt',
+                select: 'customer category description urgency scheduledDate scheduledTime address location amount imageUrl imageUrls videoUrl videoUrls audioUrls status expiresAt createdAt updatedAt deletedAt',
                 populate: { path: 'customer', select: 'fullName profileImage phone' }
             })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
+            .sort({ createdAt: -1 });
+
+        // Filter out and permanently clean up obsolete bids (job cancelled, job assigned to someone else, job deleted)
+        const obsoleteBidIds: mongoose.Types.ObjectId[] = [];
+        const validBids = bids.filter((bid: any) => {
+            const jp = bid.jobPost;
+            if (!jp || (jp as any).deletedAt) {
+                obsoleteBidIds.push(bid._id);
+                return false;
+            }
+            const jobStatus = String(jp.status || '').toLowerCase();
+            // If the job was cancelled or closed
+            if (jobStatus === 'cancelled' || jobStatus === 'closed') {
+                obsoleteBidIds.push(bid._id);
+                return false;
+            }
+            // If the job was assigned to another worker
+            if (jobStatus === 'assigned' && bid.status !== 'accepted') {
+                obsoleteBidIds.push(bid._id);
+                return false;
+            }
+            // If the job is no longer open or reviewing and bid is not accepted
+            if (jobStatus && !['open', 'reviewing'].includes(jobStatus) && bid.status !== 'accepted') {
+                obsoleteBidIds.push(bid._id);
+                return false;
+            }
+            return true;
+        });
+
+        // Asynchronously delete obsolete bids from database
+        if (obsoleteBidIds.length > 0) {
+            JobBid.deleteMany({ _id: { $in: obsoleteBidIds } }).catch(err => {
+                logger.error("Error purging obsolete bids in getWorkerBids:", err);
+            });
+        }
+
+        const total = validBids.length;
+        const paginatedBids = validBids.slice(skip, skip + limit);
 
         const customerStats = await buildCustomerStatsById(
-            bids
+            paginatedBids
                 .map((bid: any) => typeof bid.jobPost === 'object' ? bid.jobPost : null)
                 .filter(Boolean)
         );
-        const responseBids = bids.map(bid => buildWorkerBidCardPayload(bid, customerStats));
-        const total = await JobBid.countDocuments(query);
+        const responseBids = paginatedBids.map(bid => buildWorkerBidCardPayload(bid, customerStats));
 
         res.status(200).json({
             success: true,
@@ -1721,6 +1759,7 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
 
         const session = await mongoose.startSession();
         let booking: any = null;
+        let otherBids: any[] = [];
         try {
             await session.withTransaction(async () => {
                 // Re-fetch job post with session
@@ -1826,6 +1865,12 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
                 job.status = 'assigned';
                 await job.save({ session });
 
+                // Delete any other bids for this job post since it has been assigned
+                otherBids = await JobBid.find({ jobPost: job._id, _id: { $ne: newBid._id } }).session(session);
+                if (otherBids.length > 0) {
+                    await JobBid.deleteMany({ jobPost: job._id, _id: { $ne: newBid._id } }, { session });
+                }
+
                 await syncPaymentForBookingStatus(booking, session);
             });
 
@@ -1845,6 +1890,14 @@ export const acceptInstantJob = async (req: AuthRequest, res: Response) => {
 
                     // 2. Emit bid:won to Worker
                     io.to(`worker:${workerId.toString()}`).emit('bid:won', { jobPost, booking: populatedBooking });
+
+                    // Notify losing counter-offer workers that their offer is deleted/lost
+                    if (otherBids.length > 0) {
+                        otherBids.forEach(ob => {
+                            io.to(`worker:${ob.worker.toString()}`).emit('bid:deleted', { jobId: jobPost._id.toString(), bidId: ob._id.toString(), reason: 'assigned_other' });
+                            io.to(`worker:${ob.worker.toString()}`).emit('bid:lost', { jobPost, bidId: ob._id.toString() });
+                        });
+                    }
 
                     // 3. Emit booking lifecycle event to update customer, worker, and admin rooms
                     emitBookingEvent(io, populatedBooking, 'booking:accepted');
@@ -1988,12 +2041,9 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
         jobPost.cancelledAt = new Date();
         await jobPost.save();
 
-        // Reject all pending bids
-        const bids = await JobBid.find({ jobPost: jobId, status: 'pending' });
-        await JobBid.updateMany(
-            { jobPost: jobId, status: 'pending' },
-            { $set: { status: 'rejected' } }
-        );
+        // Find and permanently delete all bids for this cancelled job
+        const bids = await JobBid.find({ jobPost: jobId });
+        await JobBid.deleteMany({ jobPost: jobId });
 
         const io = getIO();
 
@@ -2004,9 +2054,10 @@ export const cancelJobPost = async (req: AuthRequest, res: Response) => {
             reason
         };
 
-        // Broadcast cancellation to all workers who had pending bids
+        // Broadcast cancellation & bid deletion to all workers who had bids
         bids.forEach(bid => {
-            io.to(`worker:${bid.worker.toString()}`).emit('bid:lost', { jobPost });
+            io.to(`worker:${bid.worker.toString()}`).emit('bid:deleted', { jobId: jobPost._id.toString(), bidId: bid._id.toString(), reason: 'job_cancelled' });
+            io.to(`worker:${bid.worker.toString()}`).emit('bid:lost', { jobPost, reason });
         });
 
         // Broadcast to customer room, admin room, and all connected clients
