@@ -127,10 +127,18 @@ export const deleteJob = asyncHandler(async (req: AdminAuthRequest, res) => {
     (job as any).deleteReason = reason;
     await job.save();
 
-    await JobBid.updateMany(
-        { jobPost: job._id, status: 'pending' },
-        { $set: { status: 'rejected' } }
-    );
+    const bidsToDelete = await JobBid.find({ jobPost: job._id });
+    await JobBid.deleteMany({ jobPost: job._id });
+
+    try {
+        const io = getIO();
+        if (io) {
+            bidsToDelete.forEach(b => {
+                io.to(`worker:${b.worker.toString()}`).emit('bid:deleted', { jobId: job._id.toString(), bidId: b._id.toString(), reason: 'admin_delete' });
+                io.to(`worker:${b.worker.toString()}`).emit('bid:lost', { jobPost: job, reason });
+            });
+        }
+    } catch (e) {}
 
     await recordAdminAction(req, {
         action: 'job.delete',
@@ -169,10 +177,18 @@ export const cancelJob = asyncHandler(async (req: AdminAuthRequest, res) => {
     job.cancelledAt = new Date();
     await job.save();
 
-    await JobBid.updateMany(
-        { jobPost: job._id, status: 'pending' },
-        { $set: { status: 'rejected' } }
-    );
+    const bidsToDelete = await JobBid.find({ jobPost: job._id });
+    await JobBid.deleteMany({ jobPost: job._id });
+
+    try {
+        const io = getIO();
+        if (io) {
+            bidsToDelete.forEach(b => {
+                io.to(`worker:${b.worker.toString()}`).emit('bid:deleted', { jobId: job._id.toString(), bidId: b._id.toString(), reason: 'admin_delete' });
+                io.to(`worker:${b.worker.toString()}`).emit('bid:lost', { jobPost: job, reason });
+            });
+        }
+    } catch (e) {}
 
     try {
         const io = getIO();
