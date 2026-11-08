@@ -83,6 +83,8 @@ const getConfig = () => ({
     refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || '30d',
     clientUrl: process.env.CLIENT_URL || '*',
     imagekitPrivateKey: process.env.IMAGEKIT_PRIVATE_KEY as string,
+    agoraAppId: process.env.AGORA_APP_ID || '',
+    agoraAppCertificate: process.env.AGORA_APP_CERTIFICATE || '',
     allowFirebaseInitFailure: process.env.ALLOW_FIREBASE_INIT_FAILURE === 'true',
     skipFirebaseInit: process.env.SKIP_FIREBASE_INIT === 'true',
     platformFeePercentage: parseFloat(process.env.PLATFORM_FEE_PERCENTAGE || '10'),

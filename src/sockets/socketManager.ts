@@ -10,6 +10,7 @@ import { registerNotificationHandlers } from './handlers/notification.handler';
 import { registerLocationHandlers } from './handlers/location.handler';
 import { registerPresenceHandlers } from './handlers/presence.handler';
 import { registerChatHandlers } from './handlers/chat.handler';
+import { registerCallHandlers } from './handlers/call.handler';
 import { getActionCounts, setAdminSocketEmitter } from '../services/adminAnalytics';
 
 let io: SocketIOServer;
@@ -106,6 +107,7 @@ export const initSocket = (httpServer: HttpServer) => {
         registerLocationHandlers(io, socket);
         registerPresenceHandlers(io, socket);
         registerChatHandlers(io, socket);
+        registerCallHandlers(io, socket);
 
         socket.on('disconnect', () => {
             logger.info(`🔌 Client disconnected: ${socket.id} (User: ${user.id})`);
