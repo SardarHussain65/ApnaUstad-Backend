@@ -1,5 +1,6 @@
 import UserWallet, { IUserWallet } from '../models/UserWallet';
 import UserWalletTransaction, { IUserWalletTransaction, UserActorType, UserWalletTransactionType } from '../models/UserWalletTransaction';
+import { getIO } from '../sockets/socketManager';
 import mongoose from 'mongoose';
 
 /**
@@ -80,6 +81,20 @@ export const creditUserWallet = async (
             actorType: performedBy.actorType
         }
     }], session ? { session } : {});
+
+    // Live socket emission to customer
+    try {
+        const io = getIO();
+        io.to(`user:${userId.toString()}`).emit('wallet:updated', {
+            type: 'credit',
+            amount,
+            description,
+            wallet: updatedWallet,
+            timestamp: new Date().toISOString()
+        });
+    } catch (sockErr) {
+        // Non-fatal
+    }
 
     return updatedWallet;
 };
