@@ -210,6 +210,8 @@ const workerSchema = new Schema<IWorker>(
 );
 
 workerSchema.index({ location: '2dsphere' });
+workerSchema.index({ isActive: 1, createdAt: -1 });
+workerSchema.index({ isVerified: 1, createdAt: -1 });
 workerSchema.index({ category: 1, isAvailable: 1, isVerified: 1 });
 workerSchema.index({ category: 1, isInstantAvailable: 1, isScheduledAvailable: 1, isActive: 1 });
 workerSchema.index({ 'specialties.categoryId': 1, 'specialties.isActive': 1, isAvailable: 1, isActive: 1 });

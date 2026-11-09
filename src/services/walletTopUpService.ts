@@ -8,6 +8,9 @@ import Worker from '../models/Workers';
 import { getConfig } from '../config/env';
 import { sendWalletTopUpAdminAlert } from './emailService';
 import { getOrCreateWallet, rechargeWallet } from './workerWalletService';
+import { getIO } from '../sockets/socketManager';
+import { sendNotificationToRecipient } from './notificationHelper';
+import { getActionCounts } from './adminAnalytics';
 import logger from '../config/logger';
 
 export type WalletPaymentMethodConfig = ReturnType<typeof getConfig>['walletPaymentMethods'][number] & {
@@ -185,7 +188,29 @@ export const createWalletTopUpRequest = async ({
         logger.error('Failed to notify admins about wallet top-up request:', error);
     });
 
-    return topUpRequest.populate('worker', 'fullName phone email profileImage');
+    const populatedRequest = await topUpRequest.populate('worker', 'fullName phone email profileImage');
+
+    // Notify admins and worker via live socket
+    try {
+        const io = getIO();
+        io.to('admin').emit('wallet:topup_created', {
+            topUpRequest: populatedRequest,
+            worker: {
+                _id: worker._id,
+                fullName: worker.fullName,
+                phone: worker.phone,
+            }
+        });
+        getActionCounts().then((counts: any) => io.to('admin').emit('admin:counts', counts)).catch(() => {});
+        io.to(`worker:${workerId}`).emit('wallet:topup_updated', {
+            status: 'pending',
+            topUpRequest: populatedRequest
+        });
+    } catch (sockErr) {
+        // Non-fatal socket emission
+    }
+
+    return populatedRequest;
 };
 
 const notifyAdminsAboutTopUp = async (topUpRequest: any, worker: any) => {
@@ -254,7 +279,62 @@ export const approveWalletTopUpRequest = async ({
     topUpRequest.approvedAt = new Date();
     await topUpRequest.save();
 
-    return { topUpRequest: await topUpRequest.populate('worker', 'fullName phone email profileImage'), wallet };
+    const populatedRequest = await topUpRequest.populate('worker', 'fullName phone email profileImage');
+    const workerId = (topUpRequest.worker?._id || topUpRequest.worker).toString();
+
+    // 1. Emit live real-time Socket events to immediately update mobile UI and admin dashboard
+    try {
+        const io = getIO();
+        const eventPayload = {
+            type: 'topup_approved',
+            status: 'approved',
+            requestId: topUpRequest.requestId,
+            topUpRequestId: topUpRequest._id.toString(),
+            amount: topUpRequest.amount,
+            wallet: {
+                balance: wallet.balance,
+                reservedBalance: wallet.reservedBalance,
+                availableBalance: (wallet.balance || 0) - (wallet.reservedBalance || 0),
+                totalRecharged: wallet.totalRecharged,
+            },
+            topUpRequest: populatedRequest,
+            timestamp: new Date().toISOString(),
+        };
+
+        // Live direct updates for worker app
+        io.to(`worker:${workerId}`).emit('wallet:updated', eventPayload);
+        io.to(`worker:${workerId}`).emit('wallet:topup_updated', eventPayload);
+        io.to(`worker:${workerId}`).emit('wallet:topup_approved', eventPayload);
+
+        // Live direct updates for admin dashboard
+        io.to('admin').emit('wallet:topup_updated', eventPayload);
+        getActionCounts().then((counts: any) => io.to('admin').emit('admin:counts', counts)).catch(() => {});
+    } catch (sockErr) {
+        logger.warn('Failed to emit socket events for wallet top-up approval:', sockErr);
+    }
+
+    // 2. Dispatch push notification and in-app notification to the worker
+    sendNotificationToRecipient(
+        workerId,
+        'worker',
+        'Wallet Top-Up Approved',
+        `Your top-up of Rs. ${Number(topUpRequest.amount).toLocaleString('en-PK')} has been approved and credited to your wallet.`,
+        {
+            type: 'wallet_topup',
+            status: 'approved',
+            requestId: topUpRequest.requestId,
+            amount: String(topUpRequest.amount),
+        },
+        {
+            type: 'wallet_topup',
+            icon: 'wallet',
+            color: '#00C853',
+        }
+    ).catch((notifErr) => {
+        logger.warn('Failed to send notification for top-up approval:', notifErr);
+    });
+
+    return { topUpRequest: populatedRequest, wallet };
 };
 
 export const rejectWalletTopUpRequest = async ({
@@ -288,7 +368,58 @@ export const rejectWalletTopUpRequest = async ({
     topUpRequest.rejectedAt = new Date();
     await topUpRequest.save();
 
-    return topUpRequest.populate('worker', 'fullName phone email profileImage');
+    const populatedRequest = await topUpRequest.populate('worker', 'fullName phone email profileImage');
+    const workerId = (topUpRequest.worker?._id || topUpRequest.worker).toString();
+
+    // 1. Emit live real-time Socket events to immediately update mobile UI and admin dashboard
+    try {
+        const io = getIO();
+        const eventPayload = {
+            type: 'topup_rejected',
+            status: 'rejected',
+            requestId: topUpRequest.requestId,
+            topUpRequestId: topUpRequest._id.toString(),
+            amount: topUpRequest.amount,
+            rejectionReason,
+            topUpRequest: populatedRequest,
+            timestamp: new Date().toISOString(),
+        };
+
+        // Live direct updates for worker app
+        io.to(`worker:${workerId}`).emit('wallet:updated', eventPayload);
+        io.to(`worker:${workerId}`).emit('wallet:topup_updated', eventPayload);
+        io.to(`worker:${workerId}`).emit('wallet:topup_rejected', eventPayload);
+
+        // Live direct updates for admin dashboard
+        io.to('admin').emit('wallet:topup_updated', eventPayload);
+        getActionCounts().then((counts: any) => io.to('admin').emit('admin:counts', counts)).catch(() => {});
+    } catch (sockErr) {
+        logger.warn('Failed to emit socket events for wallet top-up rejection:', sockErr);
+    }
+
+    // 2. Dispatch push notification and in-app notification to the worker
+    sendNotificationToRecipient(
+        workerId,
+        'worker',
+        'Wallet Top-Up Rejected',
+        `Your wallet top-up request ${topUpRequest.requestId} was rejected. Reason: ${rejectionReason}`,
+        {
+            type: 'wallet_topup',
+            status: 'rejected',
+            requestId: topUpRequest.requestId,
+            amount: String(topUpRequest.amount),
+            rejectionReason,
+        },
+        {
+            type: 'wallet_topup',
+            icon: 'alert-circle',
+            color: '#FF5252',
+        }
+    ).catch((notifErr) => {
+        logger.warn('Failed to send notification for top-up rejection:', notifErr);
+    });
+
+    return populatedRequest;
 };
 
 export const buildTopUpSummary = async (baseQuery: any = {}) => {

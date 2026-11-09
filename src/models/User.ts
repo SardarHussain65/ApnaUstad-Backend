@@ -54,6 +54,7 @@ const userSchema = new Schema<IUser>(
 );
 
 userSchema.index({ location: '2dsphere' });
+userSchema.index({ isActive: 1, createdAt: -1 });
 
 /**
  * Pre-save hook to hash password before saving to database

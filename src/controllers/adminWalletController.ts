@@ -8,6 +8,9 @@ import { successResponse, paginatedResponse } from "../utils/ApiResponse";
 import { AdminAuthRequest } from "../middlewares/admin.middleware";
 import * as walletService from "../services/workerWalletService";
 import { getWalletSettings, updateWalletSettings } from "../services/walletSettingsService";
+import { getIO } from "../sockets/socketManager";
+import { sendNotificationToRecipient } from "../services/notificationHelper";
+import logger from "../config/logger";
 import mongoose from "mongoose";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -227,6 +230,35 @@ export const rechargeWorkerWallet = asyncHandler(async (req: AdminAuthRequest, r
         description || 'Recharge credited by Admin'
     );
 
+    // Live socket emission for worker mobile app
+    try {
+        const io = getIO();
+        const eventPayload = {
+            type: 'manual_recharge',
+            amount,
+            description: description || 'Recharge credited by Admin',
+            wallet: {
+                balance: wallet.balance,
+                reservedBalance: wallet.reservedBalance,
+                availableBalance: (wallet.balance || 0) - (wallet.reservedBalance || 0),
+                totalRecharged: wallet.totalRecharged,
+            },
+            timestamp: new Date().toISOString()
+        };
+        io.to(`worker:${workerId}`).emit('wallet:updated', eventPayload);
+    } catch (sockErr) {
+        logger.warn('Failed to emit socket event for admin wallet recharge:', sockErr);
+    }
+
+    sendNotificationToRecipient(
+        workerId,
+        'worker',
+        'Wallet Credited by Admin',
+        `An amount of Rs. ${Number(amount).toLocaleString('en-PK')} has been credited to your wallet.`,
+        { type: 'wallet_credit', amount: String(amount) },
+        { type: 'wallet_topup', icon: 'wallet', color: '#00C853' }
+    ).catch(() => {});
+
     return successResponse(res, 200, "Worker wallet recharged successfully", wallet);
 });
 
@@ -289,6 +321,35 @@ export const adjustWorkerWallet = asyncHandler(async (req: AdminAuthRequest, res
             actorType: 'admin'
         }
     });
+
+    // Live socket emission for worker mobile app
+    try {
+        const io = getIO();
+        const eventPayload = {
+            type,
+            amount,
+            description,
+            wallet: {
+                balance: wallet.balance,
+                reservedBalance: wallet.reservedBalance,
+                availableBalance: (wallet.balance || 0) - (wallet.reservedBalance || 0),
+                totalRecharged: wallet.totalRecharged,
+            },
+            timestamp: new Date().toISOString()
+        };
+        io.to(`worker:${workerId}`).emit('wallet:updated', eventPayload);
+    } catch (sockErr) {
+        logger.warn('Failed to emit socket event for admin wallet adjustment:', sockErr);
+    }
+
+    sendNotificationToRecipient(
+        workerId,
+        'worker',
+        'Wallet Adjustment',
+        `Your wallet balance was adjusted by Rs. ${amount > 0 ? '+' : ''}${Number(amount).toLocaleString('en-PK')} (${description}).`,
+        { type: 'wallet_adjustment', amount: String(amount) },
+        { type: 'wallet_topup', icon: 'wallet', color: amount > 0 ? '#00C853' : '#FF9800' }
+    ).catch(() => {});
 
     return successResponse(res, 200, "Worker wallet balance adjusted successfully", wallet);
 });

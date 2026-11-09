@@ -31,11 +31,13 @@ export const getAllCategories = asyncHandler(async (req: AdminAuthRequest, res) 
         query.isActive = active === 'true';
     }
 
-    const total = await Category.countDocuments(query);
-    const categories = await Category.find(query)
-        .sort({ sortOrder: 1, name: 1 })
-        .skip(skip)
-        .limit(limitNum);
+    const [total, categories] = await Promise.all([
+        Category.countDocuments(query),
+        Category.find(query)
+            .sort({ sortOrder: 1, name: 1 })
+            .skip(skip)
+            .limit(limitNum)
+    ]);
 
     return paginatedResponse(res, 200, "Categories fetched successfully", categories, pageNum, limitNum, total);
 });

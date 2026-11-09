@@ -68,43 +68,49 @@ export const loginAdmin = asyncHandler(async (req, res) => {
  * @route GET /api/v1/admin/dashboard/stats
  */
 export const getDashboardStats = asyncHandler(async (req: AdminAuthRequest, res) => {
-    const totalUsers = await User.countDocuments();
-    const totalWorkers = await Worker.countDocuments();
-    const totalBookings = await Booking.countDocuments();
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    // Revenue and Commission are based on confirmed cash ledger rows.
-    const revenueData = await Payment.aggregate([
-        { $match: { status: 'paid' } },
-        {
-            $group: {
-                _id: null,
-                totalRevenue: { $sum: "$amount" },
-                totalCommission: { $sum: "$platformFee" }
+    const [
+        totalUsers,
+        totalWorkers,
+        totalBookings,
+        revenueData,
+        newUsersLastMonth,
+        newWorkersLastMonth,
+        newBookingsLastMonth,
+        newRevenueData
+    ] = await Promise.all([
+        User.countDocuments(),
+        Worker.countDocuments(),
+        Booking.countDocuments(),
+        Payment.aggregate([
+            { $match: { status: 'paid' } },
+            {
+                $group: {
+                    _id: null,
+                    totalRevenue: { $sum: "$amount" },
+                    totalCommission: { $sum: "$platformFee" }
+                }
             }
-        }
+        ]),
+        User.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
+        Worker.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
+        Booking.countDocuments({ createdAt: { $gte: thirtyDaysAgo } }),
+        Payment.aggregate([
+            { $match: { status: 'paid', createdAt: { $gte: thirtyDaysAgo } } },
+            {
+                $group: {
+                    _id: null,
+                    totalRevenue: { $sum: "$amount" },
+                    totalCommission: { $sum: "$platformFee" }
+                }
+            }
+        ])
     ]);
 
     const totalRevenue = revenueData.length > 0 ? revenueData[0].totalRevenue : 0;
     const totalCommission = revenueData.length > 0 ? revenueData[0].totalCommission : 0;
-
-    // Monthly stats (last 30 days)
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const newUsersLastMonth = await User.countDocuments({ createdAt: { $gte: thirtyDaysAgo } });
-    const newWorkersLastMonth = await Worker.countDocuments({ createdAt: { $gte: thirtyDaysAgo } });
-    const newBookingsLastMonth = await Booking.countDocuments({ createdAt: { $gte: thirtyDaysAgo } });
-
-    const newRevenueData = await Payment.aggregate([
-        { $match: { status: 'paid', createdAt: { $gte: thirtyDaysAgo } } },
-        {
-            $group: {
-                _id: null,
-                totalRevenue: { $sum: "$amount" },
-                totalCommission: { $sum: "$platformFee" }
-            }
-        }
-    ]);
     const newRevenueLastMonth = newRevenueData.length > 0 ? newRevenueData[0].totalRevenue : 0;
     const newCommissionLastMonth = newRevenueData.length > 0 ? newRevenueData[0].totalCommission : 0;
 

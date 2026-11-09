@@ -106,13 +106,15 @@ export const getAllBookings = asyncHandler(async (req: AdminAuthRequest, res) =>
         query.$and = [...(query.$and || []), { $or: searchQuery }];
     }
 
-    const total = await Booking.countDocuments(query);
-    const bookings = await Booking.find(query)
-        .populate('customer', 'fullName phone email city address location profileImage')
-        .populate('worker', 'fullName phone email city address location category profileImage isAvailable lastOnlineAt')
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .sort({ createdAt: -1 });
+    const [total, bookings] = await Promise.all([
+        Booking.countDocuments(query),
+        Booking.find(query)
+            .populate('customer', 'fullName phone email city address location profileImage')
+            .populate('worker', 'fullName phone email city address location category profileImage isAvailable lastOnlineAt')
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .sort({ createdAt: -1 })
+    ]);
     const payments = await Payment.find({ booking: { $in: bookings.map(booking => booking._id) } });
     const paymentByBooking = new Map(payments.map(payment => [payment.booking.toString(), payment.toObject()]));
     const rows = bookings.map(booking => ({

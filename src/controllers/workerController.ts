@@ -14,6 +14,8 @@ import {
     normalizeSpecialtyProfileInput,
     setWorkerPrimarySpecialtyFromLegacyCategory
 } from "../services/workerSpecialtyService";
+import { getIO } from "../sockets/socketManager";
+import { broadcastActionCounts } from "../services/adminAnalytics";
 
 /**
  * Upload worker certificate or degree image to ImageKit → /workers/certificates/
@@ -703,6 +705,18 @@ export const requestVerification = asyncHandler(async (req: AuthRequest, res) =>
         cnicBackImage,
         status: 'pending',
     });
+
+    try {
+        const io = getIO();
+        io.to('admin').emit('verification:submitted', {
+            requestId: newRequest._id,
+            workerId: worker._id,
+            cnicNumber,
+        });
+        broadcastActionCounts().catch(() => {});
+    } catch {
+        // Non-fatal socket emission
+    }
 
     return successResponse(res, 201, "Verification request submitted successfully", newRequest);
 });
