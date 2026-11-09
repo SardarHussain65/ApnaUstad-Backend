@@ -206,6 +206,8 @@ const bookingSchema = new Schema<IBooking>(
 );
 bookingSchema.index({ customer: 1, status: 1 });
 bookingSchema.index({ worker: 1, status: 1 });
+bookingSchema.index({ status: 1, createdAt: -1 });
+bookingSchema.index({ location: '2dsphere' });
 bookingSchema.index({ jobPost: 1 }, { unique: true, sparse: true });
 bookingSchema.index({ customer: 1, createdAt: -1 });
 bookingSchema.index({ worker: 1, createdAt: -1 });

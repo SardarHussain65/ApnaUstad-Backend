@@ -13,6 +13,7 @@ import Worker from '../models/Workers';
 import { getIO } from '../sockets/socketManager';
 import { sendNotificationToRecipient } from './notificationHelper';
 import { DISPUTE_REASON_LABELS } from './disputeService';
+import { broadcastActionCounts } from './adminAnalytics';
 import logger from '../config/logger';
 
 export const CLOSED_DISPUTE_STATUSES = ['resolved', 'dismissed', 'withdrawn'] as const;
@@ -173,6 +174,7 @@ export const emitDisputeCreated = (dispute: IDispute) => {
     phase: getDisputePhase(dispute.status),
     outcome: deriveDisputeOutcome(dispute),
   });
+  broadcastActionCounts().catch(() => {});
 };
 
 export const emitDisputeUpdated = (dispute: IDispute) => {
@@ -183,6 +185,7 @@ export const emitDisputeUpdated = (dispute: IDispute) => {
     phase: getDisputePhase(dispute.status),
     outcome: deriveDisputeOutcome(dispute),
   });
+  broadcastActionCounts().catch(() => {});
 };
 
 const previewOf = (message: Pick<IDisputeMessage, 'content' | 'attachments' | 'kind'>) => {

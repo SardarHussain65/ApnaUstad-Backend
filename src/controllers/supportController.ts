@@ -10,6 +10,8 @@ import {
   sendSupportRequestAdminAlert,
   sendSupportReplyNotification
 } from '../services/emailService';
+import { getIO } from '../sockets/socketManager';
+import { broadcastActionCounts } from '../services/adminAnalytics';
 
 const normalize = (value: string) => value.trim().toLowerCase();
 
@@ -66,6 +68,16 @@ export const createSupportRequest = asyncHandler(async (req: Request, res: Respo
 
   sendSupportRequestAdminAlert(name || 'Anonymous', email || '', topic || subject || 'General', message, String(doc._id))
     .catch((err) => console.error('Failed to send admin support alert email:', err));
+
+  try {
+    const io = getIO();
+    io.to('admin').emit('support:created', {
+      requestId: String(doc._id),
+      name: doc.name,
+      topic: doc.topic,
+    });
+    broadcastActionCounts().catch(() => {});
+  } catch {}
 
   return successResponse(res, 201, 'Support request created', doc);
 });
@@ -175,6 +187,15 @@ export const updateSupportStatus = asyncHandler(async (req: Request, res: Respon
 
   doc.status = status;
   await doc.save();
+
+  try {
+    const io = getIO();
+    io.to('admin').emit('support:updated', {
+      requestId: String(doc._id),
+      status: doc.status,
+    });
+    broadcastActionCounts().catch(() => {});
+  } catch {}
 
   return successResponse(res, 200, 'Support request status updated', doc);
 });

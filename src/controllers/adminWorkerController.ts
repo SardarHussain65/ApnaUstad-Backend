@@ -56,12 +56,14 @@ export const getAllWorkers = asyncHandler(async (req: AdminAuthRequest, res) => 
         ];
     }
 
-    const total = await Worker.countDocuments(query);
-    const workers = await Worker.find(query)
-        .populate('specialties.categoryId', 'name icon color isActive')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limitNum);
+    const [total, workers] = await Promise.all([
+        Worker.countDocuments(query),
+        Worker.find(query)
+            .populate('specialties.categoryId', 'name icon color isActive')
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limitNum)
+    ]);
     const data = category && category !== 'undefined'
         ? await Promise.all(workers.map(worker => applyMatchedSpecialtyProfileToWorkerPayload(worker, category as string)))
         : workers;

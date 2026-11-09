@@ -10,6 +10,7 @@ import { getWalletSettings } from "../services/walletSettingsService";
 import { rechargeWallet } from "../services/workerWalletService";
 import { sendNotificationToRecipient } from "../services/notificationHelper";
 import { getIO } from "../sockets/socketManager";
+import { broadcastActionCounts } from "../services/adminAnalytics";
 
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -219,6 +220,8 @@ export const reviewVerificationRequest = asyncHandler(async (req: AdminAuthReque
         io.to(`worker:${worker._id.toString()}`).emit('worker:verified', payload);
         io.to(`worker:${worker._id.toString()}`).emit('worker:updated', payload);
         io.to('admin').emit('worker:updated', payload);
+        io.to('admin').emit('verification:reviewed', payload);
+        broadcastActionCounts().catch(() => {});
     } catch (sockErr) {
         // Non-fatal socket emission
     }

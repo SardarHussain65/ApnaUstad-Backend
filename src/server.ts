@@ -26,6 +26,12 @@ import { startNotificationScheduler } from './scripts/notificationScheduler';
 import { startSpecialtySubscriptionScheduler } from './scripts/specialtySubscriptionScheduler';
 import { startWeeklyEarningsSummaryScheduler } from './scripts/weeklyEarningsSummaryScheduler';
 
+// Catch uncaught exceptions early so they are logged by Winston before crashing
+process.on('uncaughtException', (err: Error) => {
+    logger.error(`UNCAUGHT EXCEPTION! 💥 ${err.name}: ${err.message}`, { stack: err.stack });
+    process.exit(1);
+});
+
 // Validate environment variables before starting
 validateEnv();
 

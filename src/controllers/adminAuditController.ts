@@ -33,12 +33,14 @@ export const getAuditLogs = asyncHandler(async (req: AdminAuthRequest, res) => {
     ];
   }
 
-  const total = await AdminAuditLog.countDocuments(query);
-  const logs = await AdminAuditLog.find(query)
-    .populate('actor', 'fullName email role')
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(limit);
+  const [total, logs] = await Promise.all([
+    AdminAuditLog.countDocuments(query),
+    AdminAuditLog.find(query)
+      .populate('actor', 'fullName email role')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+  ]);
 
   return successResponse(res, 200, 'Audit logs fetched successfully', {
     logs,
