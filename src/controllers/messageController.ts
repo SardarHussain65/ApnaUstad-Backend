@@ -2,9 +2,12 @@ import { NextFunction, Response } from "express";
 import { AuthRequest } from "../middlewares/jwt.middleware";
 import Message from "../models/Message";
 import Booking from "../models/Booking";
+import User from "../models/User";
+import Workers from "../models/Workers";
 import logger from "../config/logger";
 import { UploadRequest } from "../middlewares/multer.middleware";
 import { getIO } from "../sockets/socketManager";
+import { sendNotificationToRecipient } from "../services/notificationHelper";
 
 const isCommunicationLocked = (status: string) => status === "completed" || status === "cancelled";
 const isTrustedAudioUrl = (value: string) => {
@@ -215,6 +218,45 @@ export const sendMessage = async (req: AuthRequest, res: Response) => {
         const io = getIO();
         io.to(`user:${booking.customer.toString()}`).emit('chat:receive', newMessage);
         io.to(`worker:${booking.worker.toString()}`).emit('chat:receive', newMessage);
+
+        // Send Push Notification to recipient
+        try {
+            const isSenderCustomer = booking.customer.toString() === userId;
+            const recipientId = isSenderCustomer ? booking.worker : booking.customer;
+            const recipientType = isSenderCustomer ? 'worker' : 'user';
+
+            let senderName = "Apna Ustad";
+            if (isSenderCustomer) {
+                const customerUser = await User.findById(userId).select('fullName').lean();
+                senderName = (customerUser as any)?.fullName || "Client";
+            } else {
+                const workerUser = await Workers.findById(userId).select('fullName').lean();
+                senderName = (workerUser as any)?.fullName || "Ustad";
+            }
+
+            const previewText = messageType === 'audio'
+                ? '🎤 Sent a voice message'
+                : (content && content.length > 80 ? content.slice(0, 77) + '...' : (content || 'New message'));
+
+            sendNotificationToRecipient(
+                recipientId,
+                recipientType,
+                `💬 ${senderName}`,
+                previewText,
+                {
+                    type: 'chat_message',
+                    bookingId: String(bookingId),
+                    senderId: String(userId),
+                    senderName,
+                },
+                {
+                    type: 'general',
+                    bookingId: String(bookingId),
+                }
+            ).catch((err: any) => logger.warn(`Chat push notification delivery failed: ${err?.message || err}`));
+        } catch (pushErr: any) {
+            logger.warn(`Could not dispatch chat push notification: ${pushErr?.message || pushErr}`);
+        }
 
         res.status(201).json({
             success: true,
