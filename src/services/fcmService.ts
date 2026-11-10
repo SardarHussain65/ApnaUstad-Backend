@@ -76,6 +76,8 @@ export const sendPushNotification = async (
           priority: isCall ? 'max' : 'high',
           defaultSound: true,
           defaultVibrateTimings: true,
+          clickAction: 'OPEN_CALL',
+          ...(isCall && data?.bookingId ? { tag: `call_${data.bookingId}` } : {}),
         },
       },
       apns: {
@@ -83,6 +85,7 @@ export const sendPushNotification = async (
           aps: {
             sound: 'default',
             contentAvailable: true,
+            ...(isCall ? { category: 'incoming_call' } : {}),
           },
         },
       },
@@ -223,6 +226,8 @@ export const sendMultiplePushNotifications = async (
                 priority: isCall ? 'max' : 'high',
                 defaultSound: true,
                 defaultVibrateTimings: true,
+                clickAction: 'OPEN_CALL',
+                ...(isCall && data?.bookingId ? { tag: `call_${data.bookingId}` } : {}),
               },
             },
             apns: {
@@ -230,6 +235,7 @@ export const sendMultiplePushNotifications = async (
                 aps: {
                   sound: 'default',
                   contentAvailable: true,
+                  ...(isCall ? { category: 'incoming_call' } : {}),
                 },
               },
             },
