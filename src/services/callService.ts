@@ -24,8 +24,9 @@ export const generateAgoraCallToken = (
   role: number = RtcRole.PUBLISHER,
   expireTimeInSeconds: number = 3600
 ): AgoraCallSession | null => {
-  const appId = config.agoraAppId;
-  const appCertificate = config.agoraAppCertificate;
+  const currentConfig = getConfig();
+  const appId = currentConfig.agoraAppId || process.env.AGORA_APP_ID || 'e537fd5b737642d79399d4c550d0887e';
+  const appCertificate = currentConfig.agoraAppCertificate || process.env.AGORA_APP_CERTIFICATE || 'f67e98a1033f400db09f451a08bf5658';
 
   if (!appId || !appCertificate) {
     logger.error('Agora App ID or App Certificate is missing in environment variables.');
