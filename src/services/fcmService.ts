@@ -62,27 +62,41 @@ export const sendPushNotification = async (
   try {
     const isCall = data?.type === 'incoming_call';
     const message: any = {
-      notification: {
+      ...(isCall
+        ? {}
+        : {
+            notification: {
+              title,
+              body,
+            },
+          }),
+      data: {
+        ...(data || {}),
         title,
         body,
       },
-      data: data || {},
       token: deviceToken,
       android: {
         priority: 'high',
-        notification: {
-          channelId: isCall ? 'voice_calls' : 'default',
-          sound: 'default',
-          priority: isCall ? 'max' : 'high',
-          defaultSound: true,
-          defaultVibrateTimings: true,
-          clickAction: 'OPEN_CALL',
-          ...(isCall && data?.bookingId ? { tag: `call_${data.bookingId}` } : {}),
-        },
+        ...(!isCall
+          ? {
+              notification: {
+                channelId: 'default',
+                sound: 'default',
+                priority: 'high',
+                defaultSound: true,
+                defaultVibrateTimings: true,
+              },
+            }
+          : {}),
       },
       apns: {
         payload: {
           aps: {
+            alert: {
+              title,
+              body,
+            },
             sound: 'default',
             contentAvailable: true,
             ...(isCall ? { category: 'incoming_call' } : {}),
@@ -215,24 +229,41 @@ export const sendMultiplePushNotifications = async (
           if (!token) return Promise.reject(new Error('Empty token'));
           const isCall = data?.type === 'incoming_call';
           return admin.messaging().send({
-            notification: { title, body },
-            data: data || {},
+            ...(isCall
+              ? {}
+              : {
+                  notification: {
+                    title,
+                    body,
+                  },
+                }),
+            data: {
+              ...(data || {}),
+              title,
+              body,
+            },
             token,
             android: {
               priority: 'high',
-              notification: {
-                channelId: isCall ? 'voice_calls' : 'default',
-                sound: 'default',
-                priority: isCall ? 'max' : 'high',
-                defaultSound: true,
-                defaultVibrateTimings: true,
-                clickAction: 'OPEN_CALL',
-                ...(isCall && data?.bookingId ? { tag: `call_${data.bookingId}` } : {}),
-              },
+              ...(!isCall
+                ? {
+                    notification: {
+                      channelId: 'default',
+                      sound: 'default',
+                      priority: 'high',
+                      defaultSound: true,
+                      defaultVibrateTimings: true,
+                    },
+                  }
+                : {}),
             },
             apns: {
               payload: {
                 aps: {
+                  alert: {
+                    title,
+                    body,
+                  },
                   sound: 'default',
                   contentAvailable: true,
                   ...(isCall ? { category: 'incoming_call' } : {}),

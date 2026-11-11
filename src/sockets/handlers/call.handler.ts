@@ -143,6 +143,19 @@ export const registerCallHandlers = (io: Server, socket: Socket) => {
           channelName,
           endedBy: user.id,
         });
+
+        // Also send silent push to cancel any ringing notification on recipient's device
+        sendNotificationToRecipient(
+          partnerId,
+          partnerType,
+          '',
+          '',
+          {
+            type: 'call_ended',
+            bookingId,
+            channelName,
+          }
+        ).catch(() => {});
       }
     } catch (error) {
       logger.error('Error in call:end handler:', error);
