@@ -31,6 +31,8 @@ RUN chown nodeapp:nodeapp /app
 
 # Copy only the compiled code from the build stage
 COPY --from=build --chown=nodeapp:nodeapp /app/dist ./dist
+# Copy public static assets (e.g. logos for email rendering)
+COPY --from=build --chown=nodeapp:nodeapp /app/public ./public
 # Copy package files to install only production dependencies
 COPY --from=build --chown=nodeapp:nodeapp /app/package*.json ./
 
