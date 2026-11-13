@@ -22,13 +22,13 @@ export const verifyEmailOtpSchema = z.object({
 
 export const sendForgotPasswordOtpSchema = z.object({
     email: z.string({ error: "Email is required" }).email("Invalid email format"),
-    type: z.enum(['user', 'worker']).optional().default('user')
+    type: z.enum(['user', 'worker', 'client']).optional().default('user').transform(val => val === 'client' ? 'user' : val)
 });
 
 export const resetForgotPasswordSchema = z.object({
     email: z.string({ error: "Email is required" }).email("Invalid email format"),
     code: z.string({ error: "Verification code is required" }).length(6, "Verification code must be exactly 6 digits"),
     newPassword: z.string({ error: "New password is required" }).min(6, "Password must be at least 6 characters"),
-    type: z.enum(['user', 'worker']).optional().default('user')
+    type: z.enum(['user', 'worker', 'client']).optional().default('user').transform(val => val === 'client' ? 'user' : val)
 });
 

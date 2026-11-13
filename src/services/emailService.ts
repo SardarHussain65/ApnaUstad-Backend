@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { Resend } from 'resend';
 
 let resendInstance: Resend | null = null;
@@ -26,6 +28,14 @@ const getFromAddress = (): string => {
   return 'Apna Ustad <onboarding@resend.dev>';
 };
 
+export interface EmailAttachment {
+  content?: string | Buffer;
+  filename?: string | false;
+  path?: string;
+  contentType?: string;
+  contentId?: string;
+}
+
 interface SendEmailOptions {
   to: string | string[];
   subject: string;
@@ -33,6 +43,7 @@ interface SendEmailOptions {
   text?: string;
   replyTo?: string | string[];
   idempotencyKey?: string;
+  attachments?: EmailAttachment[];
 }
 
 /**
@@ -42,7 +53,7 @@ interface SendEmailOptions {
  */
 export async function sendEmail(options: SendEmailOptions) {
   const from = getFromAddress();
-  const { to, subject, html, text, replyTo, idempotencyKey } = options;
+  const { to, subject, html, text, replyTo, idempotencyKey, attachments } = options;
 
   // Build parameters map in strict camelCase as required by Resend Node.js SDK
   const params: any = {
@@ -62,6 +73,19 @@ export async function sendEmail(options: SendEmailOptions) {
 
   if (idempotencyKey) {
     params.idempotencyKey = idempotencyKey;
+  }
+
+  // Handle inline attachments (e.g. logo referenced via cid:apnaustad-logo)
+  const finalAttachments: EmailAttachment[] = attachments ? [...attachments] : [];
+  if (html.includes(`cid:${LOGO_CID}`)) {
+    const alreadyAttached = finalAttachments.some((att) => att.contentId === LOGO_CID);
+    if (!alreadyAttached) {
+      finalAttachments.push(getDefaultLogoAttachment());
+    }
+  }
+
+  if (finalAttachments.length > 0) {
+    params.attachments = finalAttachments;
   }
 
   // Network-level try-catch block for API failures (SDK doesn't throw on standard errors, it returns them)
@@ -96,6 +120,46 @@ export async function sendEmail(options: SendEmailOptions) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LOGO_URL = 'https://ik.imagekit.io/2cavxfiex/app-assets/apnaustad_logo_premium.png';
+const LOGO_CID = 'apnaustad-logo';
+
+let cachedLogoBase64: string | null = null;
+
+function getDefaultLogoAttachment(): EmailAttachment {
+  if (!cachedLogoBase64) {
+    const candidatePaths = [
+      path.resolve(process.cwd(), 'public/assets/logo_premium.png'),
+      path.resolve(process.cwd(), 'dist/public/assets/logo_premium.png'),
+      path.resolve(__dirname, '../../public/assets/logo_premium.png'),
+      path.resolve(__dirname, '../public/assets/logo_premium.png'),
+    ];
+    for (const p of candidatePaths) {
+      if (fs.existsSync(p)) {
+        try {
+          cachedLogoBase64 = fs.readFileSync(p).toString('base64');
+          break;
+        } catch {
+          // ignore error and proceed to fallback
+        }
+      }
+    }
+  }
+
+  if (cachedLogoBase64) {
+    return {
+      filename: 'apnaustad-logo.png',
+      content: cachedLogoBase64,
+      contentType: 'image/png',
+      contentId: LOGO_CID,
+    };
+  }
+
+  return {
+    filename: 'apnaustad-logo.png',
+    path: LOGO_URL,
+    contentType: 'image/png',
+    contentId: LOGO_CID,
+  };
+}
 
 /**
  * Shared cosmic email shell — wraps all templates in the dark branded layout.
@@ -153,7 +217,7 @@ function cosmicShell({
                     <!-- Logo badge with glow ring -->
                     <div style="display:inline-block;position:relative;margin-bottom:20px;">
                       <div style="width:88px;height:88px;border-radius:22px;border:2px solid ${headerBadgeBorder};box-shadow:0 0 24px ${headerBadgeGlow},0 0 0 6px rgba(255,255,255,0.04);overflow:hidden;display:inline-block;">
-                        <img src="${LOGO_URL}" alt="Apna Ustad" width="88" height="88" style="display:block;width:88px;height:88px;object-fit:cover;" />
+                        <img src="cid:${LOGO_CID}" alt="Apna Ustad" width="88" height="88" style="display:block;width:88px;height:88px;object-fit:cover;" />
                       </div>
                     </div>
                     <br/>
@@ -188,7 +252,7 @@ function cosmicShell({
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td align="center">
-                    <img src="${LOGO_URL}" alt="Apna Ustad" width="32" height="32" style="display:inline-block;border-radius:8px;opacity:0.7;vertical-align:middle;margin-right:8px;" />
+                    <img src="cid:${LOGO_CID}" alt="Apna Ustad" width="32" height="32" style="display:inline-block;border-radius:8px;opacity:0.7;vertical-align:middle;margin-right:8px;" />
                     <span style="font-size:13px;font-weight:700;color:#00F5FF;letter-spacing:1px;vertical-align:middle;">APNA USTAD</span>
                   </td>
                 </tr>
