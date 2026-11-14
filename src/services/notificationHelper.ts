@@ -148,3 +148,62 @@ export const sendNotificationToRecipient = async (
     return { success: false, error: error.message };
   }
 };
+
+/**
+ * Sends a silent data-only push notification (no visual alert, no DB record)
+ * Used for background signaling, e.g. dismissing an incoming call when cancelled/timed out.
+ */
+export const sendSilentPushToRecipient = async (
+  recipientId: string | mongoose.Types.ObjectId,
+  recipientType: 'user' | 'worker',
+  data: Record<string, string>
+) => {
+  try {
+    const recipientStr = recipientId.toString();
+
+    // 1. Fetch direct fcmToken
+    let directFcmToken: string | undefined = undefined;
+    try {
+      if (recipientType === 'worker') {
+        const w = await Workers.findById(recipientStr).select('fcmToken');
+        directFcmToken = w?.fcmToken;
+      } else {
+        const u = await User.findById(recipientStr).select('fcmToken');
+        directFcmToken = u?.fcmToken;
+      }
+    } catch (e: any) {
+      logger.warn(`Failed to fetch direct fcmToken for silent push: ${e.message}`);
+    }
+
+    // 2. Fetch active tokens from PushToken collection
+    let pushTokens: any[] = [];
+    try {
+      pushTokens = await (PushToken as any).find({ user: recipientStr, isActive: true });
+    } catch (e: any) {
+      logger.warn(`Failed to fetch PushToken records for silent push: ${e.message}`);
+    }
+
+    const tokens = new Set<string>();
+    if (directFcmToken && directFcmToken.length >= 100) {
+      tokens.add(directFcmToken);
+    }
+    pushTokens.forEach((pt: any) => {
+      if (pt.token && pt.token.length >= 100) {
+        tokens.add(pt.token);
+      }
+    });
+
+    const tokenList = Array.from(tokens);
+    if (tokenList.length === 0) {
+      return { success: false, reason: 'No tokens found' };
+    }
+
+    logger.info(`Sending silent push notification to ${recipientType} ${recipientStr} with type=${data.type}`);
+    const fcmResult = await sendMultiplePushNotifications(tokenList, '', '', data);
+    return { success: true, fcmResult };
+  } catch (error: any) {
+    logger.error(`Error in sendSilentPushToRecipient: ${error.message}`, { error });
+    return { success: false, error: error.message };
+  }
+};
+

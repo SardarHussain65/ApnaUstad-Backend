@@ -1,6 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import Booking from '../../models/Booking';
-import { sendNotificationToRecipient } from '../../services/notificationHelper';
+import { sendNotificationToRecipient, sendSilentPushToRecipient } from '../../services/notificationHelper';
+import { activeCallService } from '../../services/activeCallService';
 import logger from '../../config/logger';
 
 export const registerCallHandlers = (io: Server, socket: Socket) => {
@@ -37,9 +38,46 @@ export const registerCallHandlers = (io: Server, socket: Socket) => {
       }
 
       const targetRoom = `${recipientType}:${recipientId}`;
+      const callerRoom = `${callerType}:${callerId}`;
       logger.info(`📞 Emitting call:incoming to room ${targetRoom} from ${callerName} (${callerId})`);
 
-      // 1. Emit live socket event to recipient room
+      // 1. Register in activeCallService with 45s ringing timeout
+      activeCallService.startRinging(
+        {
+          bookingId,
+          channelName,
+          callerId,
+          callerType,
+          callerName: callerName || 'Apna Ustad User',
+          callerAvatar: callerAvatar || '',
+          recipientId,
+          recipientType,
+        },
+        () => {
+          // Timeout callback: auto-dismiss on both sides after 45s
+          logger.info(`📞 Call timeout triggered for booking ${bookingId}`);
+          io.to(targetRoom).emit('call:ended', {
+            bookingId,
+            channelName,
+            reason: 'timeout',
+          });
+          io.to(callerRoom).emit('call:ended', {
+            bookingId,
+            channelName,
+            reason: 'timeout',
+          });
+          sendSilentPushToRecipient(recipientId, recipientType, {
+            type: 'call_cancelled',
+            bookingId,
+            channelName,
+            reason: 'timeout',
+          }).catch((err) => {
+            logger.warn('Failed to send timeout cancellation push:', err?.message);
+          });
+        }
+      );
+
+      // 2. Emit live socket event to recipient room
       io.to(targetRoom).emit('call:incoming', {
         bookingId,
         channelName,
@@ -49,7 +87,7 @@ export const registerCallHandlers = (io: Server, socket: Socket) => {
         callerAvatar: callerAvatar || '',
       });
 
-      // 2. Also send high-priority push notification in case the recipient's app is backgrounded
+      // 3. Send high-priority push notification with lockscreen / heads-up support
       sendNotificationToRecipient(
         recipientId,
         recipientType,
@@ -87,6 +125,8 @@ export const registerCallHandlers = (io: Server, socket: Socket) => {
       const targetRoom = `${callerType}:${callerId}`;
       logger.info(`📞 Call accepted by ${user.id}, notifying caller in room ${targetRoom}`);
 
+      activeCallService.markConnected(bookingId);
+
       io.to(targetRoom).emit('call:accepted', {
         bookingId,
         channelName,
@@ -113,10 +153,22 @@ export const registerCallHandlers = (io: Server, socket: Socket) => {
       const targetRoom = `${callerType}:${callerId}`;
       logger.info(`📞 Call rejected by ${user.id} (${reason || 'declined'}), notifying room ${targetRoom}`);
 
+      activeCallService.endCall(bookingId);
+
       io.to(targetRoom).emit('call:rejected', {
         bookingId,
         channelName,
         reason: reason || 'Call declined',
+      });
+
+      // Also send silent push to recipient's other devices to cancel ringing notification
+      sendSilentPushToRecipient(user.id, user.type, {
+        type: 'call_cancelled',
+        bookingId,
+        channelName,
+        reason: 'declined',
+      }).catch((e) => {
+        logger.warn('Failed to send decline cancellation push:', e?.message);
       });
     } catch (error) {
       logger.error('Error in call:reject handler:', error);
@@ -124,7 +176,7 @@ export const registerCallHandlers = (io: Server, socket: Socket) => {
   });
 
   /**
-   * Either party ends the call
+   * Either party ends or cancels the call
    */
   socket.on('call:end', (data: {
     bookingId: string;
@@ -134,6 +186,9 @@ export const registerCallHandlers = (io: Server, socket: Socket) => {
   }) => {
     try {
       const { bookingId, channelName, partnerId, partnerType } = data;
+
+      activeCallService.endCall(bookingId);
+
       if (partnerId && partnerType) {
         const targetRoom = `${partnerType}:${partnerId}`;
         logger.info(`📞 Call ended by ${user.id}, notifying room ${targetRoom}`);
@@ -143,10 +198,48 @@ export const registerCallHandlers = (io: Server, socket: Socket) => {
           channelName,
           endedBy: user.id,
         });
+
+        // CRITICAL: Send silent cancellation push to partner so their push notification is dismissed immediately!
+        sendSilentPushToRecipient(partnerId, partnerType, {
+          type: 'call_cancelled',
+          bookingId,
+          channelName,
+          endedBy: user.id,
+        }).catch((err) => {
+          logger.warn('Failed to send silent cancellation push on call:end:', err?.message);
+        });
       }
     } catch (error) {
       logger.error('Error in call:end handler:', error);
     }
   });
-};
 
+  /**
+   * Check active call state (used on app resume / reconnect)
+   */
+  socket.on('call:check_active', () => {
+    try {
+      const activeCall = activeCallService.getActiveCallForUser(user.id, user.type);
+      socket.emit('call:active_state', {
+        hasActiveCall: !!activeCall,
+        call: activeCall
+          ? {
+            bookingId: activeCall.bookingId,
+            channelName: activeCall.channelName,
+            callerId: activeCall.callerId,
+            callerType: activeCall.callerType,
+            callerName: activeCall.callerName,
+            callerAvatar: activeCall.callerAvatar,
+            recipientId: activeCall.recipientId,
+            recipientType: activeCall.recipientType,
+            status: activeCall.status,
+            isCaller: activeCall.callerId === user.id,
+            createdAt: activeCall.createdAt,
+          }
+          : null,
+      });
+    } catch (error) {
+      logger.error('Error in call:check_active handler:', error);
+    }
+  });
+};

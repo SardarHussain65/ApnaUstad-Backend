@@ -61,38 +61,45 @@ export const sendPushNotification = async (
 
   try {
     const isCall = data?.type === 'incoming_call';
+    const isSilent = !title;
     const message: any = {
-      notification: {
-        title,
-        body,
-      },
+      ...(isSilent ? {} : {
+        notification: {
+          title,
+          body,
+        },
+      }),
       data: data || {},
       token: deviceToken,
       android: {
         priority: 'high',
-        notification: {
-          channelId: isCall ? 'voice_calls' : 'default',
-          sound: 'default',
-          priority: isCall ? 'max' : 'high',
-          defaultSound: true,
-          defaultVibrateTimings: true,
-          clickAction: 'OPEN_CALL',
-          ...(isCall && data?.bookingId ? { tag: `call_${data.bookingId}` } : {}),
-        },
+        ...(isSilent ? {} : {
+          notification: {
+            channelId: isCall ? 'voice_calls' : 'default',
+            sound: 'default',
+            priority: isCall ? 'max' : 'high',
+            defaultSound: true,
+            defaultVibrateTimings: true,
+            clickAction: 'OPEN_CALL',
+            ...(isCall && data?.bookingId ? { tag: `call_${data.bookingId}` } : {}),
+          },
+        }),
       },
       apns: {
         payload: {
           aps: {
-            sound: 'default',
             contentAvailable: true,
-            ...(isCall ? { category: 'incoming_call' } : {}),
+            ...(isSilent ? {} : {
+              sound: 'default',
+              ...(isCall ? { category: 'incoming_call' } : {}),
+            }),
           },
         },
       },
     };
 
     const messageId = await admin.messaging().send(message);
-    
+
     logger.info('Notification sent successfully', {
       messageId,
       deviceToken: deviceToken.substring(0, 20) + '...',  // Log partial token
@@ -214,28 +221,33 @@ export const sendMultiplePushNotifications = async (
         batch.map(token => {
           if (!token) return Promise.reject(new Error('Empty token'));
           const isCall = data?.type === 'incoming_call';
+          const isSilent = !title;
           return admin.messaging().send({
-            notification: { title, body },
+            ...(isSilent ? {} : { notification: { title, body } }),
             data: data || {},
             token,
             android: {
               priority: 'high',
-              notification: {
-                channelId: isCall ? 'voice_calls' : 'default',
-                sound: 'default',
-                priority: isCall ? 'max' : 'high',
-                defaultSound: true,
-                defaultVibrateTimings: true,
-                clickAction: 'OPEN_CALL',
-                ...(isCall && data?.bookingId ? { tag: `call_${data.bookingId}` } : {}),
-              },
+              ...(isSilent ? {} : {
+                notification: {
+                  channelId: isCall ? 'voice_calls' : 'default',
+                  sound: 'default',
+                  priority: isCall ? 'max' : 'high',
+                  defaultSound: true,
+                  defaultVibrateTimings: true,
+                  clickAction: 'OPEN_CALL',
+                  ...(isCall && data?.bookingId ? { tag: `call_${data.bookingId}` } : {}),
+                },
+              }),
             },
             apns: {
               payload: {
                 aps: {
-                  sound: 'default',
                   contentAvailable: true,
-                  ...(isCall ? { category: 'incoming_call' } : {}),
+                  ...(isSilent ? {} : {
+                    sound: 'default',
+                    ...(isCall ? { category: 'incoming_call' } : {}),
+                  }),
                 },
               },
             },
@@ -404,7 +416,7 @@ export const sendNotificationToTopic = async (
     };
 
     const messageId = await admin.messaging().send(message);
-    
+
     logger.info('Topic notification sent', {
       messageId,
       topic,
@@ -447,7 +459,7 @@ export const subscribeToTopic = async (
 
   try {
     const response = await admin.messaging().subscribeToTopic(tokens, topic);
-    
+
     logger.info('Subscribed to topic', {
       topic,
       count: tokens.length,
@@ -492,7 +504,7 @@ export const unsubscribeFromTopic = async (
 
   try {
     const response = await admin.messaging().unsubscribeFromTopic(tokens, topic);
-    
+
     logger.info('Unsubscribed from topic', {
       topic,
       count: tokens.length,
@@ -531,7 +543,7 @@ export const healthCheck = async () => {
 
     // Try a simple messaging operation
     const projectId = admin.app().options.projectId;
-    
+
     return {
       healthy: true,
       message: 'Firebase Admin is operational',

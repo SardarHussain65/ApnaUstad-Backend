@@ -4,6 +4,8 @@ import Booking from '../models/Booking';
 import User from '../models/User';
 import Worker from '../models/Workers';
 import { generateAgoraCallToken } from '../services/callService';
+import { activeCallService } from '../services/activeCallService';
+import { sendSilentPushToRecipient } from '../services/notificationHelper';
 import logger from '../config/logger';
 
 /**
@@ -194,4 +196,90 @@ export const getCallToken = async (req: AuthRequest, res: Response): Promise<voi
     res.status(500).json({ success: false, message: error.message || 'Internal server error' });
   }
 };
+
+/**
+ * Checks if the authenticated user has an active ongoing or ringing call session.
+ * Used for cold boot, unlocking device, and app resume state synchronization.
+ */
+export const getActiveCallSession = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.tokenPayload?.id;
+    const userType = req.tokenPayload?.type as 'user' | 'worker';
+
+    if (!userId || !userType) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const activeCall = activeCallService.getActiveCallForUser(userId, userType);
+    if (activeCall && activeCall.status !== 'ended') {
+      res.status(200).json({
+        success: true,
+        hasActiveCall: true,
+        call: {
+          bookingId: activeCall.bookingId,
+          channelName: activeCall.channelName,
+          callerId: activeCall.callerId,
+          callerType: activeCall.callerType,
+          callerName: activeCall.callerName,
+          callerAvatar: activeCall.callerAvatar,
+          recipientId: activeCall.recipientId,
+          recipientType: activeCall.recipientType,
+          status: activeCall.status,
+          isCaller: activeCall.callerId === userId,
+          createdAt: activeCall.createdAt,
+        },
+      });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      hasActiveCall: false,
+    });
+  } catch (error: any) {
+    logger.error('Error in getActiveCallSession:', error);
+    res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+};
+
+/**
+ * End or cancel an active call session via REST API fallback.
+ */
+export const endCallSession = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const userId = req.tokenPayload?.id;
+    const userType = req.tokenPayload?.type as 'user' | 'worker';
+    const { bookingId } = req.body;
+
+    if (!userId || !bookingId) {
+      res.status(400).json({ success: false, message: 'bookingId is required' });
+      return;
+    }
+
+    const call = activeCallService.getActiveCallByBooking(bookingId);
+    if (call) {
+      activeCallService.endCall(bookingId);
+
+      // Identify partner to send silent push notification to dismiss ringing
+      const partnerId = call.callerId === userId ? call.recipientId : call.callerId;
+      const partnerType = call.callerId === userId ? call.recipientType : call.callerType;
+
+      sendSilentPushToRecipient(partnerId, partnerType, {
+        type: 'call_cancelled',
+        bookingId,
+        channelName: call.channelName,
+        reason: 'ended_via_api',
+      }).catch((e) => {
+        logger.warn('Failed to send silent cancellation push:', e?.message);
+      });
+    }
+
+    res.status(200).json({ success: true, message: 'Call ended successfully' });
+  } catch (error: any) {
+    logger.error('Error in endCallSession:', error);
+    res.status(500).json({ success: false, message: error.message || 'Internal server error' });
+  }
+};
+
 
